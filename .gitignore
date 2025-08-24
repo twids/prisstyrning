@@ -20,3 +20,6 @@ Thumbs.db
 appsettings.Development.json
 appsettings.Local.json
 .env
+
+# Price snapshots
+data/prices-*.json
