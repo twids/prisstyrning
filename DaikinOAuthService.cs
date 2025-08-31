@@ -9,8 +9,10 @@ internal static class DaikinOAuthService
     private static readonly object _lock = new();
     private static readonly Dictionary<string,string> _stateToVerifier = new();
 
-    private const string DefaultAuthEndpoint = "https://idp.onecta.daikineurope.com/v1/oidc/authorize"; // uppdaterad OIDC authorize
-    private const string DefaultTokenEndpoint = "https://idp.onecta.daikineurope.com/v1/oidc/token";   // uppdaterad token
+    private const string DefaultAuthEndpoint = "https://idp.onecta.daikineurope.com/v1/oidc/authorize"; // OIDC authorize
+    private const string DefaultTokenEndpoint = "https://idp.onecta.daikineurope.com/v1/oidc/token";   // token
+    private const string DefaultRevokeEndpoint = "https://idp.onecta.daikineurope.com/v1/oidc/revoke"; // revoke
+    private const string DefaultIntrospectEndpoint = "https://idp.onecta.daikineurope.com/v1/oidc/introspect"; // introspect
 
     private record TokenFile(string access_token, string refresh_token, DateTimeOffset expires_at_utc);
 
@@ -18,12 +20,32 @@ internal static class DaikinOAuthService
     {
         var clientId = cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
         var redirectUri = ResolveRedirectUri(cfg, httpContext);
-    var scope = cfg["Daikin:Scope"] ?? "openid onecta:basic.integration offline_access";
-    var authEndpoint = cfg["Daikin:AuthEndpoint"] ?? DefaultAuthEndpoint;
+        var includeOffline = (cfg["Daikin:IncludeOfflineAccess"] ?? "false").Equals("true", StringComparison.OrdinalIgnoreCase);
+        var scopeCfg = cfg["Daikin:Scope"];
+        var scope = string.IsNullOrWhiteSpace(scopeCfg) ? "openid onecta:basic.integration" : scopeCfg!;
+        if (includeOffline && !scope.Split(' ',StringSplitOptions.RemoveEmptyEntries).Contains("offline_access"))
+            scope += " offline_access";
+        var authEndpoint = cfg["Daikin:AuthEndpoint"] ?? DefaultAuthEndpoint;
         var state = Guid.NewGuid().ToString("N");
+        var nonce = Guid.NewGuid().ToString("N");
         var (codeChallenge, verifier) = CreatePkcePair();
         lock(_lock) _stateToVerifier[state] = verifier;
-    var url = $"{authEndpoint}?response_type=code&client_id={Uri.EscapeDataString(clientId)}&redirect_uri={Uri.EscapeDataString(redirectUri)}&scope={Uri.EscapeDataString(scope)}&state={state}&code_challenge={codeChallenge}&code_challenge_method=S256";
+        var url = $"{authEndpoint}?response_type=code&client_id={Uri.EscapeDataString(clientId)}&redirect_uri={Uri.EscapeDataString(redirectUri)}&scope={Uri.EscapeDataString(scope)}&state={state}&nonce={nonce}&code_challenge={codeChallenge}&code_challenge_method=S256";
+        Console.WriteLine($"[DaikinOAuth] Built authorize URL (host only) authHost={new Uri(authEndpoint).Host} redirect={redirectUri} scope='{scope}' state={state.Substring(0,8)}... offline={(includeOffline?"yes":"no")}");
+        return url;
+    }
+
+    // Minimal variant utan state/PKCE/nonce – ENDAST för felsökning av 403.
+    public static string GetMinimalAuthorizationUrl(IConfiguration cfg, HttpContext? httpContext = null)
+    {
+        var clientId = cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
+        var redirectUri = ResolveRedirectUri(cfg, httpContext);
+        var scopeCfg = cfg["Daikin:Scope"];
+        var scope = string.IsNullOrWhiteSpace(scopeCfg) ? "openid onecta:basic.integration" : scopeCfg!;
+        // OBS: inget state, ingen PKCE – använd ej i produktion.
+        var authEndpoint = cfg["Daikin:AuthEndpoint"] ?? DefaultAuthEndpoint;
+        var url = $"{authEndpoint}?response_type=code&client_id={Uri.EscapeDataString(clientId)}&redirect_uri={Uri.EscapeDataString(redirectUri)}&scope={Uri.EscapeDataString(scope)}";
+        Console.WriteLine($"[DaikinOAuth][MIN] URL => {url}");
         return url;
     }
 
@@ -49,8 +71,14 @@ internal static class DaikinOAuthService
         if(!string.IsNullOrWhiteSpace(clientSecret))
             form["client_secret"] = clientSecret;
         using var http = new HttpClient();
-    var resp = await http.PostAsync(tokenEndpoint, new FormUrlEncodedContent(form));
-        if(!resp.IsSuccessStatusCode) return false;
+        Console.WriteLine($"[DaikinOAuth] Exchanging code for tokens at {tokenEndpoint}");
+        var resp = await http.PostAsync(tokenEndpoint, new FormUrlEncodedContent(form));
+        if(!resp.IsSuccessStatusCode)
+        {
+            var body = await resp.Content.ReadAsStringAsync();
+            Console.WriteLine($"[DaikinOAuth][Error] Token exchange failed { (int)resp.StatusCode } {resp.StatusCode} bodySnippet={TrimForLog(body)}");
+            return false;
+        }
         var json = await resp.Content.ReadAsStringAsync();
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
@@ -59,6 +87,7 @@ internal static class DaikinOAuthService
         var expiresIn = root.TryGetProperty("expires_in", out var ei) ? ei.GetInt32() : 3600;
         var expiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn - 30);
         SaveTokens(cfg, new TokenFile(access, refresh, expiresAt));
+        Console.WriteLine($"[DaikinOAuth] Token exchange OK expiresAt={expiresAt:O} refresh={(refresh?.Length>8?refresh[..8]+"...":"(none)")}");
         return true;
     }
 
@@ -86,10 +115,12 @@ internal static class DaikinOAuthService
         if(!string.IsNullOrWhiteSpace(clientSecret))
             form["client_secret"] = clientSecret;
         using var http = new HttpClient();
-    var resp = await http.PostAsync(tokenEndpoint, new FormUrlEncodedContent(form));
+        Console.WriteLine($"[DaikinOAuth] Refreshing token at {tokenEndpoint}");
+        var resp = await http.PostAsync(tokenEndpoint, new FormUrlEncodedContent(form));
         if(!resp.IsSuccessStatusCode)
         {
-            Console.WriteLine($"[DaikinOAuth] refresh failed {resp.StatusCode}");
+            var body = await resp.Content.ReadAsStringAsync();
+            Console.WriteLine($"[DaikinOAuth][Error] refresh failed { (int)resp.StatusCode } {resp.StatusCode} bodySnippet={TrimForLog(body)}");
             return null;
         }
         var json = await resp.Content.ReadAsStringAsync();
@@ -100,6 +131,7 @@ internal static class DaikinOAuthService
         var expiresIn = root.TryGetProperty("expires_in", out var ei) ? ei.GetInt32() : 3600;
         var expiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn - 30);
         SaveTokens(cfg, new TokenFile(access, refresh!, expiresAt));
+    Console.WriteLine($"[DaikinOAuth] Refresh OK newExpiry={expiresAt:O}");
         return access;
     }
 
@@ -112,6 +144,53 @@ internal static class DaikinOAuthService
             expiresAtUtc = t.expires_at_utc,
             expiresInSeconds = (int)Math.Max(0,(t.expires_at_utc - DateTimeOffset.UtcNow).TotalSeconds)
         };
+    }
+
+    public static async Task<bool> RevokeAsync(IConfiguration cfg)
+    {
+        var t = LoadTokens(cfg);
+        if (t == null) return false;
+        var clientId = cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
+        var clientSecret = cfg["Daikin:ClientSecret"];
+        var revokeEndpoint = cfg["Daikin:RevokeEndpoint"] ?? DefaultRevokeEndpoint;
+        using var http = new HttpClient();
+        var okAccess = await RevokeToken(http, revokeEndpoint, clientId, clientSecret, t.access_token, "access_token");
+        var okRefresh = await RevokeToken(http, revokeEndpoint, clientId, clientSecret, t.refresh_token, "refresh_token");
+        if(okAccess || okRefresh)
+        {
+            try { File.Delete(TokenFilePath(cfg)); } catch {}
+        }
+        return okAccess && okRefresh; // true only if both succeeded
+    }
+
+    private static async Task<bool> RevokeToken(HttpClient http, string endpoint, string clientId, string? secret, string token, string hint)
+    {
+        var form = new Dictionary<string,string>{
+            ["token"] = token,
+            ["client_id"] = clientId,
+            ["token_type_hint"] = hint
+        };
+        if(!string.IsNullOrWhiteSpace(secret)) form["client_secret"] = secret!;
+        var resp = await http.PostAsync(endpoint, new FormUrlEncodedContent(form));
+        Console.WriteLine($"[DaikinOAuth] Revoke {hint} => {(int)resp.StatusCode} {resp.StatusCode}");
+        return resp.IsSuccessStatusCode;
+    }
+
+    public static async Task<object?> IntrospectAsync(IConfiguration cfg, bool refresh=false)
+    {
+        var t = LoadTokens(cfg); if(t==null) return null;
+        var clientId = cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
+        var clientSecret = cfg["Daikin:ClientSecret"] ?? throw new InvalidOperationException("ClientSecret krävs för introspection");
+        var introspectEndpoint = cfg["Daikin:IntrospectEndpoint"] ?? DefaultIntrospectEndpoint;
+        var token = refresh ? t.refresh_token : t.access_token;
+        using var http = new HttpClient();
+        var bytes = Encoding.ASCII.GetBytes(clientId+":"+clientSecret);
+        http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", Convert.ToBase64String(bytes));
+        var form = new Dictionary<string,string>{{"token", token}};
+        var resp = await http.PostAsync(introspectEndpoint, new FormUrlEncodedContent(form));
+        var body = await resp.Content.ReadAsStringAsync();
+        Console.WriteLine($"[DaikinOAuth] Introspect {(refresh?"refresh":"access")} => {(int)resp.StatusCode}");
+        try { return JsonSerializer.Deserialize<JsonElement>(body); } catch { return new { raw = TrimForLog(body) }; }
     }
 
     public static string? GetAccessTokenUnsafe(IConfiguration cfg)
@@ -131,6 +210,13 @@ internal static class DaikinOAuthService
     }
 
     private static string Base64Url(string s) => s.Replace("+","-").Replace("/","_").Replace("=","");
+
+    private static string TrimForLog(string input, int max=180)
+    {
+        if (string.IsNullOrEmpty(input)) return "";
+        input = input.Replace('\n',' ').Replace('\r',' ');
+        return input.Length <= max ? input : input[..max] + "...";
+    }
 
     private static string ResolveRedirectUri(IConfiguration cfg, HttpContext? ctx)
     {

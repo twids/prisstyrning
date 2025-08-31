@@ -19,7 +19,10 @@ if (app.Environment.IsDevelopment() || true)
     app.UseSwagger();
     app.UseSwaggerUI();
 }
-app.MapGet("/", () => "Prisstyrning API");
+// Static files (UI)
+app.UseDefaultFiles();
+app.UseStaticFiles();
+// Root handled by default file (index.html)
 
 // Prices group
 var pricesGroup = app.MapGroup("/api/prices").WithTags("Prices");
@@ -45,6 +48,11 @@ daikinAuthGroup.MapGet("/start", (IConfiguration cfg, HttpContext ctx) =>
     try { var url = DaikinOAuthService.GetAuthorizationUrl(cfg, ctx); return Results.Json(new { url }); }
     catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
+daikinAuthGroup.MapGet("/start-min", (IConfiguration cfg, HttpContext ctx) =>
+{
+    try { var url = DaikinOAuthService.GetMinimalAuthorizationUrl(cfg, ctx); return Results.Json(new { url }); }
+    catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
 daikinAuthGroup.MapGet("/callback", async (IConfiguration cfg, string? code, string? state) =>
 {
     if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state)) return Results.BadRequest(new { error = "Missing code/state" });
@@ -57,6 +65,21 @@ daikinAuthGroup.MapPost("/refresh", async (IConfiguration cfg) =>
     var token = await DaikinOAuthService.RefreshIfNeededAsync(cfg);
     return token == null ? Results.BadRequest(new { error = "Refresh failed or not authorized" }) : Results.Ok(new { refreshed = true });
 });
+    daikinAuthGroup.MapGet("/debug", (IConfiguration cfg) =>
+    {
+        var status = DaikinOAuthService.Status(cfg);
+        return Results.Json(new { status, now = DateTimeOffset.UtcNow });
+    });
+    daikinAuthGroup.MapPost("/revoke", async (IConfiguration cfg) =>
+    {
+        var ok = await DaikinOAuthService.RevokeAsync(cfg);
+        return ok ? Results.Ok(new { revoked = true }) : Results.BadRequest(new { error = "Revoke failed or not authorized" });
+    });
+    daikinAuthGroup.MapGet("/introspect", async (IConfiguration cfg, bool refresh) =>
+    {
+        var result = await DaikinOAuthService.IntrospectAsync(cfg, refresh);
+        return result == null ? Results.BadRequest(new { error = "Not authorized" }) : Results.Json(result);
+    });
 
 // Schedule group
 var scheduleGroup = app.MapGroup("/api/schedule").WithTags("Schedule");
