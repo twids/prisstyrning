@@ -7,12 +7,57 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 
 var builder = WebApplication.CreateBuilder(args);
+// Läser in en extra lokal override-fil (gemener) om den finns
+builder.Configuration.AddJsonFile("appsettings.development.json", optional: true, reloadOnChange: true);
+// Konfigurera så att appen kan lyssna på alla interfaces (0.0.0.0) istället för endast localhost
+var portValue = Environment.GetEnvironmentVariable("PORT") ?? builder.Configuration["PORT"] ?? builder.Configuration["App:Port"];
+if (!int.TryParse(portValue, out var listenPort)) listenPort = 5000;
+builder.WebHost.ConfigureKestrel(o =>
+{
+    // Rensar ev. default endpoints och lyssnar på angiven port på alla IP
+    o.ListenAnyIP(listenPort);
+});
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHostedService<DailyPriceJob>();
 
 var app = builder.Build();
+
+// Försök förladda minnescache från senaste persistenta fil så /api/prices/memory inte ger 404 direkt vid start
+try
+{
+    var preloadDir = builder.Configuration["Storage:Directory"] ?? "data";
+    if (Directory.Exists(preloadDir))
+    {
+        var latest = Directory.GetFiles(preloadDir, "prices-*.json").OrderByDescending(f => f).FirstOrDefault();
+        if (latest != null)
+        {
+            var json = await File.ReadAllTextAsync(latest);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            JsonArray? todayArr = null;
+            JsonArray? tomorrowArr = null;
+            if (root.TryGetProperty("today", out var tEl) && tEl.ValueKind == JsonValueKind.Array)
+            {
+                todayArr = JsonNode.Parse(tEl.GetRawText()) as JsonArray;
+            }
+            if (root.TryGetProperty("tomorrow", out var tmEl) && tmEl.ValueKind == JsonValueKind.Array)
+            {
+                tomorrowArr = JsonNode.Parse(tmEl.GetRawText()) as JsonArray;
+            }
+            if (todayArr != null || tomorrowArr != null)
+            {
+                PriceMemory.Set(todayArr, tomorrowArr);
+                Console.WriteLine("[Startup] Preloaded price memory from latest file");
+            }
+        }
+    }
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"[Startup] Preload failed: {ex.Message}");
+}
 
 if (app.Environment.IsDevelopment() || true)
 {
@@ -39,6 +84,55 @@ pricesGroup.MapGet("/memory", () =>
     var (today, tomorrow, updated) = PriceMemory.Get();
     if (today == null && tomorrow == null) return Results.NotFound(new { message = "No prices in memory yet" });
     return Results.Json(new { updated, today, tomorrow });
+});
+pricesGroup.MapGet("/timeseries", (HttpContext ctx) =>
+{
+    var source = ctx.Request.Query["source"].ToString(); // "latest" för att tvinga läsning från fil
+    var (memToday, memTomorrow, updated) = PriceMemory.Get();
+    JsonArray? today = memToday;
+    JsonArray? tomorrow = memTomorrow;
+
+    bool forceLatest = string.Equals(source, "latest", StringComparison.OrdinalIgnoreCase);
+    if (forceLatest || today == null || (today.Count < 24 && DateTimeOffset.Now.Hour < 23))
+    {
+        try
+        {
+            var dir = builder.Configuration["Storage:Directory"] ?? "data";
+            if (Directory.Exists(dir))
+            {
+                var file = Directory.GetFiles(dir, "prices-*.json").OrderByDescending(f => f).FirstOrDefault();
+                if (file != null)
+                {
+                    using var doc = JsonDocument.Parse(File.ReadAllText(file));
+                    var root = doc.RootElement;
+                    if (today == null && root.TryGetProperty("today", out var tEl) && tEl.ValueKind == JsonValueKind.Array)
+                        today = JsonNode.Parse(tEl.GetRawText()) as JsonArray;
+                    if (tomorrow == null && root.TryGetProperty("tomorrow", out var tmEl) && tmEl.ValueKind == JsonValueKind.Array)
+                        tomorrow = JsonNode.Parse(tmEl.GetRawText()) as JsonArray;
+                }
+            }
+        }
+        catch { /* ignore */ }
+    }
+
+    var items = new List<(DateTimeOffset start, decimal value, string day)>();
+    void Add(JsonArray? arr, string label)
+    {
+        if (arr == null) return;
+        foreach (var n in arr)
+        {
+            if (n == null) continue;
+            var startStr = n["start"]?.ToString();
+            var valueStr = n["value"]?.ToString();
+            if (!DateTimeOffset.TryParse(startStr, out var ts)) continue;
+            if (!decimal.TryParse(valueStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var val)) continue;
+            items.Add((ts, val, label));
+        }
+    }
+    Add(today, "today");
+    Add(tomorrow, "tomorrow");
+    var ordered = items.OrderBy(i => i.start).Select(i => new { start = i.start, value = i.value, day = i.day }).ToList();
+    return Results.Json(new { updated, count = ordered.Count, items = ordered, source = forceLatest ? "latest" : "memory" });
 });
 
 // Daikin OAuth group

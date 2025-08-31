@@ -1,10 +1,65 @@
-<!doctype html><html lang="sv"><head><meta charset="utf-8"><title>Prisstyrning</title><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/ui.css"></head><body>
+<!doctype html><html lang="sv"><head><meta charset="utf-8"><title>Prisstyrning</title><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/ui.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<!-- Chart.js time scale kräver en date adapter; lägg till date-fns adapter -->
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+</head><body>
 <header><h1>Prisstyrning</h1></header>
 <main>
 <section id="status"><h2>Status</h2><div id="authStatus">Laddar...</div></section>
 <section id="prices"><h2>Priser</h2><button id="refreshPrices">Uppdatera</button><pre id="priceData"></pre></section>
+<section id="priceChart"><h2>Prisgraf</h2><canvas id="chart" height="120" style="max-width:100%;"></canvas><div id="chartMeta" style="font-size:.8rem;opacity:.7;margin-top:.3rem;"></div></section>
 <section id="schedule"><h2>Schema (preview)</h2><button id="loadSchedule">Generera</button><pre id="schedulePreview"></pre></section>
 <section id="daikin"><h2>Daikin</h2><button id="authStart">Starta OAuth</button><button id="showSites">Sites</button><pre id="daikinData"></pre></section>
 </main>
 <script type="module" src="/ui.js"></script>
+<script>
+const rawContainer = document.createElement('div');
+rawContainer.id='rawPriceList';
+rawContainer.style.cssText='margin-top:1rem;font-family:monospace;font-size:.7rem;white-space:pre;max-height:200px;overflow:auto;border:1px solid #333;padding:.5rem;display:none;';
+document.getElementById('priceChart').appendChild(rawContainer);
+const toggleBtn = document.createElement('button');
+toggleBtn.textContent='Visa rådata';
+toggleBtn.style.marginTop='.5rem';
+toggleBtn.onclick=()=>{rawContainer.style.display= rawContainer.style.display==='none'?'block':'none'; toggleBtn.textContent = rawContainer.style.display==='none'?'Visa rådata':'Dölj rådata';};
+document.getElementById('priceChart').appendChild(toggleBtn);
+
+async function loadChart(){
+	const url = '/api/prices/timeseries?source=latest';
+	const res = await fetch(url);
+	if(!res.ok){ document.getElementById('chartMeta').textContent='Ingen data'; return; }
+	const data = await res.json();
+	const items = (data.items||[]).slice().sort((a,b)=> new Date(a.start)-new Date(b.start));
+	console.debug('[PriceChart] Items', items.length, items.slice(0,5));
+	const today = [], tomorrow = [];
+	for(const it of items){
+		const ts = new Date(it.start);
+		if(it.day==='tomorrow') tomorrow.push({ x: ts, y: it.value }); else today.push({ x: ts, y: it.value });
+	}
+	const all = [...today, ...tomorrow];
+	const minX = all.length? all[0].x : undefined;
+	const maxX = all.length? all[all.length-1].x : undefined;
+	const ctx = document.getElementById('chart').getContext('2d');
+	if(window._priceChart){ window._priceChart.destroy(); }
+	window._priceChart = new Chart(ctx, {
+		type:'line',
+		data:{ datasets:[
+			today.length?{label:'Idag', data:today, borderColor:'#4FC3F7', backgroundColor:'#4FC3F755', fill:true, tension:.15, pointRadius:3 }:null,
+			tomorrow.length?{label:'Imorgon', data:tomorrow, borderColor:'#FFB74D', backgroundColor:'#FFB74D55', fill:true, tension:.15, pointRadius:3 }:null
+		].filter(Boolean)},
+		options:{
+			parsing:false,
+			spanGaps:true,
+			scales:{
+				x:{ type:'time', time:{ unit:'hour', tooltipFormat:'yyyy-MM-dd HH:mm' }, ticks:{ source:'data', autoSkip:false, maxRotation:45, minRotation:0 }, min:minX, max:maxX },
+				y:{ title:{display:true,text:'Öre/kWh'}, beginAtZero:true }
+			},
+			plugins:{ legend:{position:'bottom'} }
+		}
+	});
+	rawContainer.textContent = items.map(i=>`${i.day.padEnd(8)} ${i.start}  ${i.value}`).join('\n');
+	document.getElementById('chartMeta').textContent = `Antal punkter: ${items.length} | Källa: ${data.source} ${data.updated? '| Uppdaterad: '+data.updated:''}`;
+}
+loadChart();
+setInterval(loadChart, 5*60*1000);
+</script>
 </body></html>

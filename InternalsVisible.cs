@@ -1,0 +1,1 @@
+"schedulePayload": "{ \"0\": {   \"actions\": {     \"sunday\": {       \"21:00:00\": {         \"domesticHotWaterTemperature\": \"comfort\"       },       \"22:00:00\": {         \"domesticHotWaterTemperature\": \"comfort\"       },       \"23:00:00\": {         \"domesticHotWaterTemperature\": \"comfort\"       }     }   } }\r\n}",
