@@ -5,11 +5,47 @@
 </head><body>
 <header><h1>Prisstyrning</h1></header>
 <main>
-<section id="status"><h2>Status</h2><div id="authStatus">Laddar...</div></section>
+<!-- Combined Status + Daikin section -->
+<section id="daikinStatus">
+	<h2>Daikin</h2>
+	<div style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin-bottom:.4rem;">
+		<div id="authStatus">Laddar...</div>
+		<button id="authStart">Starta OAuth</button>
+		<button id="showSites">Sites</button>
+		<button id="refreshStatus" style="display:none;">Uppdatera status</button>
+	</div>
+	<pre id="daikinData" style="max-height:220px;overflow:auto;"></pre>
+</section>
 <section id="prices"><h2>Priser</h2><button id="refreshPrices">Uppdatera</button><pre id="priceData"></pre></section>
 <section id="priceChart"><h2>Prisgraf</h2><canvas id="chart" height="120" style="max-width:100%;"></canvas><div id="chartMeta" style="font-size:.8rem;opacity:.7;margin-top:.3rem;"></div></section>
-<section id="schedule"><h2>Schema (preview)</h2><button id="loadSchedule">Generera</button><pre id="schedulePreview"></pre></section>
-<section id="daikin"><h2>Daikin</h2><button id="authStart">Starta OAuth</button><button id="showSites">Sites</button><pre id="daikinData"></pre></section>
+<section id="schedule"><h2>Schema (preview)</h2>
+	<div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.4rem;">
+		<button id="loadSchedule">Generera</button>
+		<span id="scheduleMsg" style="font-size:.8rem;opacity:.8"></span>
+		<span style="display:inline-flex;align-items:center;gap:.25rem;font-size:.7rem;">Legend:
+			<span class="sch-box comfort"></span> comfort
+			<span class="sch-box eco"></span> eco
+			<span class="sch-box off"></span> off
+		</span>
+	</div>
+	<div id="scheduleGrid"></div>
+	<pre id="schedulePreview" style="margin-top:.5rem;"></pre>
+</section>
+<style>
+	#scheduleGrid{display:grid;gap:2px;margin-top:.4rem;max-width:100%;overflow:auto;font-family:system-ui,Segoe UI,Arial,sans-serif;}
+	#scheduleGrid .day-row{display:grid;grid-template-columns:70px repeat(24,1fr);gap:2px;}
+	#scheduleGrid .hdr{font-size:.65rem;text-align:center;opacity:.7;}
+	#scheduleGrid .day-label{font-size:.65rem;text-align:right;padding:2px 4px;white-space:nowrap;}
+	#scheduleGrid .cell{height:20px;position:relative;border:1px solid #222;border-radius:2px;overflow:hidden;}
+	#scheduleGrid .cell span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:.55rem;font-weight:600;color:#111;text-shadow:0 0 2px rgba(255,255,255,.6);} 
+	.sch-box{width:14px;height:14px;border:1px solid #222;border-radius:3px;display:inline-block;}
+	.comfort{background:linear-gradient(#8BC34A,#66BB6A);} 
+	.eco{background:linear-gradient(#90A4AE,#607D8B);} 
+	.off{background:linear-gradient(#EF5350,#D32F2F);} 
+	#scheduleGrid .cell.comfort span{color:#0d2;}#scheduleGrid .cell.eco span{color:#eee;}#scheduleGrid .cell.off span{color:#fff;}
+	#scheduleGrid .now{outline:2px solid #fff;box-shadow:0 0 4px 2px #fff inset;}
+</style>
+<!-- Removed separate Daikin section (merged above) -->
 </main>
 <script type="module" src="/ui.js"></script>
 <script>
