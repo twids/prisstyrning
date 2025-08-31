@@ -20,7 +20,16 @@ async function startAuth(){
   try{const d=await j('/auth/daikin/start');window.location=d.url;}catch(e){alert('Auth start fel: '+e.message);} }
 async function loadSites(){
   daikinDataEl.textContent='...';
-  try{const s=await j('/api/daikin/sites');daikinDataEl.textContent=s;}catch(e){daikinDataEl.textContent='Fel: '+e.message;}
+  try{
+    const s=await j('/api/daikin/sites');
+    if (typeof s === 'string') {
+      // API kan returnera rå JSON-sträng
+      try { daikinDataEl.textContent = JSON.stringify(JSON.parse(s), null, 2); }
+      catch { daikinDataEl.textContent = s; }
+    } else {
+      daikinDataEl.textContent = JSON.stringify(s,null,2);
+    }
+  }catch(e){daikinDataEl.textContent='Fel: '+e.message;}
 }
 
 document.getElementById('refreshPrices').onclick=loadPrices;
