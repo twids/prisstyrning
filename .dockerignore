@@ -1,0 +1,11 @@
+bin
+obj
+.git
+.github
+Dockerfile
+*.md
+*.json
+!appsettings.json
+!appsettings.development.json
+*.log
+node_modules

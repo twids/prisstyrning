@@ -157,16 +157,148 @@ internal static class BatchRunner
                 }
             }
 
-            var dayObj = new JsonObject();
-            foreach (var e in entries.OrderBy(e => e.start))
+            // Ny komprimering: Max 4 actions och turn_off får aldrig gälla längre än 2h utan reaktivering.
+            int earliestHour = entries.Min(e=>e.start.Hour);
+            int latestHour = entries.Max(e=>e.start.Hour);
+            int? comfortStart = null; int? comfortEnd = null; // inclusive
+            if (cheapestHours.Count>0) { comfortStart = cheapestHours.Min(); comfortEnd = cheapestHours.Max(); }
+
+            // Hitta turn_off kandidatblock (utanför comfort). Varje block max 2h.
+            (int start,int end)? turnOffBlock = null; // inclusive end
+            if (turnOffHours.Count>0)
             {
-                var hour = e.start.Hour;
-                var key = new TimeSpan(hour, 0, 0).ToString();
-                string tempState;
-                if (cheapestHours.Contains(hour)) tempState = "comfort";
-                else if (turnOffHours.Contains(hour)) tempState = "turn_off";
-                else tempState = "eco";
-                dayObj[key] = new JsonObject { ["domesticHotWaterTemperature"] = tempState };
+                var ordered = turnOffHours.OrderBy(h=>h).ToList();
+                int blockStart = ordered[0]; int prev = ordered[0];
+                var blocks = new List<(int start,int end)>();
+                for (int i=1;i<ordered.Count;i++)
+                {
+                    var h = ordered[i];
+                    if (h==prev+1) { prev = h; continue; }
+                    blocks.Add((blockStart, prev));
+                    blockStart = h; prev=h;
+                }
+                blocks.Add((blockStart, prev));
+                // filtrera ut block som overlappar comfort
+                if (comfortStart.HasValue && comfortEnd.HasValue)
+                    blocks = blocks.Where(b => b.end < comfortStart.Value || b.start > comfortEnd.Value).ToList();
+                // Begränsa varje block till max 2h längd genom att kapa slut
+                blocks = blocks.Select(b => (b.start, end: b.start + Math.Min(1, b.end - b.start))) // max 2h => length (end-start+1) <=2
+                               .ToList();
+                // välj block med högsta genomsnittspris (använd entries dictionary)
+                if (blocks.Count>0)
+                {
+                    decimal Score((int start,int end) b){ decimal sum=0; int c=0; for(int h=b.start;h<=b.end;h++){ if (entries.Any(e=>e.start.Hour==h)) { sum += entries.First(e=>e.start.Hour==h).value; c++; } } return c==0?0:sum/c; }
+                    turnOffBlock = blocks.OrderByDescending(b=>Score(b)).First();
+                }
+            }
+
+            // Försök placera turn_off före comfort annars efter.
+            bool turnOffBeforeComfort = false;
+            if (turnOffBlock.HasValue && comfortStart.HasValue)
+            {
+                turnOffBeforeComfort = turnOffBlock.Value.end < comfortStart.Value;
+            }
+            // Om comfort saknas spelar placeringen ingen roll.
+
+            var segments = new List<(int hour,string state)>();
+            void AddSegment(int hour,string state){ if (!segments.Any(s=>s.hour==hour)) segments.Add((hour,state)); else { // ersätt bara om olika state och senare logik kräver
+                    for(int i=0;i<segments.Count;i++){ if (segments[i].hour==hour){ segments[i]=(hour,state); break; } }
+                }}
+
+            AddSegment(earliestHour, "eco");
+
+            if (turnOffBlock.HasValue && turnOffBeforeComfort)
+            {
+                AddSegment(turnOffBlock.Value.start, "turn_off");
+                int reActHour = turnOffBlock.Value.end + 1; // reaktivera efter block (max 2h block redan garanterad)
+                if (!comfortStart.HasValue || reActHour < comfortStart.Value)
+                    AddSegment(reActHour, "eco");
+            }
+
+            if (comfortStart.HasValue)
+            {
+                AddSegment(comfortStart.Value, "comfort");
+                if (comfortEnd.HasValue && comfortEnd.Value < latestHour)
+                {
+                    AddSegment(comfortEnd.Value + 1, "eco");
+                }
+            }
+
+            if (turnOffBlock.HasValue && !turnOffBeforeComfort)
+            {
+                // place after comfort (or only block if no comfort)
+                AddSegment(turnOffBlock.Value.start, "turn_off");
+                int reActHour = turnOffBlock.Value.end + 1;
+                if (reActHour <= latestHour)
+                {
+                    AddSegment(reActHour, "eco");
+                }
+            }
+
+            // Sort segments
+            segments = segments.OrderBy(s=>s.hour).ToList();
+            // Säkra att inga turn_off sträckor >2h (om comfort/eco borttogs senare)
+            for(int i=0;i<segments.Count;i++)
+            {
+                if (segments[i].state=="turn_off")
+                {
+                    int startH = segments[i].hour;
+                    int nextH = (i+1<segments.Count) ? segments[i+1].hour : latestHour+1; // exclusive
+                    if (nextH - startH > 2) // >2h betyder >2 timmars varaktighet
+                    {
+                        // Infoga reaktivation efter 2h om plats finns, annars ta bort turn_off
+                        int reactHour = startH + 2;
+                        if (segments.Count < 4)
+                        {
+                            segments.Insert(i+1, (reactHour, "eco"));
+                        }
+                        else
+                        {
+                            // ta bort turn_off blocket
+                            segments.RemoveAt(i); i--; continue;
+                        }
+                    }
+                }
+            }
+            // Trimma till max 4 segment enligt prioritetsordning: baseline eco, comfort start, turn_off + react eco, post comfort eco.
+            // Om fler än 4: ta bort post-comfort eco först, sedan turn_off (båda segmenten), sist react eco.
+            if (segments.Count > 4)
+            {
+                // ta bort eco efter comfort (om det finns och inte baseline)
+                int idxPostComfortEco = -1;
+                if (comfortEnd.HasValue)
+                {
+                    idxPostComfortEco = segments.FindIndex(s=>s.state=="eco" && s.hour==comfortEnd.Value+1);
+                }
+                if (idxPostComfortEco>0 && segments.Count>4) { segments.RemoveAt(idxPostComfortEco); }
+            }
+            if (segments.Count > 4)
+            {
+                // ta bort turn_off + dess reactivation
+                int idxTO = segments.FindIndex(s=>s.state=="turn_off");
+                if (idxTO>=0)
+                {
+                    // ev. reactivation direkt efter?
+                    if (idxTO+1 < segments.Count && segments[idxTO+1].state=="eco")
+                        segments.RemoveAt(idxTO+1);
+                    segments.RemoveAt(idxTO);
+                }
+            }
+            if (segments.Count > 4)
+            {
+                // fallback: ta bort sista eco (förutom baseline)
+                for(int i=segments.Count-1;i>=0 && segments.Count>4;i--)
+                {
+                    if (segments[i].state=="eco" && segments[i].hour!=earliestHour)
+                        segments.RemoveAt(i);
+                }
+            }
+            // Bygg dayObj
+            var dayObj = new JsonObject();
+            foreach (var seg in segments.OrderBy(s=>s.hour))
+            {
+                var key = new TimeSpan(seg.hour,0,0).ToString();
+                dayObj[key] = new JsonObject { ["domesticHotWaterTemperature"] = seg.state };
             }
             actionsCombined[weekdayName] = dayObj;
         }
@@ -197,6 +329,17 @@ internal static class BatchRunner
         }
         if (actionsCombined.Count > 0)
         {
+            // Fyll alla övriga veckodagar som inte byggts med en default 10:00 comfort
+            string[] allDays = new[]{"monday","tuesday","wednesday","thursday","friday","saturday","sunday"};
+            foreach (var dName in allDays)
+            {
+                if (!actionsCombined.ContainsKey(dName))
+                {
+                    var dayObj = new JsonObject();
+                    dayObj["10:00:00"] = new JsonObject { ["domesticHotWaterTemperature"] = "comfort" };
+                    actionsCombined[dName] = dayObj;
+                }
+            }
             var root = new JsonObject { ["0"] = new JsonObject { ["actions"] = actionsCombined } };
             dynamicSchedulePayload = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
         }
@@ -238,7 +381,10 @@ internal static class BatchRunner
         {
             try
             {
-                var daikin = new DaikinApiClient(token);
+                bool log = (config["Daikin:Http:Log"] ?? config["Daikin:HttpLog"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
+                bool logBody = (config["Daikin:Http:LogBody"] ?? config["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
+                int.TryParse(config["Daikin:Http:BodySnippetLength"], out var snipLen);
+                var daikin = new DaikinApiClient(token, log, logBody, snipLen == 0 ? null : snipLen);
                 // Overrides via config (optional)
                 var overrideSite = config["Daikin:SiteId"];
                 var overrideDevice = config["Daikin:DeviceId"];
@@ -257,17 +403,19 @@ internal static class BatchRunner
                 }
                 if (appliedSite == null) { Console.WriteLine("[Schedule] no site found"); return false; }
                 if (!string.IsNullOrWhiteSpace(overrideDevice)) appliedDevice = overrideDevice;
-                JsonElement? pickedDeviceElem = null;
+                string? pickedDeviceJson = null; // hold raw JSON of picked device to avoid disposed JsonDocument issues
                 if (appliedDevice == null)
                 {
                     var devicesJson = await daikin.GetDevicesAsync(appliedSite);
-                    using var dDoc = JsonDocument.Parse(devicesJson);
-                    if (dDoc.RootElement.ValueKind == JsonValueKind.Array && dDoc.RootElement.GetArrayLength() > 0)
+                    using (var dDoc = JsonDocument.Parse(devicesJson))
                     {
-                        var elem = dDoc.RootElement[0];
-                        appliedDevice = elem.GetProperty("id").GetString();
-                        pickedDeviceElem = elem;
-                        Console.WriteLine($"[Schedule] devices count={dDoc.RootElement.GetArrayLength()} pickedDevice={appliedDevice}");
+                        if (dDoc.RootElement.ValueKind == JsonValueKind.Array && dDoc.RootElement.GetArrayLength() > 0)
+                        {
+                            var elem = dDoc.RootElement[0];
+                            appliedDevice = elem.GetProperty("id").GetString();
+                            pickedDeviceJson = elem.GetRawText();
+                            Console.WriteLine($"[Schedule] devices count={dDoc.RootElement.GetArrayLength()} pickedDevice={appliedDevice}");
+                        }
                     }
                 }
                 if (appliedDevice == null) { Console.WriteLine("[Schedule] no device found"); return false; }
@@ -276,26 +424,34 @@ internal static class BatchRunner
                 string? embeddedId = overrideEmbedded;
                 if (embeddedId == null)
                 {
-                    if (pickedDeviceElem == null)
+                    if (pickedDeviceJson == null)
                     {
-                        // fetch again to parse
+                        // fetch again to locate the selected device
                         var devicesJson = await daikin.GetDevicesAsync(appliedSite);
-                        using var dDoc = JsonDocument.Parse(devicesJson);
-                        if (dDoc.RootElement.ValueKind == JsonValueKind.Array)
+                        using (var dDoc = JsonDocument.Parse(devicesJson))
                         {
-                            foreach (var item in dDoc.RootElement.EnumerateArray())
+                            if (dDoc.RootElement.ValueKind == JsonValueKind.Array)
                             {
-                                if (item.TryGetProperty("id", out var idEl) && idEl.GetString() == appliedDevice)
-                                { pickedDeviceElem = item; break; }
+                                foreach (var item in dDoc.RootElement.EnumerateArray())
+                                {
+                                    if (item.TryGetProperty("id", out var idEl) && idEl.GetString() == appliedDevice)
+                                    { pickedDeviceJson = item.GetRawText(); break; }
+                                }
                             }
                         }
                     }
-                    if (pickedDeviceElem.HasValue && pickedDeviceElem.Value.TryGetProperty("managementPoints", out var mpArray) && mpArray.ValueKind == JsonValueKind.Array)
+                    if (pickedDeviceJson != null)
                     {
-                        foreach (var mp in mpArray.EnumerateArray())
+                        using (var devDoc = JsonDocument.Parse(pickedDeviceJson))
                         {
-                            if (mp.TryGetProperty("managementPointType", out var mpt) && mpt.GetString() == "domesticHotWaterTank" && mp.TryGetProperty("embeddedId", out var emb))
-                            { embeddedId = emb.GetString(); Console.WriteLine($"[Schedule] found DHW embeddedId={embeddedId}"); break; }
+                            if (devDoc.RootElement.TryGetProperty("managementPoints", out var mpArray) && mpArray.ValueKind == JsonValueKind.Array)
+                            {
+                                foreach (var mp in mpArray.EnumerateArray())
+                                {
+                                    if (mp.TryGetProperty("managementPointType", out var mpt) && mpt.GetString() == "domesticHotWaterTank" && mp.TryGetProperty("embeddedId", out var emb))
+                                    { embeddedId = emb.GetString(); Console.WriteLine($"[Schedule] found DHW embeddedId={embeddedId}"); break; }
+                                }
+                            }
                         }
                     }
                 }
@@ -308,6 +464,7 @@ internal static class BatchRunner
                 }
 
                 // PUT full schedules then enable current schedule (scheduleId 0)
+                Console.WriteLine($"[Schedule] applying schedule bytes={dynamicSchedulePayload.Length} mode={scheduleMode}");
                 await daikin.PutSchedulesAsync(appliedDevice, embeddedId, scheduleMode, dynamicSchedulePayload);
                 await daikin.SetCurrentScheduleAsync(appliedDevice, embeddedId, scheduleMode, "0");
                 Console.WriteLine($"[Schedule] apply OK site={appliedSite} device={appliedDevice} embedded={embeddedId} mode={scheduleMode} retry={isRetry}");

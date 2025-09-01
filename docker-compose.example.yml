@@ -1,0 +1,31 @@
+version: '3.9'
+services:
+  prisstyrning:
+    image: ghcr.io/your-org/prisstyrning:latest # ändra till korrekt owner
+    container_name: prisstyrning
+    restart: unless-stopped
+    environment:
+      # Home Assistant
+      PRISSTYRNING_HomeAssistant__BaseUrl: "http://homeassistant:8123"
+      PRISSTYRNING_HomeAssistant__Token: "REDACTED_LONG_LIVED_TOKEN"
+      PRISSTYRNING_HomeAssistant__Sensor: "sensor.nordpool_sell"
+      # Daikin OAuth tokens (om du vill injicera direkt istället för fil lagring)
+      PRISSTYRNING_Daikin__AccessToken: ""
+      PRISSTYRNING_Daikin__RefreshToken: ""
+      # Styr schema (false = applicera aldrig automatiskt)
+      PRISSTYRNING_Daikin__ApplySchedule: "false"
+      # Schemagenereringsparametrar
+      PRISSTYRNING_Schedule__ComfortHours: "3"
+      PRISSTYRNING_Schedule__TurnOffPercentile: "0.9"
+      PRISSTYRNING_Schedule__TurnOffMaxConsecutive: "2"
+      # Loggning mot Daikin HTTP
+      PRISSTYRNING_Daikin__Http__Log: "true"
+      PRISSTYRNING_Daikin__Http__LogBody: "false"
+      PRISSTYRNING_Daikin__Http__BodySnippetLength: "400"
+      # Övrigt
+      PRISSTYRNING_Storage__Directory: "/data"
+      PRISSTYRNING_PORT: "5000"
+    volumes:
+      - ./data:/data
+    ports:
+      - "5000:5000"

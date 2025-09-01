@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -7,51 +8,113 @@ public class DaikinApiClient
 {
     private readonly HttpClient _client;
     private readonly string _accessToken;
+    private readonly bool _log;
+    private readonly bool _logBody;
+    private readonly int _bodySnippetLen;
 
-    public DaikinApiClient(string accessToken)
+    public DaikinApiClient(string accessToken, bool log = false, bool logBody = false, int? snippetLen = null)
     {
         _accessToken = accessToken;
         _client = new HttpClient();
         _client.DefaultRequestHeaders.Add("Authorization", $"Bearer {_accessToken}");
+    // Force logging for every request regardless of supplied flag.
+    _log = true;
+        _logBody = logBody;
+        _bodySnippetLen = (snippetLen is > 20 and < 5000) ? snippetLen!.Value : 300;
+    }
+
+    private async Task<(HttpResponseMessage resp, string body)> SendAsync(HttpRequestMessage req)
+    {
+        var sw = Stopwatch.StartNew();
+        HttpResponseMessage? resp = null;
+        string body = string.Empty;
+        try
+        {
+            resp = await _client.SendAsync(req);
+            body = await resp.Content.ReadAsStringAsync();
+            sw.Stop();
+            if (_log)
+            {
+                var path = req.RequestUri != null ? req.RequestUri.PathAndQuery : "(null)";
+                if (resp.IsSuccessStatusCode)
+                {
+                    if (_logBody)
+                    {
+                        var snippet = Trim(body, _bodySnippetLen);
+                        Console.WriteLine($"[DaikinHTTP] {req.Method} {path} -> {(int)resp.StatusCode} {resp.StatusCode} in {sw.ElapsedMilliseconds}ms bytes={body.Length} body='{snippet}'");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[DaikinHTTP] {req.Method} {path} -> {(int)resp.StatusCode} {resp.StatusCode} in {sw.ElapsedMilliseconds}ms bytes={body.Length}");
+                    }
+                }
+                else
+                {
+                    var snippet = Trim(body, _bodySnippetLen);
+                    Console.WriteLine($"[DaikinHTTP][Error] {req.Method} {path} -> {(int)resp.StatusCode} {resp.StatusCode} in {sw.ElapsedMilliseconds}ms body='{snippet}'");
+                }
+            }
+            return (resp, body);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            if (_log)
+            {
+                var path = req.RequestUri != null ? req.RequestUri.PathAndQuery : "(null)";
+                Console.WriteLine($"[DaikinHTTP][Exception] {req.Method} {path} after {sw.ElapsedMilliseconds}ms ex={ex.GetType().Name} msg={Trim(ex.Message,200)}");
+            }
+            throw;
+        }
+    }
+
+    private static string Trim(string? s, int max)
+    {
+        if (string.IsNullOrEmpty(s)) return string.Empty;
+        s = s.Replace('\n',' ').Replace('\r',' ');
+        return s.Length <= max ? s : s.Substring(0, max) + "...";
     }
 
     public async Task<string> GetSitesAsync()
     {
-        var sitesUrl = "https://api.onecta.daikineurope.com/v1/sites";
-        var response = await _client.GetAsync(sitesUrl);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadAsStringAsync();
+        var url = "https://api.onecta.daikineurope.com/v1/sites";
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        var (resp, body) = await SendAsync(req);
+        resp.EnsureSuccessStatusCode();
+        return body;
     }
 
     public async Task<string> GetDevicesAsync(string siteId)
     {
-        var devicesUrl = $"https://api.onecta.daikineurope.com/v1/sites/{siteId}/gateway-devices";
-        var response = await _client.GetAsync(devicesUrl);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadAsStringAsync();
+    // NOTE: The correct endpoint for listing gateway devices is not site-scoped.
+    // Keeping the signature (siteId) for backward compatibility but ignoring it now.
+    var url = "https://api.onecta.daikineurope.com/v1/gateway-devices";
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        var (resp, body) = await SendAsync(req);
+        resp.EnsureSuccessStatusCode();
+        return body;
     }
 
     public async Task<string> GetScheduleAsync(string deviceId)
     {
-        var scheduleUrl = $"https://api.onecta.daikineurope.com/v1/devices/{deviceId}/dhw/schedule";
-        var response = await _client.GetAsync(scheduleUrl);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadAsStringAsync();
+        var url = $"https://api.onecta.daikineurope.com/v1/devices/{deviceId}/dhw/schedule";
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        var (resp, body) = await SendAsync(req);
+        resp.EnsureSuccessStatusCode();
+        return body;
     }
 
     // Legacy DHW endpoint (may not work on newer API – kept for fallback).
     public async Task<string> LegacySetDhwScheduleAsync(string deviceId, string schedulePayload)
     {
         var url = $"https://api.onecta.daikineurope.com/v1/devices/{deviceId}/dhw/schedule";
-        var content = new StringContent(schedulePayload, System.Text.Encoding.UTF8, "application/json");
-        var response = await _client.PostAsync(url, content);
-        var body = await response.Content.ReadAsStringAsync();
-        if (!response.IsSuccessStatusCode)
+        using var req = new HttpRequestMessage(HttpMethod.Post, url)
         {
-            var snippet = body?.Replace('\n',' ').Replace('\r',' ');
-            if (snippet != null && snippet.Length > 300) snippet = snippet.Substring(0,300) + "...";
-            throw new HttpRequestException($"LegacySetDhwSchedule { (int)response.StatusCode } {response.StatusCode} body='{snippet}'");
-        }
+            Content = new StringContent(schedulePayload, System.Text.Encoding.UTF8, "application/json")
+        };
+        var (resp, body) = await SendAsync(req);
+        if (!resp.IsSuccessStatusCode)
+            throw new HttpRequestException($"LegacySetDhwSchedule {(int)resp.StatusCode} {resp.StatusCode} body='{Trim(body,300)}'");
         return body;
     }
 
@@ -59,15 +122,13 @@ public class DaikinApiClient
     public async Task PutSchedulesAsync(string gatewayDeviceId, string embeddedId, string mode, string schedulePayload)
     {
         var url = $"https://api.onecta.daikineurope.com/v1/gateway-devices/{gatewayDeviceId}/management-points/{embeddedId}/schedule/{mode}/schedules";
-        var content = new StringContent(schedulePayload, System.Text.Encoding.UTF8, "application/json");
-        var response = await _client.PutAsync(url, content);
-        var body = await response.Content.ReadAsStringAsync();
-        if (!response.IsSuccessStatusCode)
+        using var req = new HttpRequestMessage(HttpMethod.Put, url)
         {
-            var snippet = body?.Replace('\n',' ').Replace('\r',' ');
-            if (snippet != null && snippet.Length > 300) snippet = snippet.Substring(0,300) + "...";
-            throw new HttpRequestException($"PutSchedules { (int)response.StatusCode } {response.StatusCode} body='{snippet}'");
-        }
+            Content = new StringContent(schedulePayload, System.Text.Encoding.UTF8, "application/json")
+        };
+        var (resp, body) = await SendAsync(req);
+        if (!resp.IsSuccessStatusCode)
+            throw new HttpRequestException($"PutSchedules {(int)resp.StatusCode} {resp.StatusCode} body='{Trim(body,300)}'");
     }
 
     // Enable a specific schedule id (expects 204)
@@ -76,14 +137,12 @@ public class DaikinApiClient
         var url = $"https://api.onecta.daikineurope.com/v1/gateway-devices/{gatewayDeviceId}/management-points/{embeddedId}/schedule/{mode}/current";
         var bodyObj = new { scheduleId, enabled = true };
         var json = JsonSerializer.Serialize(bodyObj);
-        var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
-        var response = await _client.PutAsync(url, content);
-        if (!response.IsSuccessStatusCode)
+        using var req = new HttpRequestMessage(HttpMethod.Put, url)
         {
-            var body = await response.Content.ReadAsStringAsync();
-            var snippet = body?.Replace('\n',' ').Replace('\r',' ');
-            if (snippet != null && snippet.Length > 300) snippet = snippet.Substring(0,300) + "...";
-            throw new HttpRequestException($"SetCurrentSchedule { (int)response.StatusCode } {response.StatusCode} body='{snippet}'");
-        }
+            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+        };
+        var (resp, body) = await SendAsync(req);
+        if (!resp.IsSuccessStatusCode)
+            throw new HttpRequestException($"SetCurrentSchedule {(int)resp.StatusCode} {resp.StatusCode} body='{Trim(body,300)}'");
     }
 }
