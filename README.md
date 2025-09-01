@@ -9,6 +9,7 @@ Price based DHW (domestic hot water) schedule generation for Daikin ONECTA with 
 * Configuration via `appsettings*.json` and/or environment variables (env has highest precedence; optional `PRISSTYRNING_` prefix)
 * Frontend: price chart + schedule grid + current DHW schedule visualization
 * Multi-arch container build (linux/amd64 & linux/arm64) via GitHub Actions
+* See `ROADMAP.md` for planned improvements / technical debt
 
 ## Configuration
 Precedence (highest first):

@@ -14,7 +14,7 @@
   <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.0" />
   <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
     <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
-    <None Update="appsettings.Development.json" CopyToOutputDirectory="PreserveNewest" />
+  <None Update="appsettings.development.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
