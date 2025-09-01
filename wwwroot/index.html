@@ -34,7 +34,7 @@
 	<div style="display:grid;gap:1.2rem;">
 		<div>
 			<div style="font-size:.75rem;opacity:.8;margin-bottom:.2rem;">Genererat DHW (preview)</div>
-			<div id="scheduleGrid"></div>
+			<div id="scheduleGrid" class="schedule-grid"></div>
 			<div style="margin-top:.5rem;display:flex;flex-wrap:wrap;gap:.4rem;align-items:center;font-size:.7rem;border:1px solid #333;padding:.4rem;border-radius:4px;">
 				<label>DHW GatewayDeviceId <input id="putGatewayDeviceId" placeholder="gatewayDeviceId" style="width:160px;font-size:.7rem;"/></label>
 				<label>DHW EmbeddedId <input id="putEmbeddedId" placeholder="2" style="width:120px;font-size:.7rem;"/></label>
@@ -48,34 +48,27 @@
 			<div style="font-size:.75rem;opacity:.8;margin:.6rem 0 .2rem;display:flex;align-items:center;gap:.6rem;">Aktuellt DHW (live)
 		  <button id="toggleCurrentRaw" style="font-size:.6rem;">Visa rå JSON</button>
         </div>
-			<div id="currentScheduleGrid"></div>
+			<div id="currentScheduleGrid" class="schedule-grid"></div>
 			<pre id="currentScheduleRaw" style="margin-top:.3rem;max-height:220px;overflow:auto;display:none;"></pre>
 		</div>
 	</div>
 	<pre id="schedulePreview" style="margin-top:.5rem;"></pre>
 </section>
 <style>
-	#scheduleGrid{display:grid;gap:2px;margin-top:.4rem;max-width:100%;overflow:auto;font-family:system-ui,Segoe UI,Arial,sans-serif;}
-	#scheduleGrid .day-row{display:grid;grid-template-columns:70px repeat(24,1fr);gap:2px;}
-	#scheduleGrid .hdr{font-size:.65rem;text-align:center;opacity:.7;}
-	#scheduleGrid .day-label{font-size:.65rem;text-align:right;padding:2px 4px;white-space:nowrap;}
-	#scheduleGrid .cell{height:20px;position:relative;border:1px solid #222;border-radius:2px;overflow:hidden;}
-	#scheduleGrid .cell span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:.55rem;font-weight:600;color:#111;text-shadow:0 0 2px rgba(255,255,255,.6);} 
-	/* Duplicate styles for current schedule grid */
-	#currentScheduleGrid{display:grid;gap:2px;margin-top:.4rem;max-width:100%;overflow:auto;font-family:system-ui,Segoe UI,Arial,sans-serif;}
-	#currentScheduleGrid .day-row{display:grid;grid-template-columns:70px repeat(24,1fr);gap:2px;}
-	#currentScheduleGrid .hdr{font-size:.65rem;text-align:center;opacity:.7;}
-	#currentScheduleGrid .day-label{font-size:.65rem;text-align:right;padding:2px 4px;white-space:nowrap;}
-	#currentScheduleGrid .cell{height:20px;position:relative;border:1px solid #222;border-radius:2px;overflow:hidden;}
-	#currentScheduleGrid .cell span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:.55rem;font-weight:600;color:#111;text-shadow:0 0 2px rgba(255,255,255,.6);} 
+	.schedule-grid{display:grid;gap:2px;margin-top:.4rem;max-width:100%;overflow:auto;font-family:system-ui,Segoe UI,Arial,sans-serif;}
+	.schedule-grid .day-row{display:grid;grid-template-columns:70px repeat(24,1fr);gap:2px;}
+	.schedule-grid .hdr{font-size:.65rem;text-align:center;opacity:.7;}
+	.schedule-grid .day-label{font-size:.65rem;text-align:right;padding:2px 4px;white-space:nowrap;}
+	.schedule-grid .cell{height:20px;position:relative;border:1px solid #222;border-radius:2px;overflow:hidden;}
+	.schedule-grid .cell span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:.55rem;font-weight:600;color:#111;text-shadow:0 0 2px rgba(255,255,255,.6);} 
 	.sch-box{width:14px;height:14px;border:1px solid #222;border-radius:3px;display:inline-block;}
 	.comfort{background:linear-gradient(#8BC34A,#66BB6A);} 
 	.eco{background:linear-gradient(#90A4AE,#607D8B);} 
 	.off{background:linear-gradient(#EF5350,#D32F2F);} 
-	#scheduleGrid .cell.comfort span{color:#0d2;}#scheduleGrid .cell.eco span{color:#eee;}#scheduleGrid .cell.off span{color:#fff;}
-	#scheduleGrid .now{outline:2px solid #fff;box-shadow:0 0 4px 2px #fff inset;}
-	#currentScheduleGrid .cell.comfort span{color:#0d2;}#currentScheduleGrid .cell.eco span{color:#eee;}#currentScheduleGrid .cell.off span{color:#fff;}
-	#currentScheduleGrid .now{outline:2px solid #fff;box-shadow:0 0 4px 2px #fff inset;}
+	.schedule-grid .cell.comfort span{color:#0d2;}
+	.schedule-grid .cell.eco span{color:#eee;}
+	.schedule-grid .cell.off span{color:#fff;}
+	.schedule-grid .now{outline:2px solid #fff;box-shadow:0 0 4px 2px #fff inset;}
 </style>
 <!-- Removed separate Daikin section (merged above) -->
 </main>

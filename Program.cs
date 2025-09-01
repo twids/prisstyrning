@@ -199,11 +199,16 @@ daikinGroup.MapGet("/gateway/schedule", async (IConfiguration cfg, HttpContext c
         }
         if (dev == null) return Results.Json(new { status="error", error="Device not found", requestedDeviceId=deviceId });
 
-        // Helper to extract schedule container and metadata from a schedule node
+        // Helper to extract schedule container and metadata from a schedule node (supports DHW schedule.value nesting)
         (bool ok, JsonElement container, string? detectedMode, string? currentScheduleId) Extract(JsonElement scheduleNode)
         {
             string? curId = null; string? mode = null; JsonElement container = default;
             if (scheduleNode.ValueKind != JsonValueKind.Object) return (false, container, null, null);
+            // If node has a 'value' object (DHW often wraps data) prefer descending once
+            if (scheduleNode.TryGetProperty("value", out var valueNode) && valueNode.ValueKind==JsonValueKind.Object)
+            {
+                scheduleNode = valueNode;
+            }
             // Primary: modes collection
             if (scheduleNode.TryGetProperty("modes", out var modesRoot) && modesRoot.ValueKind==JsonValueKind.Object)
             {

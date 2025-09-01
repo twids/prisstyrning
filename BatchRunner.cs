@@ -2,6 +2,10 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
 
+internal enum HourState { None, Comfort, Eco, TurnOff }
+internal record ClassifiedHour(int Hour, decimal Price, HourState State);
+internal record GeneratedSegments(List<(int hour,string state)> Segments);
+
 internal static class BatchRunner
 {
     public static async Task<object> GenerateSchedulePreview(IConfiguration config)
@@ -200,7 +204,7 @@ internal static class BatchRunner
             }
             // Om comfort saknas spelar placeringen ingen roll.
 
-            var segments = new List<(int hour,string state)>();
+            var segments = new List<(int hour,string state)>(); // will be compressed to <=4
             void AddSegment(int hour,string state){ if (!segments.Any(s=>s.hour==hour)) segments.Add((hour,state)); else { // ersätt bara om olika state och senare logik kräver
                     for(int i=0;i<segments.Count;i++){ if (segments[i].hour==hour){ segments[i]=(hour,state); break; } }
                 }}
@@ -235,7 +239,7 @@ internal static class BatchRunner
                 }
             }
 
-            // Sort segments
+            // Sort & normalize segments
             segments = segments.OrderBy(s=>s.hour).ToList();
             // Säkra att inga turn_off sträckor >2h (om comfort/eco borttogs senare)
             for(int i=0;i<segments.Count;i++)
@@ -364,8 +368,27 @@ internal static class BatchRunner
                     schedulePreview = scheduleNode
                 };
                 var jsonOut = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true });
-                var filePath = Path.Combine(storageDir, $"prices-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.json");
-                File.WriteAllText(filePath, jsonOut);
+                var targetName = $"prices-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.json";
+                var tmpPath = Path.Combine(storageDir, targetName + ".tmp");
+                var finalPath = Path.Combine(storageDir, targetName);
+                const int maxAttempts = 5;
+                for (int attempt=1; attempt<=maxAttempts; attempt++)
+                {
+                    try
+                    {
+                        await File.WriteAllTextAsync(tmpPath, jsonOut);
+                        // atomic-ish replace
+                        if (File.Exists(finalPath)) File.Delete(finalPath);
+                        File.Move(tmpPath, finalPath);
+                        Console.WriteLine($"[Persist] wrote {finalPath} (attempt {attempt})");
+                        break;
+                    }
+                    catch (IOException ioex) when (attempt < maxAttempts)
+                    {
+                        Console.WriteLine($"[Persist] retry {attempt} IO: {ioex.Message}");
+                        await Task.Delay(100 * attempt);
+                    }
+                }
             }
             catch (Exception ex)
             {
