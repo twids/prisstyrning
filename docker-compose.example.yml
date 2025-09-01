@@ -12,18 +12,42 @@ services:
       # Daikin OAuth tokens (om du vill injicera direkt istället för fil lagring)
       PRISSTYRNING_Daikin__AccessToken: ""
       PRISSTYRNING_Daikin__RefreshToken: ""
+      # Daikin OAuth klient (KRÄVS för riktig OAuth-flöde)
+      PRISSTYRNING_Daikin__ClientId: "CHANGE_ME_CLIENT_ID"
+      PRISSTYRNING_Daikin__ClientSecret: "CHANGE_ME_CLIENT_SECRET" # valfri om public client
+      # Redirect / scope / offline access
+      PRISSTYRNING_Daikin__RedirectUri: "https://example.com/auth/daikin/callback"
+      PRISSTYRNING_Daikin__RedirectPath: "/auth/daikin/callback"
+      PRISSTYRNING_Daikin__Scope: "openid onecta:basic.integration"
+      PRISSTYRNING_Daikin__IncludeOfflineAccess: "false" # sätt true för offline_access
+      # Anpassa endpoints endast om Daikin ändrar bas-URL:er
+      PRISSTYRNING_Daikin__AuthEndpoint: "https://idp.onecta.daikineurope.com/v1/oidc/authorize"
+      PRISSTYRNING_Daikin__TokenEndpoint: "https://idp.onecta.daikineurope.com/v1/oidc/token"
+      PRISSTYRNING_Daikin__RevokeEndpoint: "https://idp.onecta.daikineurope.com/v1/oidc/revoke"
+      PRISSTYRNING_Daikin__IntrospectEndpoint: "https://idp.onecta.daikineurope.com/v1/oidc/introspect"
+      # Tokenfil (lagras i volym så tokens överlever omstart)
+      PRISSTYRNING_Daikin__TokenFile: "/data/tokens/daikin.json"
       # Styr schema (false = applicera aldrig automatiskt)
       PRISSTYRNING_Daikin__ApplySchedule: "false"
+      # (Valfria) forcerade mål vid auto-apply / put
+      PRISSTYRNING_Daikin__SiteId: ""
+      PRISSTYRNING_Daikin__DeviceId: ""
+      PRISSTYRNING_Daikin__ManagementPointEmbeddedId: "" # t.ex. 2 för DHW
+      PRISSTYRNING_Daikin__ScheduleMode: "heating"
       # Schemagenereringsparametrar
       PRISSTYRNING_Schedule__ComfortHours: "3"
       PRISSTYRNING_Schedule__TurnOffPercentile: "0.9"
       PRISSTYRNING_Schedule__TurnOffMaxConsecutive: "2"
+      PRISSTYRNING_Schedule__TurnOffSpikeDeltaPct: "15"
+      PRISSTYRNING_Schedule__TurnOffNeighborWindow: "2"
+      PRISSTYRNING_Schedule__ComfortNextHourMaxIncreasePct: "25"
       # Loggning mot Daikin HTTP
       PRISSTYRNING_Daikin__Http__Log: "true"
       PRISSTYRNING_Daikin__Http__LogBody: "false"
       PRISSTYRNING_Daikin__Http__BodySnippetLength: "400"
       # Övrigt
       PRISSTYRNING_Storage__Directory: "/data"
+      PRISSTYRNING_PublicBaseUrl: "https://example.com"
       PRISSTYRNING_PORT: "5000"
     volumes:
       - ./data:/data

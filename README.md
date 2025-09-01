@@ -1,47 +1,67 @@
-# Prisstyrning
+﻿# Prisstyrning
 
-Prisbaserad schemagenerering för Daikin (DHW) med integration mot Home Assistant.
+Price based DHW (domestic hot water) schedule generation for Daikin ONECTA with Home Assistant price ingestion.
 
-## Funktioner
-- Hämtar timpriser via Home Assistant sensor
-- Genererar DHW-schema (comfort/eco/turn_off) med max 4 actions/dag och turn_off ≤ 2h
-- Visar och laddar upp schema till Daikin gateway (manual PUT, ingen automatisk applicering om inte konfigurerat)
-- Stöd för både `appsettings.json` och miljövariabler (env vars prioriteras)
-- Frontend med prisgraf och schema-grid
+## Features
+* Fetches hourly prices from a Home Assistant sensor
+* Generates DHW schedule (comfort / eco / turn_off) with: max 4 actions per day, any turn_off block ≤ 2 hours
+* Manual upload (PUT) of schedule to Daikin gateway (no auto-apply unless explicitly enabled)
+* Configuration via `appsettings*.json` and/or environment variables (env has highest precedence; optional `PRISSTYRNING_` prefix)
+* Frontend: price chart + schedule grid + current DHW schedule visualization
+* Multi-arch container build (linux/amd64 & linux/arm64) via GitHub Actions
 
-## Konfiguration
-Hierarki (högst prioritet först):
-1. Miljövariabler (prefixed `PRISSTYRNING_` eller utan prefix)
+## Configuration
+Precedence (highest first):
+1. Environment variables (with or without `PRISSTYRNING_` prefix)
 2. `appsettings.development.json`
 3. `appsettings.json`
 
-### Viktiga nycklar
-| Sektion | Nyckel | Miljövariabel | Beskrivning |
-|--------|-------|---------------|-------------|
-| HomeAssistant | BaseUrl | `PRISSTYRNING_HomeAssistant__BaseUrl` | URL till HA (ex http://homeassistant:8123) |
-| HomeAssistant | Token | `PRISSTYRNING_HomeAssistant__Token` | Long-lived Access Token |
-| HomeAssistant | Sensor | `PRISSTYRNING_HomeAssistant__Sensor` | Sensor-id för prisdata |
-| Daikin | ApplySchedule | `PRISSTYRNING_Daikin__ApplySchedule` | true/false om schemat får pushas automatiskt |
-| Daikin | AccessToken | `PRISSTYRNING_Daikin__AccessToken` | (Valfritt) injicera access token |
-| Daikin | RefreshToken | `PRISSTYRNING_Daikin__RefreshToken` | (Valfritt) refresh token |
-| Daikin:Http | Log | `PRISSTYRNING_Daikin__Http__Log` | Logga HTTP (true/false) |
-| Daikin:Http | LogBody | `PRISSTYRNING_Daikin__Http__LogBody` | Logga body (true/false) |
-| Daikin:Http | BodySnippetLength | `PRISSTYRNING_Daikin__Http__BodySnippetLength` | Max antal tecken av body |
-| Schedule | ComfortHours | `PRISSTYRNING_Schedule__ComfortHours` | Antal timmar comfort-block |
-| Schedule | TurnOffPercentile | `PRISSTYRNING_Schedule__TurnOffPercentile` | Percentil gräns för turn_off |
-| Schedule | TurnOffMaxConsecutive | `PRISSTYRNING_Schedule__TurnOffMaxConsecutive` | Max sammanhängande turn_off timmar (innan komprimering) |
-| Storage | Directory | `PRISSTYRNING_Storage__Directory` | Katalog för persisterad pris/schedule snapshot |
-| Root | PORT | `PRISSTYRNING_PORT` | Lyssningsport |
+Double underscore `__` maps to nested sections (standard .NET config convention).
 
-Dubbelunderscore `__` används för att representera kolon / nested sektioner i .NET config.
+### Key settings
+| Section | Key | Environment variable | Description |
+|---------|-----|----------------------|-------------|
+| HomeAssistant | BaseUrl | `PRISSTYRNING_HomeAssistant__BaseUrl` | Home Assistant base URL (e.g. http://homeassistant:8123) |
+| HomeAssistant | Token | `PRISSTYRNING_HomeAssistant__Token` | Long-lived access token |
+| HomeAssistant | Sensor | `PRISSTYRNING_HomeAssistant__Sensor` | Sensor entity id providing prices |
+| Daikin | ClientId | `PRISSTYRNING_Daikin__ClientId` | OAuth client id (required for full OAuth) |
+| Daikin | ClientSecret | `PRISSTYRNING_Daikin__ClientSecret` | OAuth client secret (may be empty for public client) |
+| Daikin | RedirectUri | `PRISSTYRNING_Daikin__RedirectUri` | Explicit redirect URI (else built from PublicBaseUrl + RedirectPath) |
+| Daikin | RedirectPath | `PRISSTYRNING_Daikin__RedirectPath` | Path appended to PublicBaseUrl when RedirectUri not set |
+| Daikin | Scope | `PRISSTYRNING_Daikin__Scope` | OAuth scope (default `openid onecta:basic.integration`) |
+| Daikin | IncludeOfflineAccess | `PRISSTYRNING_Daikin__IncludeOfflineAccess` | true adds `offline_access` to scope |
+| Daikin | AuthEndpoint | `PRISSTYRNING_Daikin__AuthEndpoint` | Override authorize endpoint (rare) |
+| Daikin | TokenEndpoint | `PRISSTYRNING_Daikin__TokenEndpoint` | Override token endpoint |
+| Daikin | RevokeEndpoint | `PRISSTYRNING_Daikin__RevokeEndpoint` | Override revoke endpoint |
+| Daikin | IntrospectEndpoint | `PRISSTYRNING_Daikin__IntrospectEndpoint` | Override introspection endpoint |
+| Daikin | TokenFile | `PRISSTYRNING_Daikin__TokenFile` | Persisted token file path (default `tokens/daikin.json`) |
+| Daikin | AccessToken | `PRISSTYRNING_Daikin__AccessToken` | (Optional) inject access token (bypasses OAuth refresh) |
+| Daikin | RefreshToken | `PRISSTYRNING_Daikin__RefreshToken` | (Optional) inject refresh token |
+| Daikin | ApplySchedule | `PRISSTYRNING_Daikin__ApplySchedule` | true/false allow automatic apply (default false in compose) |
+| Daikin | SiteId | `PRISSTYRNING_Daikin__SiteId` | Force site id for apply (auto-pick first if empty) |
+| Daikin | DeviceId | `PRISSTYRNING_Daikin__DeviceId` | Force device id for apply |
+| Daikin | ManagementPointEmbeddedId | `PRISSTYRNING_Daikin__ManagementPointEmbeddedId` | Force embedded id (e.g. 2 for DHW) |
+| Daikin | ScheduleMode | `PRISSTYRNING_Daikin__ScheduleMode` | Mode when uploading schedules (heating/cooling/waterHeating etc.) |
+| Daikin:Http | Log | `PRISSTYRNING_Daikin__Http__Log` | Log HTTP requests (true/false) |
+| Daikin:Http | LogBody | `PRISSTYRNING_Daikin__Http__LogBody` | Include body snippets (true/false) |
+| Daikin:Http | BodySnippetLength | `PRISSTYRNING_Daikin__Http__BodySnippetLength` | Max chars of logged body snippet |
+| Schedule | ComfortHours | `PRISSTYRNING_Schedule__ComfortHours` | Sequential comfort hours target (default 3) |
+| Schedule | TurnOffPercentile | `PRISSTYRNING_Schedule__TurnOffPercentile` | Percentile threshold (e.g. 0.9) for expensive hours |
+| Schedule | TurnOffMaxConsecutive | `PRISSTYRNING_Schedule__TurnOffMaxConsecutive` | Max consecutive expensive hours pre-trim (<=6) |
+| Schedule | TurnOffSpikeDeltaPct | `PRISSTYRNING_Schedule__TurnOffSpikeDeltaPct` | Min % above neighborhood avg to count as spike |
+| Schedule | TurnOffNeighborWindow | `PRISSTYRNING_Schedule__TurnOffNeighborWindow` | Neighborhood half-window size for spike avg |
+| Schedule | ComfortNextHourMaxIncreasePct | `PRISSTYRNING_Schedule__ComfortNextHourMaxIncreasePct` | Max % increase allowed for extending comfort block |
+| Storage | Directory | `PRISSTYRNING_Storage__Directory` | Directory for persisted price/schedule snapshots |
+| Root | PublicBaseUrl | `PRISSTYRNING_PublicBaseUrl` | Base URL used to auto-build redirect (if RedirectUri missing) |
+| Root | PORT | `PRISSTYRNING_PORT` | ASP.NET listening port (defaults 5000) |
 
-## Kör lokalt med Docker
-Bygg image:
+## Run locally (Docker)
+Build image:
 ```bash
 docker build -t prisstyrning:local .
 ```
 
-Starta container (exempel):
+Run container:
 ```bash
 docker run --rm -p 5000:5000 \
   -e PRISSTYRNING_HomeAssistant__BaseUrl=http://homeassistant:8123 \
@@ -52,34 +72,55 @@ docker run --rm -p 5000:5000 \
   prisstyrning:local
 ```
 
-## docker-compose
-Se `docker-compose.example.yml`:
+## docker-compose example
+Full example (see `docker-compose.example.yml` for latest & comments):
 ```yaml
 version: '3.9'
 services:
   prisstyrning:
-    image: ghcr.io/your-org/prisstyrning:latest
+    image: ghcr.io/twids/prisstyrning:latest
+    restart: unless-stopped
     environment:
       PRISSTYRNING_HomeAssistant__BaseUrl: http://homeassistant:8123
       PRISSTYRNING_HomeAssistant__Token: REDACTED
       PRISSTYRNING_HomeAssistant__Sensor: sensor.nordpool_sell
+      PRISSTYRNING_Daikin__ClientId: CHANGE_ME
+      PRISSTYRNING_Daikin__ClientSecret: CHANGE_ME
+      PRISSTYRNING_Daikin__RedirectUri: https://example.com/auth/daikin/callback
+      PRISSTYRNING_Daikin__ApplySchedule: "false" # keep false for transparency
+      PRISSTYRNING_Schedule__ComfortHours: "3"
+      PRISSTYRNING_Schedule__TurnOffPercentile: "0.9"
+      PRISSTYRNING_Schedule__TurnOffMaxConsecutive: "2"
       PRISSTYRNING_Storage__Directory: /data
-      PRISSTYRNING_Daikin__ApplySchedule: "false"
+      PRISSTYRNING_PORT: "5000"
     volumes:
       - ./data:/data
     ports:
       - "5000:5000"
 ```
-Starta:
+Start:
 ```bash
 docker compose -f docker-compose.example.yml up -d
 ```
 
 ## GitHub Container Registry
-Workflow finns i `.github/workflows/container.yml` och pushar till `ghcr.io/<owner>/prisstyrning` vid push på master/tag.
+Workflow (`.github/workflows/container.yml`) builds multi-arch and pushes manifest to:
+```
+ghcr.io/<owner>/prisstyrning
+```
+On `master` pushes and version tags (`v*.*.*`).
 
-## OAuth Tokens
-Efter OAuth-flödet sparas tokens i `tokens/daikin.json` (om filvolym mountas). Du kan också injicera miljövariabler för engångstest.
+## Multi-arch notes
+The GitHub Actions pipeline enables `linux/amd64` and `linux/arm64` with QEMU emulation. If you only need one architecture, drop the `platforms:` line for faster builds.
 
-## Licens
-Ingen licens specificerad ännu.
+## OAuth tokens
+After completing OAuth, tokens are persisted to `tokens/daikin.json` (if the volume is mounted). You may also inject `Daikin:AccessToken` / `Daikin:RefreshToken` directly for testing.
+
+## Development hints
+* Local price snapshots stored as `data/prices-*.json`
+* Frontend served from `wwwroot` (static + minimal JS)
+* Schedule preview endpoint: `/api/schedule/preview`
+* Current DHW schedule endpoint: `/api/daikin/gateway/schedule?embeddedId=2`
+
+## License
+No license specified yet (all rights reserved by default). Add a LICENSE file before broader distribution.
