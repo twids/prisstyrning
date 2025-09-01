@@ -11,6 +11,9 @@ public class DaikinApiClient
     private readonly bool _log;
     private readonly bool _logBody;
     private readonly int _bodySnippetLen;
+    private static readonly object _devicesLock = new();
+    private static string? _devicesCacheJson;
+    private static DateTimeOffset _devicesCacheFetched;
 
     public DaikinApiClient(string accessToken, bool log = false, bool logBody = false, int? snippetLen = null)
     {
@@ -93,6 +96,26 @@ public class DaikinApiClient
         var (resp, body) = await SendAsync(req);
         resp.EnsureSuccessStatusCode();
         return body;
+    }
+
+    // Cached variant with simple rate-limit: if last fetch < minIntervalAgo return cached JSON
+    public async Task<string> GetDevicesCachedAsync(string siteId, TimeSpan minInterval)
+    {
+        lock (_devicesLock)
+        {
+            if (_devicesCacheJson != null && (DateTimeOffset.UtcNow - _devicesCacheFetched) < minInterval)
+            {
+                if (_log) Console.WriteLine("[DaikinHTTP][Cache] gateway-devices hit");
+                return _devicesCacheJson;
+            }
+        }
+        var fresh = await GetDevicesAsync(siteId);
+        lock (_devicesLock)
+        {
+            _devicesCacheJson = fresh;
+            _devicesCacheFetched = DateTimeOffset.UtcNow;
+        }
+        return fresh;
     }
 
     public async Task<string> GetScheduleAsync(string deviceId)

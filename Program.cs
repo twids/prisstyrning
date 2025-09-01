@@ -186,8 +186,8 @@ daikinGroup.MapGet("/gateway/schedule", async (IConfiguration cfg, HttpContext c
     if (token == null) return Results.Json(new { status="unauthorized", error="Not authorized" });
     try
     {
-        var client = new DaikinApiClient(token, log:true);
-        var json = await client.GetDevicesAsync("_ignored");
+    var client = new DaikinApiClient(token, log:true);
+    var json = await client.GetDevicesCachedAsync("_ignored", TimeSpan.FromSeconds(10));
         if (string.IsNullOrWhiteSpace(json)) return Results.Json(new { status="error", error="Empty gateway-devices" });
         using var doc = JsonDocument.Parse(json);
         if (doc.RootElement.ValueKind != JsonValueKind.Array) return Results.Json(new { status="error", error="Unexpected root" });
