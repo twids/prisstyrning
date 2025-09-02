@@ -68,6 +68,44 @@ function renderPriceChart(prices){
 }
 
 // Zon-hantering
+// User settings panel
+const comfortHoursEl = document.getElementById('comfortHours');
+const turnOffPercentileEl = document.getElementById('turnOffPercentile');
+const turnOffMaxConsecutiveEl = document.getElementById('turnOffMaxConsecutive');
+const saveUserSettingsBtn = document.getElementById('saveUserSettings');
+const userSettingsStatus = document.getElementById('userSettingsStatus');
+
+async function loadUserSettings() {
+  try {
+    const res = await fetch('/api/user/settings');
+    if(!res.ok) throw new Error('Could not load settings');
+    const d = await res.json();
+    if(comfortHoursEl) comfortHoursEl.value = d.ComfortHours !== undefined ? d.ComfortHours : 3;
+    if(turnOffPercentileEl) turnOffPercentileEl.value = d.TurnOffPercentile !== undefined ? d.TurnOffPercentile : 0.9;
+    if(turnOffMaxConsecutiveEl) turnOffMaxConsecutiveEl.value = d.TurnOffMaxConsecutive !== undefined ? d.TurnOffMaxConsecutive : 2;
+    if(userSettingsStatus) userSettingsStatus.textContent = '';
+  } catch(e) { if(userSettingsStatus) userSettingsStatus.textContent = 'Error: ' + e.message; }
+}
+
+async function saveUserSettings() {
+  if(userSettingsStatus) userSettingsStatus.textContent = 'Saving...';
+  try {
+    const body = {
+      ComfortHours: comfortHoursEl.value || 3,
+      TurnOffPercentile: turnOffPercentileEl.value || 0.9,
+      TurnOffMaxConsecutive: turnOffMaxConsecutiveEl.value || 2
+    };
+    const res = await fetch('/api/user/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if(!res.ok) throw new Error(await res.text());
+    userSettingsStatus.textContent = 'Saved!';
+  } catch(e) { userSettingsStatus.textContent = 'Error: ' + e.message; }
+}
+if(saveUserSettingsBtn) saveUserSettingsBtn.onclick = saveUserSettings;
+loadUserSettings();
 const zoneSelect=document.getElementById('zoneSelect');
 const saveZoneBtn=document.getElementById('saveZone');
 const refreshNordpoolBtn=document.getElementById('refreshNordpool');

@@ -1,4 +1,8 @@
-﻿using Microsoft.AspNetCore.Builder;
+﻿
+
+
+
+using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
@@ -6,6 +10,8 @@ using Microsoft.AspNetCore.Http;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Linq;
+
+// ... existing code ...
 
 var builder = WebApplication.CreateBuilder(args);
 // Läser in en extra lokal override-fil (gemener) om den finns
@@ -232,10 +238,33 @@ scheduleGroup.MapGet("/preview", async (HttpContext c) => {
     JsonArray? today = memToday; JsonArray? tomorrow = memTomorrow;
     if (today == null || today.Count == 0)
     {
-    try { var np = new NordpoolClient(cfg["Price:Nordpool:Currency"] ?? "SEK", cfg["Price:Nordpool:PageId"]); var fetched = await np.GetTodayTomorrowAsync(zone); today = fetched.today; tomorrow = fetched.tomorrow; PriceMemory.Set(today, tomorrow); NordpoolPersistence.Save(zone, today, tomorrow, cfg["Storage:Directory"] ?? "data"); }
+        try { var np = new NordpoolClient(cfg["Price:Nordpool:Currency"] ?? "SEK", cfg["Price:Nordpool:PageId"]); var fetched = await np.GetTodayTomorrowAsync(zone); today = fetched.today; tomorrow = fetched.tomorrow; PriceMemory.Set(today, tomorrow); NordpoolPersistence.Save(zone, today, tomorrow, cfg["Storage:Directory"] ?? "data"); }
         catch { }
     }
-    var (payload, msg) = ScheduleAlgorithm.Generate(today, tomorrow, cfg);
+    // Läs per-user inställningar från user.json
+    var comfortHours = cfg["Schedule:ComfortHours"];
+    var turnOffPercentile = cfg["Schedule:TurnOffPercentile"];
+    var turnOffMaxConsecutive = cfg["Schedule:TurnOffMaxConsecutive"];
+    try {
+    var path = System.IO.Path.Combine("tokens", userId ?? "default", "user.json");
+        if (System.IO.File.Exists(path)) {
+            var json = System.IO.File.ReadAllText(path);
+            var node = System.Text.Json.Nodes.JsonNode.Parse(json) as System.Text.Json.Nodes.JsonObject;
+            if (node != null) {
+                comfortHours = node["ComfortHours"]?.ToString() ?? comfortHours;
+                turnOffPercentile = node["TurnOffPercentile"]?.ToString() ?? turnOffPercentile;
+                turnOffMaxConsecutive = node["TurnOffMaxConsecutive"]?.ToString() ?? turnOffMaxConsecutive;
+            }
+        }
+    } catch {}
+    // Skapa en temporär config med per-user värden
+    var configDict = new Dictionary<string, string?> {
+        { "Schedule:ComfortHours", comfortHours },
+        { "Schedule:TurnOffPercentile", turnOffPercentile },
+        { "Schedule:TurnOffMaxConsecutive", turnOffMaxConsecutive }
+    };
+    var configUser = new ConfigurationBuilder().AddInMemoryCollection(configDict).AddConfiguration(cfg).Build();
+    var (payload, msg) = ScheduleAlgorithm.Generate(today, tomorrow, configUser);
     return Results.Json(new { schedulePayload = payload, generated = payload != null, message = msg, zone });
 });
 scheduleGroup.MapPost("/apply", async () => { var result = await BatchRunner.RunBatchAsync(builder.Configuration, applySchedule:false, persist:true); return Results.Json(result); });

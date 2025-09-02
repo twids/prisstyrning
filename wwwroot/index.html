@@ -9,53 +9,73 @@
 <section id="daikinStatus">
 	<h2>Daikin</h2>
 	<div style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin-bottom:.4rem;">
-		<div id="authStatus">Laddar...</div>
-		<button id="authStart">Starta OAuth</button>
+		<div id="authStatus">Loading...</div>
+		<button id="authStart">Start OAuth</button>
 		<button id="showSites">Sites</button>
-			<button id="showGateway">Gateway</button>
-		<button id="refreshStatus" style="display:none;">Uppdatera status</button>
+		<button id="showGateway">Gateway</button>
+		<button id="refreshStatus" style="display:none;">Refresh status</button>
 	</div>
 	<pre id="daikinData" style="max-height:220px;overflow:auto;"></pre>
-		<pre id="gatewayData" style="max-height:260px;overflow:auto;margin-top:.5rem;"></pre>
+	<pre id="gatewayData" style="max-height:260px;overflow:auto;margin-top:.5rem;"></pre>
 </section>
 
 <section id="priceBlock">
-	<h2>Priser & Nordpool Zon</h2>
-	<div style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;">
-		<label>Zone:
-			<select id="zoneSelect" style="min-width:90px;">
-				<option value="SE1">SE1</option>
-				<option value="SE2">SE2</option>
-				<option value="SE3">SE3</option>
-				<option value="SE4">SE4</option>
-				<option value="NO1">NO1</option>
-				<option value="NO2">NO2</option>
-				<option value="NO3">NO3</option>
-				<option value="NO4">NO4</option>
-				<option value="NO5">NO5</option>
-				<option value="DK1">DK1</option>
-				<option value="DK2">DK2</option>
-				<option value="FI">FI</option>
-				<option value="EE">EE</option>
-				<option value="LV">LV</option>
-				<option value="LT">LT</option>
-			</select>
-		</label>
-	<button id="saveZone">Spara zon</button>
-	<span id="latestPriceMeta" style="font-size:.7rem;opacity:.7"></span>
-	</div>
-	<div style="margin-top:1rem;">
-		<div style="display:flex;align-items:center;gap:.8rem;">
-			<canvas id="chart" height="120" style="max-width:100%;"></canvas>
-			<span id="zoneLabel" style="font-size:.9rem;opacity:.8;font-weight:500;padding-left:1rem;"></span>
-		</div>
-		<div id="chartMeta" style="font-size:.8rem;opacity:.7;margin-top:.3rem;"></div>
-	</div>
+  <div id="userSettingsPanel" class="schedule-settings">
+    <h3 style="margin-top:0;font-size:1.1rem;">Schedule settings (per user)</h3>
+    <div class="settings-row">
+      <label for="comfortHours">Comfort hours:</label>
+      <input id="comfortHours" type="number" min="1" max="12" value="3" title="Number of hours per day for comfort (hot water). Default: 3">
+      <span class="tooltip">How many hours per day should be set to comfort mode (hot water)?</span>
+    </div>
+    <div class="settings-row">
+      <label for="turnOffPercentile">Turn-off percentile:</label>
+      <input id="turnOffPercentile" type="number" min="0.5" max="0.99" step="0.01" value="0.9" title="Percentile for turn-off selection. Default: 0.9">
+      <span class="tooltip">Above this price percentile, hours are considered for turn-off. (0.9 = top 10% most expensive hours)</span>
+    </div>
+    <div class="settings-row">
+      <label for="turnOffMaxConsecutive">Max consecutive turn-off hours:</label>
+      <input id="turnOffMaxConsecutive" type="number" min="1" max="6" value="2" title="Maximum consecutive turn-off hours. Default: 2">
+      <span class="tooltip">Maximum number of hours in a row that can be turned off. Default: 2</span>
+    </div>
+    <button id="saveUserSettings" style="margin-top:.5rem;">Save settings</button>
+    <span id="userSettingsStatus" class="error"></span>
+  </div>
+  <h2>Prices & Nordpool Zone</h2>
+  <div style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;">
+    <label>Zone:
+      <select id="zoneSelect" style="min-width:90px;">
+        <option value="SE1">SE1</option>
+        <option value="SE2">SE2</option>
+        <option value="SE3">SE3</option>
+        <option value="SE4">SE4</option>
+        <option value="NO1">NO1</option>
+        <option value="NO2">NO2</option>
+        <option value="NO3">NO3</option>
+        <option value="NO4">NO4</option>
+        <option value="NO5">NO5</option>
+        <option value="DK1">DK1</option>
+        <option value="DK2">DK2</option>
+        <option value="FI">FI</option>
+        <option value="EE">EE</option>
+        <option value="LV">LV</option>
+        <option value="LT">LT</option>
+      </select>
+    </label>
+    <button id="saveZone">Save zone</button>
+    <span id="latestPriceMeta" style="font-size:.7rem;opacity:.7"></span>
+    <span id="zoneLabel" class="zone-label"></span>
+  </div>
+  <div style="margin-top:1rem;">
+    <div style="display:flex;align-items:center;gap:.8rem;">
+      <canvas id="chart" height="120" style="max-width:100%;"></canvas>
+    </div>
+    <div id="chartMeta" style="font-size:.8rem;opacity:.7;margin-top:.3rem;"></div>
+  </div>
 </section>
-<section id="schedule"><h2>DHW Schema (varmvatten) – Preview & Aktuellt</h2>
+<section id="schedule"><h2>DHW Schedule – Preview & Current</h2>
 	<div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.4rem;">
-		<button id="loadSchedule">Generera</button>
-		<button id="loadCurrentSchedule" title="Hämta aktuellt DHW (embeddedId 2) schema från Daikin">Aktuellt DHW-schema</button>
+		<button id="loadSchedule">Generate</button>
+		<button id="loadCurrentSchedule" title="Fetch current DHW (embeddedId 2) schedule from Daikin">Current DHW schedule</button>
 		<span id="scheduleMsg" style="font-size:.8rem;opacity:.8"></span>
 		<span style="display:inline-flex;align-items:center;gap:.25rem;font-size:.7rem;">Legend:
 			<span class="sch-box comfort"></span> comfort
@@ -65,20 +85,20 @@
 	</div>
 	<div style="display:grid;gap:1.2rem;">
 		<div>
-			<div style="font-size:.75rem;opacity:.8;margin-bottom:.2rem;">Genererat DHW (preview)</div>
+			<div style="font-size:.75rem;opacity:.8;margin-bottom:.2rem;">Generated DHW (preview)</div>
 			<div id="scheduleGrid" class="schedule-grid"></div>
 			<div style="margin-top:.5rem;display:flex;flex-wrap:wrap;gap:.4rem;align-items:center;font-size:.7rem;border:1px solid #333;padding:.4rem;border-radius:4px;">
 				<label>DHW GatewayDeviceId <input id="putGatewayDeviceId" placeholder="gatewayDeviceId" style="width:160px;font-size:.7rem;"/></label>
 				<label>DHW EmbeddedId <input id="putEmbeddedId" placeholder="2" style="width:120px;font-size:.7rem;"/></label>
 				<label>Mode <input id="putMode" value="heating" style="width:80px;font-size:.7rem;"/></label>
 				<label>Activate ScheduleId <input id="putActivateId" placeholder="(optional)" style="width:120px;font-size:.7rem;"/></label>
-				<button id="applyScheduleBtn" title="Ladda upp schedulePayload från preview">PUT schedule</button>
+				<button id="applyScheduleBtn" title="Upload schedulePayload from preview">PUT schedule</button>
 				<span id="applyResult" style="opacity:.8;"></span>
 			</div>
 		</div>
 		<div>
-			<div style="font-size:.75rem;opacity:.8;margin:.6rem 0 .2rem;display:flex;align-items:center;gap:.6rem;">Aktuellt DHW (live)
-		  <button id="toggleCurrentRaw" style="font-size:.6rem;">Visa rå JSON</button>
+			<div style="font-size:.75rem;opacity:.8;margin:.6rem 0 .2rem;display:flex;align-items:center;gap:.6rem;">Current DHW (live)
+		  <button id="toggleCurrentRaw" style="font-size:.6rem;">Show raw JSON</button>
         </div>
 			<div id="currentScheduleGrid" class="schedule-grid"></div>
 			<pre id="currentScheduleRaw" style="margin-top:.3rem;max-height:220px;overflow:auto;display:none;"></pre>
