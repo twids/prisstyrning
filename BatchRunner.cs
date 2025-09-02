@@ -201,36 +201,8 @@ internal static class BatchRunner
                 {
                     try { scheduleNode = JsonNode.Parse(dynamicSchedulePayload); } catch { /* ignorerar parse-fel */ }
                 }
-                var snapshot = new
-                {
-                    fetchedAt = DateTimeOffset.UtcNow,
-                    zone,
-                    today = rawToday,
-                    tomorrow = rawTomorrow,
-                    schedulePreview = scheduleNode
-                };
-                var jsonOut = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true });
-                var targetName = $"prices-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.json";
-                var tmpPath = Path.Combine(storageDir, targetName + ".tmp");
-                var finalPath = Path.Combine(storageDir, targetName);
-                const int maxAttempts = 5;
-                for (int attempt=1; attempt<=maxAttempts; attempt++)
-                {
-                    try
-                    {
-                        await File.WriteAllTextAsync(tmpPath, jsonOut);
-                        // atomic-ish replace
-                        if (File.Exists(finalPath)) File.Delete(finalPath);
-                        File.Move(tmpPath, finalPath);
-                        Console.WriteLine($"[Persist] wrote {finalPath} (attempt {attempt})");
-                        break;
-                    }
-                    catch (IOException ioex) when (attempt < maxAttempts)
-                    {
-                        Console.WriteLine($"[Persist] retry {attempt} IO: {ioex.Message}");
-                        await Task.Delay(100 * attempt);
-                    }
-                }
+                // Prisschema ska inte sparas med tid i namnet längre
+                // Om du vill spara schema, använd prices-YYYYMMDD-ZON.json via NordpoolPersistence
             }
             catch (Exception ex)
             {

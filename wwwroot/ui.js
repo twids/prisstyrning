@@ -1,6 +1,5 @@
 async function j(url, opts){const r=await fetch(url,opts);if(!r.ok) throw new Error(r.status+" "+url);return r.json();}
 const authStatusEl=document.getElementById('authStatus');
-const priceDataEl=document.getElementById('priceData');
 const schedulePreviewEl=document.getElementById('schedulePreview');
 const daikinDataEl=document.getElementById('daikinData');
 const gatewayDataEl=document.getElementById('gatewayData');
@@ -19,14 +18,53 @@ async function loadAuth(){
   catch(e){authStatusEl.textContent='Fel: '+e.message;authStatusEl.className='bad';}
 }
 async function loadPrices(){
-  priceDataEl.textContent='...';
   try{
     const d=await j('/api/prices/memory');
-    priceDataEl.textContent=JSON.stringify(d,null,2);
-    if(d.updated){
-      const meta=document.getElementById('latestPriceMeta'); if(meta) meta.textContent='Senast uppdaterad: '+new Date(d.updated).toLocaleString();
+    // Update chart and meta only
+    const meta=document.getElementById('latestPriceMeta');
+    if(d.updated && meta) meta.textContent='Senast uppdaterad: '+new Date(d.updated).toLocaleString();
+    const allPrices = [];
+    if(Array.isArray(d.today)) allPrices.push(...d.today);
+    if(Array.isArray(d.tomorrow)) allPrices.push(...d.tomorrow);
+    if(allPrices.length){
+      renderPriceChart(allPrices);
     }
-  }catch(e){priceDataEl.textContent='Fel: '+e.message;}
+  }catch(e){
+    const meta=document.getElementById('latestPriceMeta');
+    if(meta) meta.textContent='Fel: '+e.message;
+  }
+}
+function renderPriceChart(prices){
+  const ctx = document.getElementById('chart').getContext('2d');
+  // Separera dagens och morgondagens priser
+  const today = [], tomorrow = [];
+  for(const p of prices){
+    // Extrahera tid exakt som i prisfilen, utan Date-konvertering
+    let dateStr = p.start.replace(/\u002B/g, '+');
+    dateStr = dateStr.replace(/(\.\d{7})/, '');
+    // Behåll strängen som x-värde
+    const x = dateStr;
+    // Jämför datumdelen
+    const dayStr = dateStr.slice(0,10);
+    const todayStr = (new Date()).toISOString().slice(0,10);
+    if(dayStr === todayStr){
+      today.push({ x, y: p.value });
+    }else{
+      tomorrow.push({ x, y: p.value });
+    }
+  }
+  if(window._priceChart) window._priceChart.destroy();
+  window._priceChart = new Chart(ctx, {
+    type: 'line',
+    data: { datasets: [
+      today.length ? { label: 'Idag', data: today, borderColor: '#1976d2', backgroundColor: 'rgba(25,118,210,0.1)', fill: true } : null,
+      tomorrow.length ? { label: 'Imorgon', data: tomorrow, borderColor: '#FFB74D', backgroundColor: 'rgba(255,183,77,0.1)', fill: true } : null
+    ].filter(Boolean) },
+    options: {
+      scales: { x: { type: 'time', time: { unit: 'hour' } }, y: { beginAtZero: true } },
+      plugins: { legend: { display: true } }
+    }
+  });
 }
 
 // Zon-hantering
@@ -37,8 +75,17 @@ const zoneStatus=document.getElementById('zoneStatus');
 
 async function loadZone(){
   if(!zoneSelect) return;
-  try{ const d=await j('/api/prices/zone'); if(d.zone){ zoneSelect.value=d.zone; zoneStatus.textContent='Aktiv zon: '+d.zone; } }
-  catch(e){ zoneStatus.textContent='Zonfel: '+e.message; }
+  try{ const d=await j('/api/prices/zone');
+    if(d.zone){
+      zoneSelect.value=d.zone;
+      const zoneLabel = document.getElementById('zoneLabel');
+      if(zoneLabel) zoneLabel.textContent = 'Aktiv zon: ' + d.zone;
+    }
+  }
+  catch(e){
+    const zoneLabel = document.getElementById('zoneLabel');
+    if(zoneLabel) zoneLabel.textContent = 'Zonfel: ' + e.message;
+  }
 }
 async function saveZone(){
   if(!zoneSelect) return; zoneStatus.textContent='Sparar...';
@@ -205,17 +252,28 @@ async function loadGateway(){
   }catch(e){ gatewayDataEl.textContent='Fel gateway: '+e.message; }
 }
 
-document.getElementById('refreshPrices').onclick=loadPrices;
+const refreshPricesBtn = document.getElementById('refreshPrices');
+if(refreshPricesBtn) refreshPricesBtn.onclick = loadPrices;
 
-document.getElementById('loadSchedule').onclick=loadSchedule;
-const btnCur=document.getElementById('loadCurrentSchedule'); if(btnCur) btnCur.onclick=loadCurrentSchedule;
+const loadScheduleBtn = document.getElementById('loadSchedule');
+if(loadScheduleBtn) loadScheduleBtn.onclick = loadSchedule;
 
-document.getElementById('authStart').onclick=startAuth;
+const btnCur = document.getElementById('loadCurrentSchedule');
+if(btnCur) btnCur.onclick = loadCurrentSchedule;
 
-document.getElementById('showSites').onclick=loadSites;
-const gwBtn=document.getElementById('showGateway'); if(gwBtn) gwBtn.onclick=loadGateway;
+const authStartBtn = document.getElementById('authStart');
+if(authStartBtn) authStartBtn.onclick = startAuth;
 
-loadAuth();loadPrices();
+const showSitesBtn = document.getElementById('showSites');
+if(showSitesBtn) showSitesBtn.onclick = loadSites;
+
+const gwBtn = document.getElementById('showGateway');
+if(gwBtn) gwBtn.onclick = loadGateway;
+
+window.addEventListener('DOMContentLoaded', () => {
+  loadAuth();
+  loadPrices();
+});
 
 // Autofyll gatewayDeviceId & embeddedId direkt vid sidladdning
 async function tryAutoFillScheduleIds(){

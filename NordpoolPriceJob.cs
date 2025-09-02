@@ -68,13 +68,44 @@ internal class NordpoolPriceJob : IHostedService, IDisposable
         {
             try
             {
-                var (today, tomorrow) = await client.GetTodayTomorrowAsync(zone);
-                NordpoolPersistence.Save(zone, today, tomorrow, _cfg["Storage:Directory"] ?? "data");
+                var storageDir = _cfg["Storage:Directory"] ?? "data";
+                var file = NordpoolPersistence.GetLatestFile(zone, storageDir);
+                bool needUpdate = false;
+                JsonArray? today = null;
+                JsonArray? tomorrow = null;
+                if (file != null && File.Exists(file))
+                {
+                    var json = File.ReadAllText(file);
+                    var doc = System.Text.Json.JsonDocument.Parse(json);
+                    var root = doc.RootElement;
+                    if (root.TryGetProperty("today", out var tEl) && tEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                        today = JsonNode.Parse(tEl.GetRawText()) as JsonArray;
+                    if (root.TryGetProperty("tomorrow", out var tmEl) && tmEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                        tomorrow = JsonNode.Parse(tmEl.GetRawText()) as JsonArray;
+                    // Kontroll: efter kl 13:00, om tomorrow saknas eller är tom, hämta ny data
+                    var now = DateTimeOffset.Now;
+                    if (now.Hour >= 13 && (tomorrow == null || tomorrow.Count == 0))
+                    {
+                        needUpdate = true;
+                        Console.WriteLine($"[NordpoolPriceJob] saknar morgondagens priser för zone={zone}, hämtar...");
+                    }
+                }
+                else
+                {
+                    needUpdate = true;
+                }
+                if (needUpdate)
+                {
+                    var fetched = await client.GetTodayTomorrowAsync(zone);
+                    today = fetched.today;
+                    tomorrow = fetched.tomorrow;
+                    NordpoolPersistence.Save(zone, today, tomorrow, storageDir);
+                }
                 if (string.Equals(zone, defaultZone, StringComparison.OrdinalIgnoreCase))
                 {
                     PriceMemory.Set(today, tomorrow);
                 }
-                Console.WriteLine($"[NordpoolPriceJob] ok zone={zone} today={today.Count} tomorrow={tomorrow.Count}");
+                Console.WriteLine($"[NordpoolPriceJob] ok zone={zone} today={(today!=null?today.Count:0)} tomorrow={(tomorrow!=null?tomorrow.Count:0)}");
             }
             catch (Exception ex)
             {

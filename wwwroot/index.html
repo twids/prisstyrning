@@ -18,8 +18,9 @@
 	<pre id="daikinData" style="max-height:220px;overflow:auto;"></pre>
 		<pre id="gatewayData" style="max-height:260px;overflow:auto;margin-top:.5rem;"></pre>
 </section>
-<section id="prices"><h2>Priser</h2><button id="refreshPrices">Uppdatera</button><pre id="priceData"></pre></section>
-<section id="zoneSection"><h2>Nordpool Zon</h2>
+
+<section id="priceBlock">
+	<h2>Priser & Nordpool Zon</h2>
 	<div style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;">
 		<label>Zone:
 			<select id="zoneSelect" style="min-width:90px;">
@@ -40,13 +41,17 @@
 				<option value="LT">LT</option>
 			</select>
 		</label>
-		<button id="saveZone">Spara zon</button>
-		<button id="refreshNordpool">Hämta priser nu</button>
-		<span id="zoneStatus" style="font-size:.75rem;opacity:.8"></span>
-		<span id="latestPriceMeta" style="font-size:.7rem;opacity:.7"></span>
+	<button id="saveZone">Spara zon</button>
+	<span id="latestPriceMeta" style="font-size:.7rem;opacity:.7"></span>
+	</div>
+	<div style="margin-top:1rem;">
+		<div style="display:flex;align-items:center;gap:.8rem;">
+			<canvas id="chart" height="120" style="max-width:100%;"></canvas>
+			<span id="zoneLabel" style="font-size:.9rem;opacity:.8;font-weight:500;padding-left:1rem;"></span>
+		</div>
+		<div id="chartMeta" style="font-size:.8rem;opacity:.7;margin-top:.3rem;"></div>
 	</div>
 </section>
-<section id="priceChart"><h2>Prisgraf</h2><canvas id="chart" height="120" style="max-width:100%;"></canvas><div id="chartMeta" style="font-size:.8rem;opacity:.7;margin-top:.3rem;"></div></section>
 <section id="schedule"><h2>DHW Schema (varmvatten) – Preview & Aktuellt</h2>
 	<div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.4rem;">
 		<button id="loadSchedule">Generera</button>

@@ -11,6 +11,13 @@ internal static class NordpoolPersistence
             baseDir ??= "data";
             var dir = Path.Combine(baseDir, "nordpool", zone);
             Directory.CreateDirectory(dir);
+            var file = Path.Combine(dir, $"prices-{DateTimeOffset.UtcNow:yyyyMMdd}-{zone}.json");
+            if (File.Exists(file))
+            {
+                // Filen finns redan, ingen ny skrivning behövs
+                Console.WriteLine($"[Persist] cache hit: {file}");
+                return;
+            }
             var snapshot = new JsonObject
             {
                 ["zone"] = zone,
@@ -19,7 +26,6 @@ internal static class NordpoolPersistence
                 ["tomorrow"] = tomorrow.DeepClone() as JsonArray ?? new JsonArray()
             };
             var json = snapshot.ToJsonString(new JsonSerializerOptions{ WriteIndented = true });
-            var file = Path.Combine(dir, $"prices-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.json");
             File.WriteAllText(file, json);
         }
         catch (Exception ex)
@@ -34,6 +40,14 @@ internal static class NordpoolPersistence
         baseDir ??= "data";
         var dir = Path.Combine(baseDir, "nordpool", zone);
         if (!Directory.Exists(dir)) return null;
-        return Directory.GetFiles(dir, "prices-*.json").OrderByDescending(f => f).FirstOrDefault();
+        // Endast filer med formatet prices-YYYYMMDD-ZON.json (ignorera tid)
+        var files = Directory.GetFiles(dir, $"prices-???????.json");
+        // Extra filter: matchar exakt prices-YYYYMMDD-ZON.json
+        var validFiles = files.Where(f => {
+            var name = Path.GetFileName(f);
+            return name == $"prices-{DateTime.UtcNow:yyyyMMdd}-{zone}.json" ||
+                System.Text.RegularExpressions.Regex.IsMatch(name, $"^prices-\\d{{8}}-{zone}\\.json$");
+        }).OrderByDescending(f => f).ToList();
+        return validFiles.FirstOrDefault();
     }
 }
