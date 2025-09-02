@@ -1,9 +1,9 @@
 ﻿# Prisstyrning
 
-Price based DHW (domestic hot water) schedule generation for Daikin ONECTA with Home Assistant price ingestion.
+Price based DHW (domestic hot water) schedule generation for Daikin ONECTA using Nordpool day-ahead prices (per-user zone selectable).
 
 ## Features
-* Fetches hourly prices from a Home Assistant sensor
+* Fetches hourly prices from Nordpool (background job every 6h + manual refresh)
 * Generates DHW schedule (comfort / eco / turn_off) with: max 4 actions per day, any turn_off block ≤ 2 hours
 * Manual upload (PUT) of schedule to Daikin gateway (no auto-apply unless explicitly enabled)
 * Configuration via `appsettings*.json` and/or environment variables (env has highest precedence; optional `PRISSTYRNING_` prefix)
@@ -22,9 +22,9 @@ Double underscore `__` maps to nested sections (standard .NET config convention)
 ### Key settings
 | Section | Key | Environment variable | Description |
 |---------|-----|----------------------|-------------|
-| HomeAssistant | BaseUrl | `PRISSTYRNING_HomeAssistant__BaseUrl` | Home Assistant base URL (e.g. http://homeassistant:8123) |
-| HomeAssistant | Token | `PRISSTYRNING_HomeAssistant__Token` | Long-lived access token |
-| HomeAssistant | Sensor | `PRISSTYRNING_HomeAssistant__Sensor` | Sensor entity id providing prices |
+| Price:Nordpool | DefaultZone | `PRISSTYRNING_Price__Nordpool__DefaultZone` | Default zone (e.g. SE3) |
+| Price:Nordpool | Currency | `PRISSTYRNING_Price__Nordpool__Currency` | Currency (e.g. SEK, EUR) |
+| Price:Nordpool | RefreshHours | `PRISSTYRNING_Price__Nordpool__RefreshHours` | Interval hours for background fetch (default 6) |
 | Daikin | ClientId | `PRISSTYRNING_Daikin__ClientId` | OAuth client id (required for full OAuth) |
 | Daikin | ClientSecret | `PRISSTYRNING_Daikin__ClientSecret` | OAuth client secret (may be empty for public client) |
 | Daikin | RedirectUri | `PRISSTYRNING_Daikin__RedirectUri` | Explicit redirect URI (else built from PublicBaseUrl + RedirectPath) |
@@ -65,9 +65,8 @@ docker build -t prisstyrning:local .
 Run container:
 ```bash
 docker run --rm -p 5000:5000 \
-  -e PRISSTYRNING_HomeAssistant__BaseUrl=http://homeassistant:8123 \
-  -e PRISSTYRNING_HomeAssistant__Token=REDACTED \
-  -e PRISSTYRNING_HomeAssistant__Sensor=sensor.nordpool_sell \
+  -e PRISSTYRNING_Price__Nordpool__DefaultZone=SE3 \
+  -e PRISSTYRNING_Price__Nordpool__Currency=SEK \
   -e PRISSTYRNING_Storage__Directory=/data \
   -v $(pwd)/data:/data \
   prisstyrning:local
@@ -82,9 +81,8 @@ services:
     image: ghcr.io/twids/prisstyrning:latest
     restart: unless-stopped
     environment:
-      PRISSTYRNING_HomeAssistant__BaseUrl: http://homeassistant:8123
-      PRISSTYRNING_HomeAssistant__Token: REDACTED
-      PRISSTYRNING_HomeAssistant__Sensor: sensor.nordpool_sell
+      PRISSTYRNING_Price__Nordpool__DefaultZone: SE3
+      PRISSTYRNING_Price__Nordpool__Currency: SEK
       PRISSTYRNING_Daikin__ClientId: CHANGE_ME
       PRISSTYRNING_Daikin__ClientSecret: CHANGE_ME
       PRISSTYRNING_Daikin__RedirectUri: https://example.com/auth/daikin/callback
@@ -118,7 +116,7 @@ The GitHub Actions pipeline enables `linux/amd64` and `linux/arm64` with QEMU em
 After completing OAuth, tokens are persisted to `tokens/daikin.json` (if the volume is mounted). You may also inject `Daikin:AccessToken` / `Daikin:RefreshToken` directly for testing.
 
 ## Development hints
-* Local price snapshots stored as `data/prices-*.json`
+* Local Nordpool snapshots stored as `data/nordpool/<ZONE>/prices-*.json`
 * Frontend served from `wwwroot` (static + minimal JS)
 * Schedule preview endpoint: `/api/schedule/preview`
 * Current DHW schedule endpoint: `/api/daikin/gateway/schedule?embeddedId=2`

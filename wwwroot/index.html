@@ -19,6 +19,33 @@
 		<pre id="gatewayData" style="max-height:260px;overflow:auto;margin-top:.5rem;"></pre>
 </section>
 <section id="prices"><h2>Priser</h2><button id="refreshPrices">Uppdatera</button><pre id="priceData"></pre></section>
+<section id="zoneSection"><h2>Nordpool Zon</h2>
+	<div style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;">
+		<label>Zone:
+			<select id="zoneSelect" style="min-width:90px;">
+				<option value="SE1">SE1</option>
+				<option value="SE2">SE2</option>
+				<option value="SE3">SE3</option>
+				<option value="SE4">SE4</option>
+				<option value="NO1">NO1</option>
+				<option value="NO2">NO2</option>
+				<option value="NO3">NO3</option>
+				<option value="NO4">NO4</option>
+				<option value="NO5">NO5</option>
+				<option value="DK1">DK1</option>
+				<option value="DK2">DK2</option>
+				<option value="FI">FI</option>
+				<option value="EE">EE</option>
+				<option value="LV">LV</option>
+				<option value="LT">LT</option>
+			</select>
+		</label>
+		<button id="saveZone">Spara zon</button>
+		<button id="refreshNordpool">Hämta priser nu</button>
+		<span id="zoneStatus" style="font-size:.75rem;opacity:.8"></span>
+		<span id="latestPriceMeta" style="font-size:.7rem;opacity:.7"></span>
+	</div>
+</section>
 <section id="priceChart"><h2>Prisgraf</h2><canvas id="chart" height="120" style="max-width:100%;"></canvas><div id="chartMeta" style="font-size:.8rem;opacity:.7;margin-top:.3rem;"></div></section>
 <section id="schedule"><h2>DHW Schema (varmvatten) – Preview & Aktuellt</h2>
 	<div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.4rem;">

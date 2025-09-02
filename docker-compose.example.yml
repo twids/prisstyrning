@@ -5,10 +5,9 @@ services:
     container_name: prisstyrning
     restart: unless-stopped
     environment:
-      # Home Assistant
-      PRISSTYRNING_HomeAssistant__BaseUrl: "http://homeassistant:8123"
-      PRISSTYRNING_HomeAssistant__Token: "REDACTED_LONG_LIVED_TOKEN"
-      PRISSTYRNING_HomeAssistant__Sensor: "sensor.nordpool_sell"
+      # Nordpool (default zone & currency)
+      PRISSTYRNING_Price__Nordpool__DefaultZone: "SE3"
+      PRISSTYRNING_Price__Nordpool__Currency: "SEK"
       # Daikin OAuth tokens (om du vill injicera direkt istället för fil lagring)
       PRISSTYRNING_Daikin__AccessToken: ""
       PRISSTYRNING_Daikin__RefreshToken: ""

@@ -16,6 +16,15 @@ internal static class DaikinOAuthService
 
     private record TokenFile(string access_token, string refresh_token, DateTimeOffset expires_at_utc);
 
+    // Helper to derive a user specific token file path segment (sanitized)
+    private static string SanitizeUser(string? userId)
+    {
+        if (string.IsNullOrWhiteSpace(userId)) return string.Empty; // global (legacy)
+        // keep only hex and dash to avoid path traversal
+        var clean = new string(userId.Where(c => char.IsLetterOrDigit(c) || c=='-' ).ToArray());
+        return clean.Length == 0 ? string.Empty : clean;
+    }
+
     public static string GetAuthorizationUrl(IConfiguration cfg, HttpContext? httpContext = null)
     {
         var clientId = cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
@@ -49,7 +58,8 @@ internal static class DaikinOAuthService
         return url;
     }
 
-    public static async Task<bool> HandleCallbackAsync(IConfiguration cfg, string code, string state)
+    public static async Task<bool> HandleCallbackAsync(IConfiguration cfg, string code, string state) => await HandleCallbackAsync(cfg, code, state, userId: null);
+    public static async Task<bool> HandleCallbackAsync(IConfiguration cfg, string code, string state, string? userId)
     {
         string? verifier;
         lock(_lock)
@@ -86,22 +96,24 @@ internal static class DaikinOAuthService
         var refresh = root.GetProperty("refresh_token").GetString()!;
         var expiresIn = root.TryGetProperty("expires_in", out var ei) ? ei.GetInt32() : 3600;
         var expiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn - 30);
-        SaveTokens(cfg, new TokenFile(access, refresh, expiresAt));
+        SaveTokens(cfg, new TokenFile(access, refresh, expiresAt), userId);
         Console.WriteLine($"[DaikinOAuth] Token exchange OK expiresAt={expiresAt:O} refresh={(refresh?.Length>8?refresh[..8]+"...":"(none)")}");
         return true;
     }
 
-    public static (string? accessToken, DateTimeOffset? expiresAt) TryGetValidAccessToken(IConfiguration cfg)
+    public static (string? accessToken, DateTimeOffset? expiresAt) TryGetValidAccessToken(IConfiguration cfg) => TryGetValidAccessToken(cfg, null);
+    public static (string? accessToken, DateTimeOffset? expiresAt) TryGetValidAccessToken(IConfiguration cfg, string? userId)
     {
-        var tf = LoadTokens(cfg);
+        var tf = LoadTokens(cfg, userId);
         if(tf == null) return (null,null);
         if(tf.expires_at_utc > DateTimeOffset.UtcNow.AddMinutes(1)) return (tf.access_token, tf.expires_at_utc);
         return (null, tf.expires_at_utc);
     }
 
-    public static async Task<string?> RefreshIfNeededAsync(IConfiguration cfg)
+    public static async Task<string?> RefreshIfNeededAsync(IConfiguration cfg) => await RefreshIfNeededAsync(cfg, null);
+    public static async Task<string?> RefreshIfNeededAsync(IConfiguration cfg, string? userId)
     {
-        var existing = LoadTokens(cfg);
+        var existing = LoadTokens(cfg, userId);
         if(existing == null) return null;
         if(existing.expires_at_utc > DateTimeOffset.UtcNow.AddMinutes(1)) return existing.access_token; // still valid
         var clientId = cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
@@ -130,14 +142,15 @@ internal static class DaikinOAuthService
         var refresh = root.TryGetProperty("refresh_token", out var rEl)? rEl.GetString() ?? existing.refresh_token : existing.refresh_token;
         var expiresIn = root.TryGetProperty("expires_in", out var ei) ? ei.GetInt32() : 3600;
         var expiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn - 30);
-        SaveTokens(cfg, new TokenFile(access, refresh!, expiresAt));
+        SaveTokens(cfg, new TokenFile(access, refresh!, expiresAt), userId);
     Console.WriteLine($"[DaikinOAuth] Refresh OK newExpiry={expiresAt:O}");
         return access;
     }
 
-    public static object Status(IConfiguration cfg)
+    public static object Status(IConfiguration cfg) => Status(cfg, null);
+    public static object Status(IConfiguration cfg, string? userId)
     {
-        var t = LoadTokens(cfg);
+        var t = LoadTokens(cfg, userId);
         if(t == null) return new { authorized = false };
         return new {
             authorized = true,
@@ -146,9 +159,10 @@ internal static class DaikinOAuthService
         };
     }
 
-    public static async Task<bool> RevokeAsync(IConfiguration cfg)
+    public static async Task<bool> RevokeAsync(IConfiguration cfg) => await RevokeAsync(cfg, null);
+    public static async Task<bool> RevokeAsync(IConfiguration cfg, string? userId)
     {
-        var t = LoadTokens(cfg);
+        var t = LoadTokens(cfg, userId);
         if (t == null) return false;
         var clientId = cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
         var clientSecret = cfg["Daikin:ClientSecret"];
@@ -158,7 +172,7 @@ internal static class DaikinOAuthService
         var okRefresh = await RevokeToken(http, revokeEndpoint, clientId, clientSecret, t.refresh_token, "refresh_token");
         if(okAccess || okRefresh)
         {
-            try { File.Delete(TokenFilePath(cfg)); } catch {}
+            try { File.Delete(TokenFilePath(cfg, userId)); } catch {}
         }
         return okAccess && okRefresh; // true only if both succeeded
     }
@@ -176,9 +190,10 @@ internal static class DaikinOAuthService
         return resp.IsSuccessStatusCode;
     }
 
-    public static async Task<object?> IntrospectAsync(IConfiguration cfg, bool refresh=false)
+    public static async Task<object?> IntrospectAsync(IConfiguration cfg, bool refresh=false) => await IntrospectAsync(cfg, null, refresh);
+    public static async Task<object?> IntrospectAsync(IConfiguration cfg, string? userId, bool refresh=false)
     {
-        var t = LoadTokens(cfg); if(t==null) return null;
+        var t = LoadTokens(cfg, userId); if(t==null) return null;
         var clientId = cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
         var clientSecret = cfg["Daikin:ClientSecret"] ?? throw new InvalidOperationException("ClientSecret krävs för introspection");
         var introspectEndpoint = cfg["Daikin:IntrospectEndpoint"] ?? DefaultIntrospectEndpoint;
@@ -193,10 +208,8 @@ internal static class DaikinOAuthService
         try { return JsonSerializer.Deserialize<JsonElement>(body); } catch { return new { raw = TrimForLog(body) }; }
     }
 
-    public static string? GetAccessTokenUnsafe(IConfiguration cfg)
-    {
-        return LoadTokens(cfg)?.access_token;
-    }
+    public static string? GetAccessTokenUnsafe(IConfiguration cfg) => GetAccessTokenUnsafe(cfg, null);
+    public static string? GetAccessTokenUnsafe(IConfiguration cfg, string? userId) => LoadTokens(cfg, userId)?.access_token;
 
     private static (string codeChallenge, string verifier) CreatePkcePair()
     {
@@ -240,19 +253,27 @@ internal static class DaikinOAuthService
         throw new InvalidOperationException("Daikin:RedirectUri saknas och kunde inte härledas (ange Daikin:RedirectUri eller PublicBaseUrl).");
     }
 
-    private static string TokenFilePath(IConfiguration cfg)
+    private static string TokenFilePath(IConfiguration cfg, string? userId)
     {
-        var path = cfg["Daikin:TokenFile"] ?? Path.Combine("tokens","daikin.json");
-        var dir = Path.GetDirectoryName(path)!;
+        var basePath = cfg["Daikin:TokenFile"] ?? Path.Combine("tokens","daikin.json");
+        var sanitized = SanitizeUser(userId);
+        if (!string.IsNullOrEmpty(sanitized))
+        {
+            // Replace filename with per-user dir + filename
+            var fileName = Path.GetFileName(basePath);
+            var parent = Path.GetDirectoryName(basePath) ?? "tokens";
+            basePath = Path.Combine(parent, sanitized, fileName);
+        }
+        var dir = Path.GetDirectoryName(basePath)!;
         Directory.CreateDirectory(dir);
-        return path;
+        return basePath;
     }
 
-    private static TokenFile? LoadTokens(IConfiguration cfg)
+    private static TokenFile? LoadTokens(IConfiguration cfg, string? userId)
     {
         try
         {
-            var path = TokenFilePath(cfg);
+            var path = TokenFilePath(cfg, userId);
             if(!File.Exists(path)) return null;
             var json = File.ReadAllText(path);
             return JsonSerializer.Deserialize<TokenFile>(json);
@@ -260,9 +281,9 @@ internal static class DaikinOAuthService
         catch { return null; }
     }
 
-    private static void SaveTokens(IConfiguration cfg, TokenFile tf)
+    private static void SaveTokens(IConfiguration cfg, TokenFile tf, string? userId)
     {
-        var path = TokenFilePath(cfg);
+        var path = TokenFilePath(cfg, userId);
         var tmp = path + ".tmp";
         var json = JsonSerializer.Serialize(tf, new JsonSerializerOptions{WriteIndented=true});
         File.WriteAllText(tmp, json);

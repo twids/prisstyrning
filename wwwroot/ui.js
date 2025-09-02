@@ -20,8 +20,47 @@ async function loadAuth(){
 }
 async function loadPrices(){
   priceDataEl.textContent='...';
-  try{const d=await j('/api/prices/memory');priceDataEl.textContent=JSON.stringify(d,null,2);}catch(e){priceDataEl.textContent='Fel: '+e.message;}
+  try{
+    const d=await j('/api/prices/memory');
+    priceDataEl.textContent=JSON.stringify(d,null,2);
+    if(d.updated){
+      const meta=document.getElementById('latestPriceMeta'); if(meta) meta.textContent='Senast uppdaterad: '+new Date(d.updated).toLocaleString();
+    }
+  }catch(e){priceDataEl.textContent='Fel: '+e.message;}
 }
+
+// Zon-hantering
+const zoneSelect=document.getElementById('zoneSelect');
+const saveZoneBtn=document.getElementById('saveZone');
+const refreshNordpoolBtn=document.getElementById('refreshNordpool');
+const zoneStatus=document.getElementById('zoneStatus');
+
+async function loadZone(){
+  if(!zoneSelect) return;
+  try{ const d=await j('/api/prices/zone'); if(d.zone){ zoneSelect.value=d.zone; zoneStatus.textContent='Aktiv zon: '+d.zone; } }
+  catch(e){ zoneStatus.textContent='Zonfel: '+e.message; }
+}
+async function saveZone(){
+  if(!zoneSelect) return; zoneStatus.textContent='Sparar...';
+  try{
+    const z=zoneSelect.value;
+    const r=await fetch('/api/prices/zone',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({zone:z})});
+    const txt=await r.text(); if(!r.ok) throw new Error(txt);
+    zoneStatus.textContent='Sparad ('+z+')';
+  }catch(e){ zoneStatus.textContent='Fel: '+e.message; }
+}
+async function refreshNordpool(){
+  if(!zoneSelect) return; zoneStatus.textContent='Hämtar...';
+  try{
+    const r=await fetch('/api/prices/refresh',{method:'POST'});
+    const txt=await r.text(); if(!r.ok) throw new Error(txt);
+    try{ const obj=JSON.parse(txt); zoneStatus.textContent='Uppdaterad ('+obj.zone+')'; }catch{ zoneStatus.textContent='Uppdaterad'; }
+    await loadPrices();
+  }catch(e){ zoneStatus.textContent='Fel: '+e.message; }
+}
+if(saveZoneBtn) saveZoneBtn.onclick=saveZone;
+if(refreshNordpoolBtn) refreshNordpoolBtn.onclick=refreshNordpool;
+loadZone();
 function renderScheduleGrid(schedulePayload, targetId){
   const grid=document.getElementById(targetId);
   grid.innerHTML='';

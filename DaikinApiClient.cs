@@ -11,11 +11,12 @@ public class DaikinApiClient
     private readonly bool _log;
     private readonly bool _logBody;
     private readonly int _bodySnippetLen;
+    private readonly string _baseApi;
     private static readonly object _devicesLock = new();
     private static string? _devicesCacheJson;
     private static DateTimeOffset _devicesCacheFetched;
 
-    public DaikinApiClient(string accessToken, bool log = false, bool logBody = false, int? snippetLen = null)
+    public DaikinApiClient(string accessToken, bool log = false, bool logBody = false, int? snippetLen = null, string? baseApiOverride = null)
     {
         _accessToken = accessToken;
         _client = new HttpClient();
@@ -24,6 +25,7 @@ public class DaikinApiClient
     _log = true;
         _logBody = logBody;
         _bodySnippetLen = (snippetLen is > 20 and < 5000) ? snippetLen!.Value : 300;
+        _baseApi = string.IsNullOrWhiteSpace(baseApiOverride) ? "https://api.onecta.daikineurope.com" : baseApiOverride!.TrimEnd('/');
     }
 
     private async Task<(HttpResponseMessage resp, string body)> SendAsync(HttpRequestMessage req)
@@ -80,7 +82,7 @@ public class DaikinApiClient
 
     public async Task<string> GetSitesAsync()
     {
-        var url = "https://api.onecta.daikineurope.com/v1/sites";
+    var url = _baseApi + "/v1/sites";
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         var (resp, body) = await SendAsync(req);
         resp.EnsureSuccessStatusCode();
@@ -91,7 +93,7 @@ public class DaikinApiClient
     {
     // NOTE: The correct endpoint for listing gateway devices is not site-scoped.
     // Keeping the signature (siteId) for backward compatibility but ignoring it now.
-    var url = "https://api.onecta.daikineurope.com/v1/gateway-devices";
+    var url = _baseApi + "/v1/gateway-devices";
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         var (resp, body) = await SendAsync(req);
         resp.EnsureSuccessStatusCode();
@@ -120,7 +122,7 @@ public class DaikinApiClient
 
     public async Task<string> GetScheduleAsync(string deviceId)
     {
-        var url = $"https://api.onecta.daikineurope.com/v1/devices/{deviceId}/dhw/schedule";
+    var url = $"{_baseApi}/v1/devices/{deviceId}/dhw/schedule";
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         var (resp, body) = await SendAsync(req);
         resp.EnsureSuccessStatusCode();
@@ -130,7 +132,7 @@ public class DaikinApiClient
     // Legacy DHW endpoint (may not work on newer API – kept for fallback).
     public async Task<string> LegacySetDhwScheduleAsync(string deviceId, string schedulePayload)
     {
-        var url = $"https://api.onecta.daikineurope.com/v1/devices/{deviceId}/dhw/schedule";
+    var url = $"{_baseApi}/v1/devices/{deviceId}/dhw/schedule";
         using var req = new HttpRequestMessage(HttpMethod.Post, url)
         {
             Content = new StringContent(schedulePayload, System.Text.Encoding.UTF8, "application/json")
@@ -144,7 +146,7 @@ public class DaikinApiClient
     // PUT full schedules for specified management point & mode (heating/cooling/any)
     public async Task PutSchedulesAsync(string gatewayDeviceId, string embeddedId, string mode, string schedulePayload)
     {
-        var url = $"https://api.onecta.daikineurope.com/v1/gateway-devices/{gatewayDeviceId}/management-points/{embeddedId}/schedule/{mode}/schedules";
+    var url = $"{_baseApi}/v1/gateway-devices/{gatewayDeviceId}/management-points/{embeddedId}/schedule/{mode}/schedules";
         using var req = new HttpRequestMessage(HttpMethod.Put, url)
         {
             Content = new StringContent(schedulePayload, System.Text.Encoding.UTF8, "application/json")
@@ -157,7 +159,7 @@ public class DaikinApiClient
     // Enable a specific schedule id (expects 204)
     public async Task SetCurrentScheduleAsync(string gatewayDeviceId, string embeddedId, string mode, string scheduleId)
     {
-        var url = $"https://api.onecta.daikineurope.com/v1/gateway-devices/{gatewayDeviceId}/management-points/{embeddedId}/schedule/{mode}/current";
+    var url = $"{_baseApi}/v1/gateway-devices/{gatewayDeviceId}/management-points/{embeddedId}/schedule/{mode}/current";
         var bodyObj = new { scheduleId, enabled = true };
         var json = JsonSerializer.Serialize(bodyObj);
         using var req = new HttpRequestMessage(HttpMethod.Put, url)

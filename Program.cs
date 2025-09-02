@@ -25,6 +25,7 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHostedService<DailyPriceJob>();
+builder.Services.AddHostedService<NordpoolPriceJob>();
 
 var app = builder.Build();
 
@@ -72,6 +73,21 @@ if (app.Environment.IsDevelopment() || true)
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
+// Simple per-user cookie (NOT secure auth – just isolation). In production replace with real auth (OIDC, etc.).
+app.Use(async (ctx, next) =>
+{
+    const string cookieName = "ps_user";
+    if (!ctx.Request.Cookies.TryGetValue(cookieName, out var userId) || string.IsNullOrWhiteSpace(userId) || userId.Length < 8)
+    {
+        userId = Guid.NewGuid().ToString("N");
+        ctx.Response.Cookies.Append(cookieName, userId, new CookieOptions { HttpOnly = true, SameSite = SameSiteMode.Lax, IsEssential = true, Expires = DateTimeOffset.UtcNow.AddYears(1) });
+    }
+    ctx.Items[cookieName] = userId;
+    await next();
+});
+
+string? GetUserId(HttpContext c) => c.Items.TryGetValue("ps_user", out var v) ? v as string : null;
+
 // Prices group
 var pricesGroup = app.MapGroup("/api/prices").WithTags("Prices");
 pricesGroup.MapGet("/latest", () =>
@@ -82,11 +98,69 @@ pricesGroup.MapGet("/latest", () =>
     if (file == null) return Results.NotFound();
     return Results.File(file, "application/json");
 });
+
+// Diagnostic endpoint for Nordpool fetch debugging
+app.MapGet("/api/prices/_debug/fetch", async (HttpContext ctx, IConfiguration cfg) =>
+{
+    var userId = GetUserId(ctx);
+    var zone = UserSettingsService.GetUserZone(cfg, userId) ?? "SE3";
+    var dateStr = ctx.Request.Query["date"].FirstOrDefault();
+    DateTime date = DateTime.TryParse(dateStr, out var d) ? d : DateTime.Today;
+    var currency = cfg["Price:Nordpool:Currency"] ?? "SEK";
+    var pageId = cfg["Price:Nordpool:PageId"];
+    var client = new NordpoolClient(currency, pageId);
+    var (prices, attempts) = await client.GetDailyPricesDetailedAsync(date, zone);
+    return Results.Json(new { date = date.ToString("yyyy-MM-dd"), zone, priceCount = prices.Count, prices, attempts, currency, pageId, userId });
+});
+app.MapGet("/api/prices/_debug/raw", (HttpContext ctx, IConfiguration cfg) =>
+{
+    var dateStr = ctx.Request.Query["date"].FirstOrDefault();
+    DateTime date = DateTime.TryParse(dateStr, out var d) ? d : DateTime.Today;
+    var currency = cfg["Price:Nordpool:Currency"] ?? "SEK";
+    var pageId = cfg["Price:Nordpool:PageId"];
+    var client = new NordpoolClient(currency, pageId);
+    return client.GetRawCandidateResponsesAsync(date);
+});
 pricesGroup.MapGet("/memory", () =>
 {
     var (today, tomorrow, updated) = PriceMemory.Get();
     if (today == null && tomorrow == null) return Results.NotFound(new { message = "No prices in memory yet" });
     return Results.Json(new { updated, today, tomorrow });
+});
+// Per-user zone get/set
+pricesGroup.MapGet("/zone", (HttpContext c, IConfiguration cfg) => {
+    var userId = GetUserId(c); var zone = UserSettingsService.GetUserZone(cfg, userId); return Results.Json(new { zone });
+});
+pricesGroup.MapPost("/zone", async (HttpContext c, IConfiguration cfg) => {
+    try {
+        using var doc = await JsonDocument.ParseAsync(c.Request.Body);
+        if (!doc.RootElement.TryGetProperty("zone", out var zEl)) return Results.BadRequest(new { error = "Missing zone" });
+        var zone = zEl.GetString();
+        if (!UserSettingsService.IsValidZone(zone)) return Results.BadRequest(new { error = "Invalid zone" });
+        var userId = GetUserId(c);
+        if (!UserSettingsService.SetUserZone(userId, zone!)) return Results.BadRequest(new { error = "Failed to save" });
+        return Results.Ok(new { saved = true, zone });
+    } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+// Force refresh Nordpool prices immediately for current user's zone (updates shared cache for now)
+pricesGroup.MapPost("/refresh", async (HttpContext c, IConfiguration cfg) => {
+    var userId = GetUserId(c); var zone = UserSettingsService.GetUserZone(cfg, userId);
+    try {
+        var currency = cfg["Price:Nordpool:Currency"] ?? "SEK";
+        var page = cfg["Price:Nordpool:PageId"]; // optional override
+        var np = new NordpoolClient(currency, page);
+        var (today, tomorrow) = await np.GetTodayTomorrowAsync(zone);
+        PriceMemory.Set(today, tomorrow);
+        NordpoolPersistence.Save(zone, today, tomorrow, cfg["Storage:Directory"] ?? "data");
+        return Results.Ok(new { refreshed = true, zone, today = today.Count, tomorrow = tomorrow.Count });
+    } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+// Get latest persisted Nordpool snapshot for zone
+pricesGroup.MapGet("/nordpool/latest", (HttpContext c, IConfiguration cfg, string? zone) => {
+    zone ??= UserSettingsService.GetUserZone(cfg, GetUserId(c));
+    var file = NordpoolPersistence.GetLatestFile(zone, cfg["Storage:Directory"] ?? "data");
+    if (file == null) return Results.NotFound(new { error = "No snapshot" });
+    return Results.File(file, "application/json");
 });
 pricesGroup.MapGet("/timeseries", (HttpContext ctx) =>
 {
@@ -140,34 +214,49 @@ pricesGroup.MapGet("/timeseries", (HttpContext ctx) =>
 var daikinAuthGroup = app.MapGroup("/auth/daikin").WithTags("Daikin Auth");
 daikinAuthGroup.MapGet("/start", (IConfiguration cfg, HttpContext c) => { try { var url = DaikinOAuthService.GetAuthorizationUrl(cfg, c); return Results.Json(new { url }); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); } });
 daikinAuthGroup.MapGet("/start-min", (IConfiguration cfg, HttpContext c) => { try { var url = DaikinOAuthService.GetMinimalAuthorizationUrl(cfg, c); return Results.Json(new { url }); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); } });
-daikinAuthGroup.MapGet("/callback", async (IConfiguration cfg, string? code, string? state) => { if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state)) return Results.BadRequest(new { error = "Missing code/state" }); var ok = await DaikinOAuthService.HandleCallbackAsync(cfg, code, state); return ok ? Results.Ok(new { message = "Authorization stored" }) : Results.BadRequest(new { error = "Auth failed" }); });
-daikinAuthGroup.MapGet("/status", (IConfiguration cfg) => Results.Json(DaikinOAuthService.Status(cfg)));
-daikinAuthGroup.MapPost("/refresh", async (IConfiguration cfg) => { var token = await DaikinOAuthService.RefreshIfNeededAsync(cfg); return token == null ? Results.BadRequest(new { error = "Refresh failed or not authorized" }) : Results.Ok(new { refreshed = true }); });
-daikinAuthGroup.MapGet("/debug", (IConfiguration cfg) => Results.Json(new { status = DaikinOAuthService.Status(cfg), now = DateTimeOffset.UtcNow }));
-daikinAuthGroup.MapPost("/revoke", async (IConfiguration cfg) => { var ok = await DaikinOAuthService.RevokeAsync(cfg); return ok ? Results.Ok(new { revoked = true }) : Results.BadRequest(new { error = "Revoke failed" }); });
-daikinAuthGroup.MapGet("/introspect", async (IConfiguration cfg, bool refresh) => { var result = await DaikinOAuthService.IntrospectAsync(cfg, refresh); return result == null ? Results.BadRequest(new { error = "Not authorized" }) : Results.Json(result); });
+daikinAuthGroup.MapGet("/callback", async (IConfiguration cfg, HttpContext c, string? code, string? state) => { var userId = GetUserId(c); if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state)) return Results.BadRequest(new { error = "Missing code/state" }); var ok = await DaikinOAuthService.HandleCallbackAsync(cfg, code, state, userId); return ok ? Results.Ok(new { message = "Authorization stored", userId }) : Results.BadRequest(new { error = "Auth failed" }); });
+daikinAuthGroup.MapGet("/status", (IConfiguration cfg, HttpContext c) => { var userId = GetUserId(c); return Results.Json(DaikinOAuthService.Status(cfg, userId)); });
+daikinAuthGroup.MapPost("/refresh", async (IConfiguration cfg, HttpContext c) => { var userId = GetUserId(c); var token = await DaikinOAuthService.RefreshIfNeededAsync(cfg, userId); return token == null ? Results.BadRequest(new { error = "Refresh failed or not authorized" }) : Results.Ok(new { refreshed = true }); });
+daikinAuthGroup.MapGet("/debug", (IConfiguration cfg, HttpContext c) => { var userId = GetUserId(c); return Results.Json(new { status = DaikinOAuthService.Status(cfg, userId), userId, now = DateTimeOffset.UtcNow }); });
+daikinAuthGroup.MapPost("/revoke", async (IConfiguration cfg, HttpContext c) => { var userId = GetUserId(c); var ok = await DaikinOAuthService.RevokeAsync(cfg, userId); return ok ? Results.Ok(new { revoked = true }) : Results.BadRequest(new { error = "Revoke failed" }); });
+daikinAuthGroup.MapGet("/introspect", async (IConfiguration cfg, HttpContext c, bool refresh) => { var userId = GetUserId(c); var result = await DaikinOAuthService.IntrospectAsync(cfg, userId, refresh); return result == null ? Results.BadRequest(new { error = "Not authorized" }) : Results.Json(result); });
 
 // Schedule preview/apply
 var scheduleGroup = app.MapGroup("/api/schedule").WithTags("Schedule");
-scheduleGroup.MapGet("/preview", async () => await BatchRunner.GenerateSchedulePreview((IConfiguration)builder.Configuration));
+scheduleGroup.MapGet("/preview", async (HttpContext c) => {
+    var cfg = (IConfiguration)builder.Configuration;
+    var userId = GetUserId(c);
+    var zone = UserSettingsService.GetUserZone(cfg, userId);
+    // Ensure we have prices (if memory empty try fetch)
+    var (memToday, memTomorrow, _) = PriceMemory.Get();
+    JsonArray? today = memToday; JsonArray? tomorrow = memTomorrow;
+    if (today == null || today.Count == 0)
+    {
+    try { var np = new NordpoolClient(cfg["Price:Nordpool:Currency"] ?? "SEK", cfg["Price:Nordpool:PageId"]); var fetched = await np.GetTodayTomorrowAsync(zone); today = fetched.today; tomorrow = fetched.tomorrow; PriceMemory.Set(today, tomorrow); NordpoolPersistence.Save(zone, today, tomorrow, cfg["Storage:Directory"] ?? "data"); }
+        catch { }
+    }
+    var (payload, msg) = ScheduleAlgorithm.Generate(today, tomorrow, cfg);
+    return Results.Json(new { schedulePayload = payload, generated = payload != null, message = msg, zone });
+});
 scheduleGroup.MapPost("/apply", async () => { var result = await BatchRunner.RunBatchAsync(builder.Configuration, applySchedule:false, persist:true); return Results.Json(result); });
 
 // Daikin data group
 var daikinGroup = app.MapGroup("/api/daikin").WithTags("Daikin");
-// Simple proxy for sites (needed by frontend Sites button)
-daikinGroup.MapGet("/sites", async (IConfiguration cfg) =>
+// Simple proxy for sites (needed by frontend Sites button) – user-scoped
+daikinGroup.MapGet("/sites", async (IConfiguration cfg, HttpContext c) =>
 {
-    var (token, _) = DaikinOAuthService.TryGetValidAccessToken(cfg);
-    token ??= await DaikinOAuthService.RefreshIfNeededAsync(cfg);
+    var userId = GetUserId(c);
+    var (token, _) = DaikinOAuthService.TryGetValidAccessToken(cfg, userId);
+    token ??= await DaikinOAuthService.RefreshIfNeededAsync(cfg, userId);
     if (token == null) return Results.BadRequest(new { error = "Not authorized" });
     try
     {
-        bool log = (cfg["Daikin:Http:Log"] ?? cfg["Daikin:HttpLog"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
-        bool logBody = (cfg["Daikin:Http:LogBody"] ?? cfg["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
-        int.TryParse(cfg["Daikin:Http:BodySnippetLength"], out var bodyLen);
-        var client = new DaikinApiClient(token, log, logBody, bodyLen == 0 ? null : bodyLen);
+    bool log = (cfg["Daikin:Http:Log"] ?? cfg["Daikin:HttpLog"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
+    bool logBody = (cfg["Daikin:Http:LogBody"] ?? cfg["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
+    int.TryParse(cfg["Daikin:Http:BodySnippetLength"], out var bodyLen);
+    var baseApi = cfg["Daikin:ApiBaseUrl"];
+    var client = new DaikinApiClient(token, log, logBody, bodyLen == 0 ? null : bodyLen, baseApi);
         var sitesJson = await client.GetSitesAsync();
-        // Return raw JSON array/string from Daikin
         return Results.Content(sitesJson, "application/json");
     }
     catch (Exception ex)
@@ -181,12 +270,14 @@ daikinGroup.MapGet("/gateway/schedule", async (IConfiguration cfg, HttpContext c
     var deviceId = ctx.Request.Query["deviceId"].FirstOrDefault();
     var embeddedIdQuery = ctx.Request.Query["embeddedId"].FirstOrDefault();
     Console.WriteLine($"[GatewaySchedule] start deviceId={deviceId} embeddedIdQuery={embeddedIdQuery}");
-    var (token, _) = DaikinOAuthService.TryGetValidAccessToken(cfg);
-    token ??= await DaikinOAuthService.RefreshIfNeededAsync(cfg);
+    var userId = GetUserId(ctx);
+    var (token, _) = DaikinOAuthService.TryGetValidAccessToken(cfg, userId);
+    token ??= await DaikinOAuthService.RefreshIfNeededAsync(cfg, userId);
     if (token == null) return Results.Json(new { status="unauthorized", error="Not authorized" });
     try
     {
-    var client = new DaikinApiClient(token, log:true);
+    var baseApi = cfg["Daikin:ApiBaseUrl"];
+    var client = new DaikinApiClient(token, log:true, baseApiOverride:baseApi);
     var json = await client.GetDevicesCachedAsync("_ignored", TimeSpan.FromSeconds(10));
         if (string.IsNullOrWhiteSpace(json)) return Results.Json(new { status="error", error="Empty gateway-devices" });
         using var doc = JsonDocument.Parse(json);
@@ -319,17 +410,19 @@ daikinGroup.MapGet("/gateway/schedule", async (IConfiguration cfg, HttpContext c
         return Results.Json(new { status="error", error=ex.Message });
     }
 });
-daikinGroup.MapGet("/devices", async (IConfiguration cfg, string? siteId) =>
+daikinGroup.MapGet("/devices", async (IConfiguration cfg, HttpContext c, string? siteId) =>
 {
-    var (token, _) = DaikinOAuthService.TryGetValidAccessToken(cfg);
-    token ??= await DaikinOAuthService.RefreshIfNeededAsync(cfg);
+    var userId = GetUserId(c);
+    var (token, _) = DaikinOAuthService.TryGetValidAccessToken(cfg, userId);
+    token ??= await DaikinOAuthService.RefreshIfNeededAsync(cfg, userId);
     if (token == null) return Results.BadRequest(new { error = "Not authorized" });
     try
     {
     bool log = (cfg["Daikin:Http:Log"] ?? cfg["Daikin:HttpLog"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
     bool logBody = (cfg["Daikin:Http:LogBody"] ?? cfg["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
     int.TryParse(cfg["Daikin:Http:BodySnippetLength"], out var bodyLen);
-    var client = new DaikinApiClient(token, log, logBody, bodyLen == 0 ? null : bodyLen);
+    var baseApi = cfg["Daikin:ApiBaseUrl"];
+    var client = new DaikinApiClient(token, log, logBody, bodyLen == 0 ? null : bodyLen, baseApi);
         if (string.IsNullOrWhiteSpace(siteId))
         {
             var sitesJson = await client.GetSitesAsync();
@@ -343,17 +436,19 @@ daikinGroup.MapGet("/devices", async (IConfiguration cfg, string? siteId) =>
     catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
 // Simplified gateway devices proxy: return raw array from Daikin
-daikinGroup.MapGet("/gateway", async (IConfiguration cfg) =>
+daikinGroup.MapGet("/gateway", async (IConfiguration cfg, HttpContext c) =>
 {
-    var (token, _) = DaikinOAuthService.TryGetValidAccessToken(cfg);
-    token ??= await DaikinOAuthService.RefreshIfNeededAsync(cfg);
+    var userId = GetUserId(c);
+    var (token, _) = DaikinOAuthService.TryGetValidAccessToken(cfg, userId);
+    token ??= await DaikinOAuthService.RefreshIfNeededAsync(cfg, userId);
     if (token == null) return Results.BadRequest(new { error = "Not authorized" });
     try
     {
-        bool log = (cfg["Daikin:Http:Log"] ?? cfg["Daikin:HttpLog"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
-        bool logBody = (cfg["Daikin:Http:LogBody"] ?? cfg["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
-        int.TryParse(cfg["Daikin:Http:BodySnippetLength"], out var bodyLen);
-        var client = new DaikinApiClient(token, log, logBody, bodyLen == 0 ? null : bodyLen);
+    bool log = (cfg["Daikin:Http:Log"] ?? cfg["Daikin:HttpLog"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
+    bool logBody = (cfg["Daikin:Http:LogBody"] ?? cfg["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
+    int.TryParse(cfg["Daikin:Http:BodySnippetLength"], out var bodyLen);
+    var baseApi = cfg["Daikin:ApiBaseUrl"];
+    var client = new DaikinApiClient(token, log, logBody, bodyLen == 0 ? null : bodyLen, baseApi);
         var devicesJson = await client.GetDevicesAsync("_ignored");
         return Results.Content(devicesJson, "application/json");
     }
@@ -367,8 +462,9 @@ daikinGroup.MapGet("/gateway", async (IConfiguration cfg) =>
 // PUT (upload) a schedule payload to a gateway device management point + optionally activate a scheduleId (mode auto-detect if omitted or 'auto')
 daikinGroup.MapPost("/gateway/schedule/put", async (IConfiguration cfg, HttpContext ctx) =>
 {
-    var (token, _) = DaikinOAuthService.TryGetValidAccessToken(cfg);
-    token ??= await DaikinOAuthService.RefreshIfNeededAsync(cfg);
+    var userId = GetUserId(ctx);
+    var (token, _) = DaikinOAuthService.TryGetValidAccessToken(cfg, userId);
+    token ??= await DaikinOAuthService.RefreshIfNeededAsync(cfg, userId);
     if (token == null) return Results.BadRequest(new { error = "Not authorized" });
     try
     {
@@ -386,10 +482,11 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IConfiguration cfg, HttpCont
         // Serialize schedule payload exactly as provided
         var schedulePayloadJson = schedulePayloadNode.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
 
-        bool log = (cfg["Daikin:Http:Log"] ?? cfg["Daikin:HttpLog"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
-        bool logBody = (cfg["Daikin:Http:LogBody"] ?? cfg["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
-        int.TryParse(cfg["Daikin:Http:BodySnippetLength"], out var bodyLen);
-        var client = new DaikinApiClient(token, log, logBody, bodyLen == 0 ? null : bodyLen);
+    bool log = (cfg["Daikin:Http:Log"] ?? cfg["Daikin:HttpLog"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
+    bool logBody = (cfg["Daikin:Http:LogBody"] ?? cfg["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
+    int.TryParse(cfg["Daikin:Http:BodySnippetLength"], out var bodyLen);
+    var baseApi = cfg["Daikin:ApiBaseUrl"];
+    var client = new DaikinApiClient(token, log, logBody, bodyLen == 0 ? null : bodyLen, baseApi);
 
         string modeUsed = requestedMode;
         if (modeUsed == "auto" || string.IsNullOrWhiteSpace(modeUsed))

@@ -18,39 +18,29 @@ internal static class BatchRunner
     public static async Task<(bool generated, JsonNode? schedulePayload, string message)> RunBatchAsync(IConfiguration config, bool applySchedule, bool persist)
     {
         var environment = config["ASPNETCORE_ENVIRONMENT"] ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production";
-        var haBaseUrl = config["HomeAssistant:BaseUrl"] ?? string.Empty;
-        var haToken = config["HomeAssistant:Token"] ?? string.Empty;
-        var haSensor = config["HomeAssistant:Sensor"] ?? string.Empty;
         var accessToken = config["Daikin:AccessToken"] ?? string.Empty;
         if (string.IsNullOrWhiteSpace(accessToken))
         {
-            // Försök hämta från tokenfil (OAuth)
             var (tkn, _) = DaikinOAuthService.TryGetValidAccessToken(config);
-            if (tkn == null)
-            {
-                // försök refresh
-                tkn = await DaikinOAuthService.RefreshIfNeededAsync(config);
-            }
+            if (tkn == null) tkn = await DaikinOAuthService.RefreshIfNeededAsync(config);
             accessToken = tkn ?? string.Empty;
         }
-        Console.WriteLine($"[Batch] Start env={environment} sensor={haSensor}");
-        var homeAssistant = new HomeAssistantClient(haBaseUrl, haToken);
-        await homeAssistant.TestConnectionAsync();
-
-        JsonArray? rawToday = null;
-        JsonArray? rawTomorrow = null;
+        var zone = config["Price:Nordpool:DefaultZone"] ?? "SE3";
+        var currency = config["Price:Nordpool:Currency"] ?? "SEK";
+        Console.WriteLine($"[Batch] Start env={environment} zone={zone} source=Nordpool");
+        JsonArray? rawToday = null; JsonArray? rawTomorrow = null;
         try
         {
-            rawToday = await homeAssistant.GetRawPricesAsync(haSensor, "raw_today");
-            rawTomorrow = await homeAssistant.GetRawPricesAsync(haSensor, "raw_tomorrow");
+            var np = new NordpoolClient(currency);
+            var fetched = await np.GetTodayTomorrowAsync(zone);
+            rawToday = fetched.today; rawTomorrow = fetched.tomorrow;
+            PriceMemory.Set(rawToday, rawTomorrow);
+            NordpoolPersistence.Save(zone, rawToday, rawTomorrow, config["Storage:Directory"] ?? "data");
         }
         catch (Exception ex)
         {
-            return (false, null, $"HA error: {ex.Message}");
+            return (false, null, $"Nordpool error: {ex.Message}");
         }
-
-    // Uppdatera minnescache
-    PriceMemory.Set(rawToday, rawTomorrow);
 
     string? dynamicSchedulePayload = null; // intern sträng för eventuell post till Daikin
         // Bygg schema för idag och (om finns) imorgon. Lägg in båda weekday-namnen i samma actions.
@@ -214,7 +204,7 @@ internal static class BatchRunner
                 var snapshot = new
                 {
                     fetchedAt = DateTimeOffset.UtcNow,
-                    sensor = haSensor,
+                    zone,
                     today = rawToday,
                     tomorrow = rawTomorrow,
                     schedulePreview = scheduleNode
