@@ -41,11 +41,14 @@ app.MapGet("/api/user/settings", async (HttpContext ctx) =>
     if (!File.Exists(path)) return Results.Json(new { ComfortHours = 3, TurnOffPercentile = 0.9, TurnOffMaxConsecutive = 2 });
     var json = await File.ReadAllTextAsync(path);
     var node = JsonNode.Parse(json) as JsonObject;
+    int comfortHours = int.TryParse(node?["ComfortHours"]?.ToString(), out var ch) ? ch : 3;
+    double turnOffPercentile = double.TryParse(node?["TurnOffPercentile"]?.ToString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var tp) ? tp : 0.9;
+    int turnOffMaxConsecutive = int.TryParse(node?["TurnOffMaxConsecutive"]?.ToString(), out var tmc) ? tmc : 2;
     return Results.Json(new
     {
-        ComfortHours = node?["ComfortHours"]?.GetValue<int?>() ?? 3,
-        TurnOffPercentile = node?["TurnOffPercentile"]?.GetValue<double?>() ?? 0.9,
-        TurnOffMaxConsecutive = node?["TurnOffMaxConsecutive"]?.GetValue<int?>() ?? 2
+        ComfortHours = comfortHours,
+        TurnOffPercentile = turnOffPercentile,
+        TurnOffMaxConsecutive = turnOffMaxConsecutive
     });
 });
 
@@ -62,9 +65,17 @@ app.MapPost("/api/user/settings", async (HttpContext ctx) =>
         node = JsonNode.Parse(json) as JsonObject ?? new JsonObject();
     }
     else node = new JsonObject();
-    node["ComfortHours"] = body["ComfortHours"] ?? 3;
-    node["TurnOffPercentile"] = body["TurnOffPercentile"] ?? 0.9;
-    node["TurnOffMaxConsecutive"] = body["TurnOffMaxConsecutive"] ?? 2;
+    var rawCh = body["ComfortHours"]?.ToString();
+    var rawTp = body["TurnOffPercentile"]?.ToString();
+    var rawTmc = body["TurnOffMaxConsecutive"]?.ToString();
+    int ch; double tp; int tmc;
+    bool chOk = int.TryParse(rawCh, out ch);
+    bool tpOk = double.TryParse(rawTp, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out tp);
+    bool tmcOk = int.TryParse(rawTmc, out tmc);
+    Console.WriteLine($"[UserSettings] Received: ComfortHours={rawCh} (parsed={(chOk ? ch.ToString() : "fail")}), TurnOffPercentile={rawTp} (parsed={(tpOk ? tp.ToString() : "fail")}), TurnOffMaxConsecutive={rawTmc} (parsed={(tmcOk ? tmc.ToString() : "fail")})");
+    node["ComfortHours"] = chOk ? ch : 3;
+    node["TurnOffPercentile"] = tpOk ? tp : 0.9;
+    node["TurnOffMaxConsecutive"] = tmcOk ? tmc : 2;
     await File.WriteAllTextAsync(path, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
     return Results.Ok(new { saved = true });
 });

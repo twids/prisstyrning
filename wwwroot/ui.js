@@ -116,9 +116,9 @@ if(comfortHoursEl){
       const res = await fetch('/api/user/settings');
       if(!res.ok) throw new Error('Could not load settings');
       const d = await res.json();
-      comfortHoursEl.value = d.ComfortHours ?? 3;
-      if(turnOffPercentileEl) turnOffPercentileEl.value = d.TurnOffPercentile ?? 0.9;
-      if(turnOffMaxConsecutiveEl) turnOffMaxConsecutiveEl.value = d.TurnOffMaxConsecutive ?? 2;
+  comfortHoursEl.value = d.comfortHours ?? 3;
+  if(turnOffPercentileEl) turnOffPercentileEl.value = d.turnOffPercentile ?? 0.9;
+  if(turnOffMaxConsecutiveEl) turnOffMaxConsecutiveEl.value = d.turnOffMaxConsecutive ?? 2;
       if(userSettingsStatus) userSettingsStatus.textContent = '';
     } catch(e) { if(userSettingsStatus) userSettingsStatus.textContent = 'Error: ' + e.message; }
   })();
@@ -343,6 +343,7 @@ if(gwBtn) gwBtn.onclick = loadGateway;
 window.addEventListener('DOMContentLoaded', () => {
   loadAuth();
   loadPrices();
+  // Do NOT load gateway automatically on page load. Only load on explicit user action (button click)
 });
 
 // Autofyll gatewayDeviceId & embeddedId direkt vid sidladdning
@@ -391,7 +392,7 @@ async function initialGatewayPopulate(){
     }
   }catch(e){ /* tyst */ }
 }
-initialGatewayPopulate();
+// initialGatewayPopulate(); // Disabled: Only load gateway on explicit user action
 
 // Apply schedule PUT
 const applyBtn=document.getElementById('applyScheduleBtn');
