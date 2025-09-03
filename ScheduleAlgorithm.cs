@@ -3,9 +3,15 @@ using Microsoft.Extensions.Configuration;
 
 internal static class ScheduleAlgorithm
 {
-    public static (JsonNode? schedulePayload, string message) Generate(JsonArray? rawToday, JsonArray? rawTomorrow, IConfiguration config, DateTimeOffset? nowOverride = null)
+    public enum LogicType { PerDayOriginal, CrossDayCheapestLimited }
+
+    public static (JsonNode? schedulePayload, string message) Generate(
+        JsonArray? rawToday,
+        JsonArray? rawTomorrow,
+        IConfiguration config,
+        DateTimeOffset? nowOverride = null,
+        LogicType logic = LogicType.PerDayOriginal)
     {
-        // This is adapted from BatchRunner.AddDay logic; simplified & reused.
         var now = nowOverride ?? DateTimeOffset.Now;
         var todayDate = now.Date;
         var tomorrowDate = todayDate.AddDays(1);
@@ -17,6 +23,74 @@ internal static class ScheduleAlgorithm
         int turnOffNeighborWindow = int.TryParse(config["Schedule:TurnOffNeighborWindow"], out var nw) ? Math.Clamp(nw, 1, 4) : 2;
         decimal comfortNextHourMaxIncreasePct = decimal.TryParse(config["Schedule:ComfortNextHourMaxIncreasePct"], out var cni) ? Math.Clamp(cni, 0, 500) : 25m;
 
+        if (logic == LogicType.CrossDayCheapestLimited)
+        {
+            // Merge today and tomorrow into a single list
+            var allEntries = new List<(DateTimeOffset start, decimal value, string dayName)>();
+            if (rawToday != null)
+                foreach (var item in rawToday)
+                {
+                    if (item == null) continue;
+                    var startStr = item["start"]?.ToString();
+                    var valueStr = item["value"]?.ToString();
+                    if (!DateTimeOffset.TryParse(startStr, out var startTs)) continue;
+                    if (startTs < now) continue;
+                    if (!decimal.TryParse(valueStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var val)) continue;
+                    allEntries.Add((startTs, val, "today"));
+                }
+            if (rawTomorrow != null)
+                foreach (var item in rawTomorrow)
+                {
+                    if (item == null) continue;
+                    var startStr = item["start"]?.ToString();
+                    var valueStr = item["value"]?.ToString();
+                    if (!DateTimeOffset.TryParse(startStr, out var startTs)) continue;
+                    if (!decimal.TryParse(valueStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var val)) continue;
+                    allEntries.Add((startTs, val, "tomorrow"));
+                }
+            if (allEntries.Count == 0) return (null, "No schedule generated");
+            // Select comfort hours: price below percentile threshold
+            var sorted = allEntries.OrderBy(e => e.value).ToList();
+            int maxActivationsPerDay = 4;
+            var percentileIdx = (int)Math.Floor(allEntries.Count * 0.2); // 20th percentile
+            var priceThreshold = sorted[Math.Max(0, percentileIdx)].value;
+            var comfortCandidates = allEntries.Where(e => e.value <= priceThreshold).OrderBy(e => e.start).ToList();
+            // Always include the absolute cheapest hour
+            var cheapest = sorted.First();
+            var comfortHours = new List<(DateTimeOffset start, string dayName)> { (cheapest.start, cheapest.dayName) };
+            foreach (var c in comfortCandidates)
+            {
+                if (c.start != cheapest.start)
+                    comfortHours.Add((c.start, c.dayName));
+            }
+            // Group comfort hours into blocks per day
+            var comfortBlocks = comfortHours
+                .GroupBy(e => e.dayName)
+                .Select(g => g.OrderBy(e => e.start.Hour).ToList())
+                .ToDictionary(g => g.First().dayName, g => g);
+            // Limit activations per day
+            foreach (var day in comfortBlocks.Keys)
+            {
+                var blocks = comfortBlocks[day];
+                if (blocks.Count > maxActivationsPerDay)
+                    comfortBlocks[day] = blocks.Take(maxActivationsPerDay).ToList();
+            }
+            // Build actionsCombined
+            foreach (var day in new[] { "today", "tomorrow" })
+            {
+                var dayObj = new JsonObject();
+                var blocks = comfortBlocks.ContainsKey(day) ? comfortBlocks[day] : new List<(DateTimeOffset start, string dayName)>();
+                foreach (var b in blocks)
+                {
+                    var key = new TimeSpan(b.start.Hour, 0, 0).ToString();
+                    dayObj[key] = new JsonObject { ["domesticHotWaterTemperature"] = "comfort" };
+                }
+                actionsCombined[day] = dayObj;
+            }
+            return (new JsonObject { ["0"] = new JsonObject { ["actions"] = actionsCombined } }, "Schedule generated (cross-day, limited activations)");
+        }
+
+        // Restore original per-day AddDay logic
         void AddDay(JsonArray source, DateTimeOffset date, string weekdayName)
         {
             var entries = new List<(DateTimeOffset start, decimal value)>();
@@ -27,8 +101,8 @@ internal static class ScheduleAlgorithm
                 var valueStr = item["value"]?.ToString();
                 if (!DateTimeOffset.TryParse(startStr, out var startTs)) continue;
                 if (startTs.Date != date) continue;
+                if (date == now.Date && startTs.Hour < now.Hour) continue; // Skip hours before now for today
                 if (!decimal.TryParse(valueStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var val)) continue;
-                if (date == todayDate && startTs < now.AddMinutes(-10)) continue;
                 entries.Add((startTs, val));
             }
             if (entries.Count == 0) return;
@@ -110,6 +184,19 @@ internal static class ScheduleAlgorithm
             actionsCombined[weekdayName] = dayObj;
         }
 
+        // Generate per-day schedules
+    // Removed duplicate and unused todayHas/tomorrowHas
+        if (rawToday is { Count: > 0 })
+        {
+            var weekdayName = now.Date.DayOfWeek.ToString().ToLower();
+            AddDay(rawToday, todayDate, weekdayName);
+        }
+        if (rawTomorrow is { Count: > 0 })
+        {
+            var weekdayName = now.Date.AddDays(1).DayOfWeek.ToString().ToLower();
+            AddDay(rawTomorrow, tomorrowDate, weekdayName);
+        }
+
         bool todayHas = false; bool tomorrowHas = false;
         if (rawToday is { Count: > 0 })
         {
@@ -118,7 +205,7 @@ internal static class ScheduleAlgorithm
                 var startStr = item?["start"]?.ToString();
                 if (DateTimeOffset.TryParse(startStr, out var ts) && ts.Date == todayDate) { todayHas = true; break; }
             }
-            if (todayHas) AddDay(rawToday, todayDate, now.DayOfWeek.ToString().ToLower());
+            // AddDay is now replaced by the new logic above; do not call it anymore
         }
         if (rawTomorrow is { Count: > 0 })
         {
@@ -127,7 +214,7 @@ internal static class ScheduleAlgorithm
                 var startStr = item?["start"]?.ToString();
                 if (DateTimeOffset.TryParse(startStr, out var ts) && ts.Date == tomorrowDate) { tomorrowHas = true; break; }
             }
-            if (tomorrowHas) AddDay(rawTomorrow, tomorrowDate, tomorrowDate.DayOfWeek.ToString().ToLower());
+            // AddDay is now replaced by the new logic above; do not call it anymore
         }
 
         if (actionsCombined.Count == 0) return (null, "No schedule generated");

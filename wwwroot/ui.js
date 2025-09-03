@@ -14,7 +14,12 @@ if(toggleCurrentRawBtn && currentScheduleRawEl){
 }
 
 async function loadAuth(){
-  try{const d=await j('/auth/daikin/status');authStatusEl.textContent=d.authorized?`Authorized (expires ${new Date(d.expiresAtUtc).toLocaleTimeString()})`:'Inte auktoriserad';authStatusEl.className=d.authorized?'good':'bad';}
+  try{
+    const d=await j('/auth/daikin/status');
+    const expiresStr = d.expiresAtUtc ? new Date(d.expiresAtUtc).toLocaleTimeString(navigator.language) : '';
+    authStatusEl.textContent = d.authorized ? `Authorized (expires ${expiresStr})` : 'Not authorized';
+    authStatusEl.className = d.authorized ? 'good' : 'bad';
+  }
   catch(e){authStatusEl.textContent='Fel: '+e.message;authStatusEl.className='bad';}
 }
 async function loadPrices(){
@@ -22,7 +27,7 @@ async function loadPrices(){
     const d=await j('/api/prices/memory');
     // Update chart and meta only
     const meta=document.getElementById('latestPriceMeta');
-    if(d.updated && meta) meta.textContent='Senast uppdaterad: '+new Date(d.updated).toLocaleString();
+  if(d.updated && meta) meta.textContent='Last updated: '+new Date(d.updated).toLocaleString(navigator.language, { dateStyle: 'medium', timeStyle: 'medium' });
     const allPrices = [];
     if(Array.isArray(d.today)) allPrices.push(...d.today);
     if(Array.isArray(d.tomorrow)) allPrices.push(...d.tomorrow);
@@ -57,12 +62,42 @@ function renderPriceChart(prices){
   window._priceChart = new Chart(ctx, {
     type: 'line',
     data: { datasets: [
-      today.length ? { label: 'Idag', data: today, borderColor: '#1976d2', backgroundColor: 'rgba(25,118,210,0.1)', fill: true } : null,
-      tomorrow.length ? { label: 'Imorgon', data: tomorrow, borderColor: '#FFB74D', backgroundColor: 'rgba(255,183,77,0.1)', fill: true } : null
+    today.length ? { label: 'Today', data: today, borderColor: '#1976d2', backgroundColor: 'rgba(25,118,210,0.1)', fill: true } : null,
+    tomorrow.length ? { label: 'Tomorrow', data: tomorrow, borderColor: '#FFB74D', backgroundColor: 'rgba(255,183,77,0.1)', fill: true } : null
     ].filter(Boolean) },
     options: {
-      scales: { x: { type: 'time', time: { unit: 'hour' } }, y: { beginAtZero: true } },
-      plugins: { legend: { display: true } }
+      scales: {
+        x: {
+          type: 'time',
+          time: {
+            unit: 'hour',
+            tooltipFormat: 'Pp',
+            displayFormats: {
+              hour: 'HH:mm'
+            }
+          },
+          ticks: {
+            callback: function(value, index, ticks) {
+              // Format tick labels using browser locale
+              const dt = new Date(value);
+              return dt.toLocaleTimeString(navigator.language, { hour: '2-digit', minute: '2-digit' });
+            }
+          }
+        },
+        y: { beginAtZero: true }
+      },
+      plugins: {
+        legend: { display: true },
+        tooltip: {
+          callbacks: {
+            title: function(context) {
+              // Format tooltip title using browser locale
+              const dt = new Date(context[0].parsed.x);
+              return dt.toLocaleString(navigator.language);
+            }
+          }
+        }
+      }
     }
   });
 }
@@ -114,12 +149,12 @@ async function loadZone(){
     if(d.zone){
       zoneSelect.value=d.zone;
       const zoneLabel = document.getElementById('zoneLabel');
-      if(zoneLabel) zoneLabel.textContent = 'Aktiv zon: ' + d.zone;
+      if(zoneLabel) zoneLabel.textContent = 'Active zone: ' + d.zone;
     }
   }
   catch(e){
     const zoneLabel = document.getElementById('zoneLabel');
-    if(zoneLabel) zoneLabel.textContent = 'Zonfel: ' + e.message;
+    if(zoneLabel) zoneLabel.textContent = 'Zone error: ' + e.message;
   }
 }
 async function saveZone(){

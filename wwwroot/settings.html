@@ -16,26 +16,43 @@
   <main style="max-width:760px;margin:0 auto;padding:1rem;">
     <section>
       <div id="userSettingsPanel" class="schedule-settings" style="margin-top:1rem;">
-        <h3 style="margin-top:0;font-size:1.1rem;">Schedule settings (per user)</h3>
-        <div class="settings-row">
-          <label for="comfortHours">Comfort hours:</label>
-          <input id="comfortHours" type="number" min="1" max="12" value="3" title="Number of hours per day for comfort (hot water). Default: 3">
-          <span class="tooltip">How many hours per day should be set to comfort mode (hot water)?</span>
-        </div>
-        <div class="settings-row">
-          <label for="turnOffPercentile">Turn-off percentile:</label>
-          <input id="turnOffPercentile" type="number" min="0.5" max="0.99" step="0.01" value="0.9" title="Percentile for turn-off selection. Default: 0.9">
-          <span class="tooltip">Above this price percentile, hours are considered for turn-off. (0.9 = top 10% most expensive hours)</span>
-        </div>
-        <div class="settings-row">
-          <label for="turnOffMaxConsecutive">Max consecutive turn-off hours:</label>
-          <input id="turnOffMaxConsecutive" type="number" min="1" max="6" value="2" title="Maximum consecutive turn-off hours. Default: 2">
-          <span class="tooltip">Maximum number of hours in a row that can be turned off. Default: 2</span>
-        </div>
-        <div style="display:flex;gap:.75rem;align-items:center;margin-top:.75rem;flex-wrap:wrap;">
-          <button id="saveUserSettings">Save settings</button>
-          <button id="revokeTokenBtn" type="button" style="background:#b23b3b;">Revoke Daikin Token</button>
-          <span id="userSettingsStatus" class="error"></span>
+        <h3 style="margin-top:0;font-size:1.25rem;display:flex;align-items:center;gap:.5rem;">
+          <span style="font-size:1.3rem;color:#1976d2;">⚙️</span> Schedule Settings
+        </h3>
+        <div class="settings-card" style="background:#f7f7fa;border-radius:10px;padding:1.5rem 1.5rem 1rem 1.5rem;box-shadow:0 2px 8px rgba(25,118,210,0.08);margin-bottom:1.5rem;">
+          <div class="settings-row" style="margin-bottom:1.2rem;">
+            <label for="zoneSelect" style="min-width:140px;">Zone</label>
+            <select id="zoneSelect" style="min-width:120px;">
+              <option value="SE3">SE3</option>
+              <option value="SE2">SE2</option>
+              <option value="NO5">NO5</option>
+            </select>
+            <button id="saveZone" style="margin-left:1rem;">💾 Save zone</button>
+            <span id="zoneStatus" style="margin-left:12px;color:#1976d2;font-size:.95rem;"></span>
+          </div>
+      <div style="margin-top:2.5rem;display:flex;align-items:center;gap:1.2rem;">
+        <button id="revokeTokenBtn" style="background:#d32f2f;color:#fff;font-size:1rem;padding:.6rem 1.3rem;border-radius:6px;">🔒 Revoke Daikin token</button>
+        <span id="revokeStatus" style="color:#d32f2f;font-size:.95rem;"></span>
+      </div>
+          <div class="settings-row" style="margin-bottom:1.2rem;">
+            <label for="comfortHours" style="min-width:140px;">Comfort hours</label>
+            <input id="comfortHours" type="number" min="1" max="12" value="3" title="Number of hours per day for comfort (hot water). Default: 3">
+            <span class="tooltip" style="margin-left:12px;">How many hours per day should be set to comfort mode (hot water)?</span>
+          </div>
+          <div class="settings-row" style="margin-bottom:1.2rem;">
+            <label for="turnOffPercentile" style="min-width:140px;">Turn-off percentile</label>
+            <input id="turnOffPercentile" type="number" min="0.5" max="0.99" step="0.01" value="0.9" title="Percentile for turn-off selection. Default: 0.9">
+            <span class="tooltip" style="margin-left:12px;">Above this price percentile, hours are considered for turn-off.<br>(0.9 = top 10% most expensive hours)</span>
+          </div>
+          <div class="settings-row" style="margin-bottom:1.2rem;">
+            <label for="turnOffMaxConsecutive" style="min-width:140px;">Max consecutive turn-off hours</label>
+            <input id="turnOffMaxConsecutive" type="number" min="1" max="6" value="2" title="Maximum consecutive turn-off hours. Default: 2">
+            <span class="tooltip" style="margin-left:12px;">Maximum number of hours in a row that can be turned off. Default: 2</span>
+          </div>
+          <div style="display:flex;gap:1.2rem;align-items:center;margin-top:1.5rem;flex-wrap:wrap;">
+            <button id="saveUserSettings" style="background:#1976d2;font-size:1.05rem;padding:.7rem 1.5rem;">💾 Save settings</button>
+            <span id="userSettingsStatus" class="error"></span>
+          </div>
         </div>
       </div>
     </section>
@@ -47,7 +64,8 @@
   const statusEl = document.getElementById('userSettingsStatus');
   if(revokeBtn){
     revokeBtn.onclick = async () => {
-      if(!confirm('Revoke Daikin token? This will delete current authorization.')) return;
+          if(!confirm('Revoke Daikin token? This will delete current authorization.')) return;
+          if(!confirm('Are you absolutely sure? This action cannot be undone.')) return;
       statusEl.textContent = 'Revoking...';
       try {
         const r = await fetch('/auth/daikin/revoke', { method:'POST' });

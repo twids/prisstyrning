@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Builder;
+﻿
+using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
@@ -6,6 +7,8 @@ using Microsoft.AspNetCore.Http;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Linq;
+
+// Register /api/user/settings endpoints after app is declared
 
 var builder = WebApplication.CreateBuilder(args);
 // Läser in en extra lokal override-fil (gemener) om den finns
@@ -29,6 +32,42 @@ builder.Services.AddHostedService<NordpoolPriceJob>();
 builder.Services.AddHostedService<DaikinTokenRefreshService>();
 
 var app = builder.Build();
+// User settings endpoints
+app.MapGet("/api/user/settings", async (HttpContext ctx) =>
+{
+    var cfg = (IConfiguration)builder.Configuration;
+    var userId = GetUserId(ctx);
+    var path = Path.Combine("tokens", userId ?? "", "user.json");
+    if (!File.Exists(path)) return Results.Json(new { ComfortHours = 3, TurnOffPercentile = 0.9, TurnOffMaxConsecutive = 2 });
+    var json = await File.ReadAllTextAsync(path);
+    var node = JsonNode.Parse(json) as JsonObject;
+    return Results.Json(new
+    {
+        ComfortHours = node?["ComfortHours"]?.GetValue<int?>() ?? 3,
+        TurnOffPercentile = node?["TurnOffPercentile"]?.GetValue<double?>() ?? 0.9,
+        TurnOffMaxConsecutive = node?["TurnOffMaxConsecutive"]?.GetValue<int?>() ?? 2
+    });
+});
+
+app.MapPost("/api/user/settings", async (HttpContext ctx) =>
+{
+    var userId = GetUserId(ctx);
+    var body = await JsonNode.ParseAsync(ctx.Request.Body) as JsonObject;
+    if (body == null) return Results.BadRequest(new { error = "Missing body" });
+    var path = Path.Combine("tokens", userId ?? "", "user.json");
+    JsonObject node;
+    if (File.Exists(path))
+    {
+        var json = await File.ReadAllTextAsync(path);
+        node = JsonNode.Parse(json) as JsonObject ?? new JsonObject();
+    }
+    else node = new JsonObject();
+    node["ComfortHours"] = body["ComfortHours"] ?? 3;
+    node["TurnOffPercentile"] = body["TurnOffPercentile"] ?? 0.9;
+    node["TurnOffMaxConsecutive"] = body["TurnOffMaxConsecutive"] ?? 2;
+    await File.WriteAllTextAsync(path, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+    return Results.Ok(new { saved = true });
+});
 
 // Försök förladda minnescache från senaste persistenta fil så /api/prices/memory inte ger 404 direkt vid start
 try
@@ -278,7 +317,7 @@ scheduleGroup.MapGet("/preview", async (HttpContext c) => {
         { "Schedule:TurnOffMaxConsecutive", turnOffMaxConsecutive }
     };
     var configUser = new ConfigurationBuilder().AddInMemoryCollection(configDict).AddConfiguration(cfg).Build();
-    var (payload, msg) = ScheduleAlgorithm.Generate(today, tomorrow, configUser);
+    var (payload, msg) = ScheduleAlgorithm.Generate(today, tomorrow, configUser, null, ScheduleAlgorithm.LogicType.PerDayOriginal);
     return Results.Json(new { schedulePayload = payload, generated = payload != null, message = msg, zone });
 });
 scheduleGroup.MapPost("/apply", async () => { var result = await BatchRunner.RunBatchAsync(builder.Configuration, applySchedule:false, persist:true); return Results.Json(result); });
@@ -582,20 +621,8 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IConfiguration cfg, HttpCont
         }
 
         await client.PutSchedulesAsync(gatewayDeviceId, embeddedId, modeUsed, schedulePayloadJson);
-        bool activated = false;
-        if (!string.IsNullOrWhiteSpace(activateScheduleId))
-        {
-            try
-            {
-                await client.SetCurrentScheduleAsync(gatewayDeviceId, embeddedId, modeUsed, activateScheduleId);
-                activated = true;
-            }
-            catch (Exception exAct)
-            {
-                return Results.BadRequest(new { error = "Put ok men aktivering misslyckades", activateError = exAct.Message });
-            }
-        }
-        return Results.Ok(new { put = true, activated, activateScheduleId, modeUsed, requestedMode });
+    // Activation step removed: only PUT schedule, do not activate
+    return Results.Ok(new { put = true, activateScheduleId, modeUsed, requestedMode });
     }
     catch (Exception ex)
     {
