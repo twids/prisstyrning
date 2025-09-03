@@ -111,23 +111,28 @@ internal static class DaikinOAuthService
     }
 
     public static async Task<string?> RefreshIfNeededAsync(IConfiguration cfg) => await RefreshIfNeededAsync(cfg, null);
-    public static async Task<string?> RefreshIfNeededAsync(IConfiguration cfg, string? userId)
+    public static async Task<string?> RefreshIfNeededAsync(IConfiguration cfg, string? userId) => await RefreshIfNeededAsync(cfg, userId, TimeSpan.FromMinutes(1));
+
+    /// <summary>
+    /// Refresh the access token if it will expire within the provided window.
+    /// Default window in existing calls is 1 minute; callers can request a larger proactive window.
+    /// </summary>
+    public static async Task<string?> RefreshIfNeededAsync(IConfiguration cfg, string? userId, TimeSpan window)
     {
         var existing = LoadTokens(cfg, userId);
-        if(existing == null) return null;
-        if(existing.expires_at_utc > DateTimeOffset.UtcNow.AddMinutes(1)) return existing.access_token; // still valid
+        if (existing == null) return null;
+        if (existing.expires_at_utc > DateTimeOffset.UtcNow.Add(window)) return existing.access_token; // still valid enough
         var clientId = cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
-    var clientSecret = cfg["Daikin:ClientSecret"];
-    var tokenEndpoint = cfg["Daikin:TokenEndpoint"] ?? DefaultTokenEndpoint;
+        var clientSecret = cfg["Daikin:ClientSecret"];
+        var tokenEndpoint = cfg["Daikin:TokenEndpoint"] ?? DefaultTokenEndpoint;
         var form = new Dictionary<string,string>{
-            ["grant_type"]="refresh_token",
+            ["grant_type"] = "refresh_token",
             ["refresh_token"] = existing.refresh_token,
             ["client_id"] = clientId
         };
-        if(!string.IsNullOrWhiteSpace(clientSecret))
-            form["client_secret"] = clientSecret;
+        if(!string.IsNullOrWhiteSpace(clientSecret)) form["client_secret"] = clientSecret;
         using var http = new HttpClient();
-        Console.WriteLine($"[DaikinOAuth] Refreshing token at {tokenEndpoint}");
+        Console.WriteLine($"[DaikinOAuth] Refreshing token at {tokenEndpoint} (window={window})");
         var resp = await http.PostAsync(tokenEndpoint, new FormUrlEncodedContent(form));
         if(!resp.IsSuccessStatusCode)
         {
@@ -143,7 +148,7 @@ internal static class DaikinOAuthService
         var expiresIn = root.TryGetProperty("expires_in", out var ei) ? ei.GetInt32() : 3600;
         var expiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn - 30);
         SaveTokens(cfg, new TokenFile(access, refresh!, expiresAt), userId);
-    Console.WriteLine($"[DaikinOAuth] Refresh OK newExpiry={expiresAt:O}");
+        Console.WriteLine($"[DaikinOAuth] Refresh OK newExpiry={expiresAt:O}");
         return access;
     }
 

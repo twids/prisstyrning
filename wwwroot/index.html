@@ -1,9 +1,16 @@
-<!doctype html><html lang="sv"><head><meta charset="utf-8"><title>Prisstyrning</title><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/ui.css">
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Prisstyrning</title><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/ui.css">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <!-- Chart.js time scale kräver en date adapter; lägg till date-fns adapter -->
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
 </head><body>
-<header><h1>Prisstyrning</h1></header>
+<header style="display:flex;justify-content:space-between;align-items:center;">
+	<h1 style="margin:0;font-size:1.4rem;">Prisstyrning</h1>
+	<nav style="display:flex;align-items:center;gap:1rem;">
+		<a href="/settings.html" title="Schedule settings" style="color:#fff;text-decoration:none;font-size:1.3rem;line-height:1;display:inline-flex;align-items:center;gap:.35rem;">
+			<span style="font-size:1.2rem;">⚙</span><span style="font-size:.8rem;letter-spacing:.5px;">Settings</span>
+		</a>
+	</nav>
+</header>
 <main>
 <!-- Combined Status + Daikin section -->
 <section id="daikinStatus">
@@ -20,26 +27,6 @@
 </section>
 
 <section id="priceBlock">
-  <div id="userSettingsPanel" class="schedule-settings">
-    <h3 style="margin-top:0;font-size:1.1rem;">Schedule settings (per user)</h3>
-    <div class="settings-row">
-      <label for="comfortHours">Comfort hours:</label>
-      <input id="comfortHours" type="number" min="1" max="12" value="3" title="Number of hours per day for comfort (hot water). Default: 3">
-      <span class="tooltip">How many hours per day should be set to comfort mode (hot water)?</span>
-    </div>
-    <div class="settings-row">
-      <label for="turnOffPercentile">Turn-off percentile:</label>
-      <input id="turnOffPercentile" type="number" min="0.5" max="0.99" step="0.01" value="0.9" title="Percentile for turn-off selection. Default: 0.9">
-      <span class="tooltip">Above this price percentile, hours are considered for turn-off. (0.9 = top 10% most expensive hours)</span>
-    </div>
-    <div class="settings-row">
-      <label for="turnOffMaxConsecutive">Max consecutive turn-off hours:</label>
-      <input id="turnOffMaxConsecutive" type="number" min="1" max="6" value="2" title="Maximum consecutive turn-off hours. Default: 2">
-      <span class="tooltip">Maximum number of hours in a row that can be turned off. Default: 2</span>
-    </div>
-    <button id="saveUserSettings" style="margin-top:.5rem;">Save settings</button>
-    <span id="userSettingsStatus" class="error"></span>
-  </div>
   <h2>Prices & Nordpool Zone</h2>
   <div style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;">
     <label>Zone:
@@ -61,7 +48,7 @@
         <option value="LT">LT</option>
       </select>
     </label>
-    <button id="saveZone">Save zone</button>
+	<button id="saveZone">Save zone</button>
     <span id="latestPriceMeta" style="font-size:.7rem;opacity:.7"></span>
     <span id="zoneLabel" class="zone-label"></span>
   </div>
