@@ -38,14 +38,12 @@ function updateAuthDependentUI(){
   const authRequiredButtons = [
     { id: 'showSites', text: 'Sites' },
     { id: 'showGateway', text: 'Gateway' },
-    { id: 'loadCurrentSchedule', text: 'Current DHW schedule' },
-    { id: 'applyScheduleBtn', text: 'PUT schedule' }
+    { id: 'loadCurrentSchedule', text: 'Retrieve Current Schedule' },
+    { id: 'applyScheduleBtn', text: 'Update schedule' }
   ];
-  
   authRequiredButtons.forEach(({ id, text }) => {
     const btn = document.getElementById(id);
     if (!btn) return;
-    
     if (isAuthorized) {
       btn.disabled = false;
       btn.textContent = text;
@@ -267,9 +265,16 @@ async function loadSchedule(){
     const d=await j('/api/schedule/preview');
     schedulePreviewEl.textContent=JSON.stringify(d,null,2);
     renderScheduleGrid(d.schedulePayload,'scheduleGrid');
-    msgEl.textContent=d.message||'';
-  window._lastPreview = d; // cache for PUT
-  }catch(e){schedulePreviewEl.textContent='Fel: '+e.message;}
+    msgEl.textContent='';
+    window._lastPreview = d; // cache for PUT
+    // Show the update button only after schedule is generated
+    const updateBtn = document.getElementById('applyScheduleBtn');
+    if(updateBtn) updateBtn.style.display = 'inline-block';
+  }catch(e){
+    schedulePreviewEl.textContent='Fel: '+e.message;
+    const updateBtn = document.getElementById('applyScheduleBtn');
+    if(updateBtn) updateBtn.style.display = 'none';
+  }
 }
 async function loadCurrentSchedule(){
   if (!isAuthorized) {
@@ -418,8 +423,11 @@ if(gwBtn) gwBtn.onclick = loadGateway;
 window.addEventListener('DOMContentLoaded', () => {
   loadAuth();
   loadPrices();
+  loadScheduleHistory();
+  // Hide update button until schedule is generated
+  const updateBtn = document.getElementById('applyScheduleBtn');
+  if(updateBtn) updateBtn.style.display = 'none';
   // Do NOT load gateway automatically on page load. Only load on explicit user action (button click)
-  
   // Check URL for auth success callback
   const urlParams = new URLSearchParams(window.location.search);
   if (urlParams.get('auth') === 'success') {
@@ -428,6 +436,65 @@ window.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => loadAuth(), 1000); // Give server time to process
   }
 });
+
+async function loadScheduleHistory() {
+  const listEl = document.getElementById('scheduleHistoryList');
+  if (!listEl) return;
+  listEl.innerHTML = '<div>Loading...</div>';
+  try {
+    const res = await fetch('/api/user/schedule-history');
+    if (!res.ok) throw new Error('Could not load schedule history');
+    const history = await res.json();
+    if (!Array.isArray(history) || history.length === 0) {
+      listEl.innerHTML = '<div>No schedule history found.</div>';
+      return;
+    }
+    listEl.innerHTML = '';
+    history.forEach((entry, idx) => {
+      let dt = entry.timestamp ? new Date(entry.timestamp) : null;
+      let localizedDate = dt ? dt.toLocaleDateString(navigator.language, { dateStyle: 'medium' }) : (entry.date || 'Unknown');
+      let localizedTimestamp = dt ? dt.toLocaleString(navigator.language, { dateStyle: 'medium', timeStyle: 'short' }) : '';
+      const container = document.createElement('div');
+      container.className = 'history-entry';
+      container.style.marginBottom = '1.2rem';
+      const header = document.createElement('div');
+      header.style.display = 'flex';
+      header.style.alignItems = 'center';
+      header.style.gap = '.8rem';
+      header.style.cursor = 'pointer';
+      header.style.background = '#222';
+      header.style.padding = '.5rem 1rem';
+      header.style.borderRadius = '6px';
+      header.innerHTML = `
+        <span style="font-weight:bold;">${localizedDate}</span>
+        <span style="font-size:.9em;opacity:.7;">${localizedTimestamp}</span>
+        <button style="margin-left:auto;">${idx === 0 ? '▼' : '▶'}</button>
+      `;
+      container.appendChild(header);
+      const details = document.createElement('div');
+      details.style.display = idx === 0 ? 'block' : 'none';
+      details.style.marginTop = '.7rem';
+      details.style.padding = '0 1rem';
+      // Visualize schedule
+      if (entry.schedule) {
+        const gridId = `historyGrid${idx}`;
+        details.innerHTML = `<div id="${gridId}" class="schedule-grid"></div>`;
+        renderScheduleGrid(entry.schedule, gridId);
+      } else {
+        details.innerHTML = '<div>No schedule data</div>';
+      }
+      container.appendChild(details);
+      header.querySelector('button').onclick = () => {
+        const expanded = details.style.display === 'block';
+        details.style.display = expanded ? 'none' : 'block';
+        header.querySelector('button').textContent = expanded ? '▶' : '▼';
+      };
+      listEl.appendChild(container);
+    });
+  } catch(e) {
+    listEl.innerHTML = `<div>Error loading schedule history: ${e.message}</div>`;
+  }
+}
 
 // Autofyll gatewayDeviceId & embeddedId direkt vid sidladdning
 async function tryAutoFillScheduleIds(){

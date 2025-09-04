@@ -34,6 +34,20 @@ builder.Services.AddHostedService<DaikinTokenRefreshService>();
 
 var app = builder.Build();
 // User settings endpoints
+// Schedule history endpoint for frontend visualization
+app.MapGet("/api/user/schedule-history", (HttpContext ctx) =>
+{
+    var userId = GetUserId(ctx);
+    var dataDir = builder.Configuration["Storage:Directory"] ?? "data";
+    var history = ScheduleHistoryPersistence.Load(userId ?? "default", dataDir);
+    // Only return date, timestamp, and schedule summary (no raw JSON)
+    var result = history.Select(e => new {
+        timestamp = e["timestamp"]?.ToString(),
+        date = DateTimeOffset.TryParse(e["timestamp"]?.ToString(), out var dt) ? dt.ToString("yyyy-MM-dd") : null,
+        schedule = e["schedule"]
+    });
+    return Results.Json(result);
+});
 app.MapGet("/api/user/settings", async (HttpContext ctx) =>
 {
     var cfg = (IConfiguration)builder.Configuration;
