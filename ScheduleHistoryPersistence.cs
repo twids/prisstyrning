@@ -36,10 +36,10 @@ internal static class ScheduleHistoryPersistence
         history.Add(entry);
         // Remove entries older than retentionDays
         var cutoff = DateTimeOffset.UtcNow.AddDays(-retentionDays);
-        history = history.Where(e => DateTimeOffset.TryParse(e["timestamp"]?.ToString(), out var t) && t >= cutoff).ToList();
-        var resultArray = new JsonArray();
-        foreach (var item in history) resultArray.Add(item);
-        await File.WriteAllTextAsync(file, resultArray.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+    history = history.Where(e => DateTimeOffset.TryParse(e["timestamp"]?.ToString(), out var t) && t >= cutoff).ToList();
+    var resultArray = new JsonArray();
+    foreach (var item in history) resultArray.Add(item);
+    await File.WriteAllTextAsync(file, resultArray.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
     }
 
     public static async Task<JsonArray> LoadAsync(string userId, string? baseDir = null)
