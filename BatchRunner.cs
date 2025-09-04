@@ -14,6 +14,43 @@ internal static class BatchRunner
         return new { res.schedulePayload, res.generated, res.message };
     }
 
+    // Overload that uses user-specific settings from user.json
+    public static async Task<(bool generated, JsonNode? schedulePayload, string message)> RunBatchAsync(IConfiguration config, string? userId, bool applySchedule, bool persist)
+    {
+        // Load user-specific settings similar to the preview endpoint in Program.cs
+        var userConfig = config;
+        if (!string.IsNullOrWhiteSpace(userId))
+        {
+            try
+            {
+                var path = Path.Combine("tokens", userId, "user.json");
+                if (File.Exists(path))
+                {
+                    var json = await File.ReadAllTextAsync(path);
+                    var node = System.Text.Json.Nodes.JsonNode.Parse(json) as System.Text.Json.Nodes.JsonObject;
+                    if (node != null)
+                    {
+                        // Override configuration with user-specific values
+                        var configDict = new Dictionary<string, string?>
+                        {
+                            { "Schedule:ComfortHours", node["ComfortHours"]?.ToString() ?? config["Schedule:ComfortHours"] },
+                            { "Schedule:TurnOffPercentile", node["TurnOffPercentile"]?.ToString() ?? config["Schedule:TurnOffPercentile"] },
+                            { "Schedule:TurnOffMaxConsecutive", node["TurnOffMaxConsecutive"]?.ToString() ?? config["Schedule:TurnOffMaxConsecutive"] }
+                        };
+                        userConfig = new ConfigurationBuilder().AddInMemoryCollection(configDict).AddConfiguration(config).Build();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[BatchRunner] Failed to load user settings for {userId}: {ex.Message}");
+                // Continue with default config if user settings can't be loaded
+            }
+        }
+
+        return await RunBatchAsync(userConfig, applySchedule, persist);
+    }
+
     // Returnerar schedulePayload som JsonNode istället för sträng för att API-responsen ska ha ett inbäddat JSON-objekt
     public static async Task<(bool generated, JsonNode? schedulePayload, string message)> RunBatchAsync(IConfiguration config, bool applySchedule, bool persist)
     {
