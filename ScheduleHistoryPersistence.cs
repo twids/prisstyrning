@@ -27,7 +27,7 @@ internal static class ScheduleHistoryPersistence
         // Remove entries older than retentionDays
         var cutoff = DateTimeOffset.UtcNow.AddDays(-retentionDays);
         history = history.Where(e => DateTimeOffset.TryParse(e["timestamp"]?.ToString(), out var t) && t >= cutoff).ToList();
-        var arr = new JsonArray(history.ToArray());
+        var arr = new JsonArray(history);
         File.WriteAllText(file, arr.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
     }
 
