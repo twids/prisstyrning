@@ -13,15 +13,51 @@ if(toggleCurrentRawBtn && currentScheduleRawEl){
   };
 }
 
+// Global authorization state
+let isAuthorized = false;
+
 async function loadAuth(){
   try{
     const d=await j('/auth/daikin/status');
     const expiresStr = d.expiresAtUtc ? new Date(d.expiresAtUtc).toLocaleTimeString(navigator.language) : '';
     authStatusEl.textContent = d.authorized ? `Authorized (expires ${expiresStr})` : 'Not authorized';
     authStatusEl.className = d.authorized ? 'good' : 'bad';
+    isAuthorized = d.authorized;
+    updateAuthDependentUI();
   }
-  catch(e){authStatusEl.textContent='Fel: '+e.message;authStatusEl.className='bad';}
+  catch(e){
+    authStatusEl.textContent='Fel: '+e.message;
+    authStatusEl.className='bad';
+    isAuthorized = false;
+    updateAuthDependentUI();
+  }
 }
+
+// Update UI elements that require authorization
+function updateAuthDependentUI(){
+  const authRequiredButtons = [
+    { id: 'showSites', text: 'Sites' },
+    { id: 'showGateway', text: 'Gateway' },
+    { id: 'loadCurrentSchedule', text: 'Current DHW schedule' },
+    { id: 'applyScheduleBtn', text: 'PUT schedule' }
+  ];
+  
+  authRequiredButtons.forEach(({ id, text }) => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    
+    if (isAuthorized) {
+      btn.disabled = false;
+      btn.textContent = text;
+      btn.title = '';
+    } else {
+      btn.disabled = true;
+      btn.textContent = text + ' (requires auth)';
+      btn.title = 'This feature requires Daikin authorization. Click "Start OAuth" to authenticate.';
+    }
+  });
+}
+
 async function loadPrices(){
   try{
     const d=await j('/api/prices/memory');
@@ -233,6 +269,12 @@ async function loadSchedule(){
   }catch(e){schedulePreviewEl.textContent='Fel: '+e.message;}
 }
 async function loadCurrentSchedule(){
+  if (!isAuthorized) {
+    currentScheduleRawEl.textContent = 'Error: Not authorized. Please authenticate with Daikin first.';
+    const grid=document.getElementById('currentScheduleGrid');
+    if(grid) grid.textContent='Not authorized';
+    return;
+  }
   currentScheduleRawEl.textContent='...';
   const grid=document.getElementById('currentScheduleGrid');
   grid.textContent='Laddar...';
@@ -296,11 +338,22 @@ async function loadCurrentSchedule(){
       }
       window._lastCurrentSchedule = d;
     } catch(_){}
-  }catch(e){ currentScheduleRawEl.textContent='Fel: '+e.message; grid.textContent='Fel'; }
+  }catch(e){ 
+    currentScheduleRawEl.textContent='Fel: '+e.message; 
+    grid.textContent='Fel'; 
+    // If error is 401 or "Not authorized", refresh auth status
+    if (e.message.includes('401') || e.message.includes('Not authorized')) {
+      setTimeout(() => loadAuth(), 100);
+    }
+  }
 }
 async function startAuth(){
   try{const d=await j('/auth/daikin/start');window.location=d.url;}catch(e){alert('Auth start fel: '+e.message);} }
 async function loadSites(){
+  if (!isAuthorized) {
+    daikinDataEl.textContent = 'Error: Not authorized. Please authenticate with Daikin first.';
+    return;
+  }
   daikinDataEl.textContent='...';
   try{
     const s=await j('/api/daikin/sites');
@@ -311,15 +364,31 @@ async function loadSites(){
     } else {
       daikinDataEl.textContent = JSON.stringify(s,null,2);
     }
-  }catch(e){daikinDataEl.textContent='Fel: '+e.message;}
+  }catch(e){
+    daikinDataEl.textContent='Fel: '+e.message;
+    // If error is 401 or "Not authorized", refresh auth status
+    if (e.message.includes('401') || e.message.includes('Not authorized')) {
+      setTimeout(() => loadAuth(), 100);
+    }
+  }
 }
 async function loadGateway(){
+  if (!isAuthorized) {
+    if(gatewayDataEl) gatewayDataEl.textContent = 'Error: Not authorized. Please authenticate with Daikin first.';
+    return;
+  }
   if(!gatewayDataEl) return;
   gatewayDataEl.textContent='...';
   try{
     const g=await j('/api/daikin/gateway?debug=true');
     gatewayDataEl.textContent=JSON.stringify(g,null,2);
-  }catch(e){ gatewayDataEl.textContent='Fel gateway: '+e.message; }
+  }catch(e){ 
+    gatewayDataEl.textContent='Fel gateway: '+e.message; 
+    // If error is 401 or "Not authorized", refresh auth status
+    if (e.message.includes('401') || e.message.includes('Not authorized')) {
+      setTimeout(() => loadAuth(), 100);
+    }
+  }
 }
 
 const refreshPricesBtn = document.getElementById('refreshPrices');
@@ -334,6 +403,9 @@ if(btnCur) btnCur.onclick = loadCurrentSchedule;
 const authStartBtn = document.getElementById('authStart');
 if(authStartBtn) authStartBtn.onclick = startAuth;
 
+const refreshAuthBtn = document.getElementById('refreshAuth');
+if(refreshAuthBtn) refreshAuthBtn.onclick = loadAuth;
+
 const showSitesBtn = document.getElementById('showSites');
 if(showSitesBtn) showSitesBtn.onclick = loadSites;
 
@@ -344,6 +416,14 @@ window.addEventListener('DOMContentLoaded', () => {
   loadAuth();
   loadPrices();
   // Do NOT load gateway automatically on page load. Only load on explicit user action (button click)
+  
+  // Check URL for auth success callback
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('auth') === 'success') {
+    // Remove the parameter from URL and refresh auth status
+    history.replaceState({}, '', window.location.pathname);
+    setTimeout(() => loadAuth(), 1000); // Give server time to process
+  }
 });
 
 // Autofyll gatewayDeviceId & embeddedId direkt vid sidladdning
@@ -398,6 +478,11 @@ async function initialGatewayPopulate(){
 const applyBtn=document.getElementById('applyScheduleBtn');
 if(applyBtn){
   applyBtn.onclick=async()=>{
+    if (!isAuthorized) {
+      const resEl=document.getElementById('applyResult');
+      resEl.textContent='Error: Not authorized. Please authenticate with Daikin first.';
+      return;
+    }
     const resEl=document.getElementById('applyResult');
     resEl.textContent='Skickar...';
     try{
@@ -419,6 +504,12 @@ if(applyBtn){
       if(!r.ok) throw new Error(txt);
       try{ const obj=JSON.parse(txt); resEl.textContent='OK '+JSON.stringify(obj); }
       catch{ resEl.textContent='OK'; }
-    }catch(e){ resEl.textContent='Fel: '+e.message; }
+    }catch(e){ 
+      resEl.textContent='Fel: '+e.message; 
+      // If error is 401 or "Not authorized", refresh auth status
+      if (e.message.includes('401') || e.message.includes('Not authorized')) {
+        setTimeout(() => loadAuth(), 100);
+      }
+    }
   };
 }
