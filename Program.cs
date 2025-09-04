@@ -331,7 +331,7 @@ scheduleGroup.MapGet("/preview", async (HttpContext c) => {
     var (payload, msg) = ScheduleAlgorithm.Generate(today, tomorrow, configUser, null, ScheduleAlgorithm.LogicType.PerDayOriginal);
     return Results.Json(new { schedulePayload = payload, generated = payload != null, message = msg, zone });
 });
-scheduleGroup.MapPost("/apply", async () => { var result = await BatchRunner.RunBatchAsync(builder.Configuration, applySchedule:false, persist:true); return Results.Json(result); });
+scheduleGroup.MapPost("/apply", async (HttpContext ctx) => { var userId = GetUserId(ctx); var result = await BatchRunner.RunBatchAsync(builder.Configuration, userId, applySchedule:false, persist:true); return Results.Json(result); });
 
 // Daikin data group
 var daikinGroup = app.MapGroup("/api/daikin").WithTags("Daikin");
