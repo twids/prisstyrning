@@ -322,9 +322,11 @@ daikinAuthGroup.MapGet("/callback", async (IConfiguration cfg, HttpContext c, st
         foreach (var kv in parsed)
         {
             if (kv.Key.Equals(key, StringComparison.OrdinalIgnoreCase)) continue;
-            // Use last value if multiple
-            var lastVal = kv.Value.Count > 0 ? kv.Value[^1] : string.Empty;
-            rebuilt = QueryHelpers.AddQueryString(rebuilt, kv.Key, lastVal ?? string.Empty);
+            // Preserve all values for duplicate query parameters
+            foreach (var val in kv.Value)
+            {
+                rebuilt = QueryHelpers.AddQueryString(rebuilt, kv.Key, val ?? string.Empty);
+            }
         }
         rebuilt = QueryHelpers.AddQueryString(rebuilt, key, value);
         return rebuilt;
