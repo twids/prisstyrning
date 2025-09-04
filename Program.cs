@@ -45,11 +45,13 @@ app.MapGet("/api/user/settings", async (HttpContext ctx) =>
     int comfortHours = int.TryParse(node?["ComfortHours"]?.ToString(), out var ch) ? ch : 3;
     double turnOffPercentile = double.TryParse(node?["TurnOffPercentile"]?.ToString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var tp) ? tp : 0.9;
     int turnOffMaxConsecutive = int.TryParse(node?["TurnOffMaxConsecutive"]?.ToString(), out var tmc) ? tmc : 2;
+    bool autoApplySchedule = bool.TryParse(node?["AutoApplySchedule"]?.ToString(), out var aas) ? aas : false;
     return Results.Json(new
     {
         ComfortHours = comfortHours,
         TurnOffPercentile = turnOffPercentile,
-        TurnOffMaxConsecutive = turnOffMaxConsecutive
+        TurnOffMaxConsecutive = turnOffMaxConsecutive,
+        AutoApplySchedule = autoApplySchedule
     });
 });
 
@@ -69,14 +71,23 @@ app.MapPost("/api/user/settings", async (HttpContext ctx) =>
     var rawCh = body["ComfortHours"]?.ToString();
     var rawTp = body["TurnOffPercentile"]?.ToString();
     var rawTmc = body["TurnOffMaxConsecutive"]?.ToString();
-    int ch; double tp; int tmc;
+    var rawAas = body["AutoApplySchedule"]?.ToString();
+    int ch; double tp; int tmc; bool aas;
     bool chOk = int.TryParse(rawCh, out ch);
     bool tpOk = double.TryParse(rawTp, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out tp);
     bool tmcOk = int.TryParse(rawTmc, out tmc);
-    Console.WriteLine($"[UserSettings] Received: ComfortHours={rawCh} (parsed={(chOk ? ch.ToString() : "fail")}), TurnOffPercentile={rawTp} (parsed={(tpOk ? tp.ToString() : "fail")}), TurnOffMaxConsecutive={rawTmc} (parsed={(tmcOk ? tmc.ToString() : "fail")})");
+    bool aasOk = bool.TryParse(rawAas, out aas);
+    Console.WriteLine(
+        $"Event: UserSettingsReceived\n" +
+        $"  ComfortHours: Raw={rawCh}, Parsed={(chOk ? ch : "fail")}\n" +
+        $"  TurnOffPercentile: Raw={rawTp}, Parsed={(tpOk ? tp : "fail")}\n" +
+        $"  TurnOffMaxConsecutive: Raw={rawTmc}, Parsed={(tmcOk ? tmc : "fail")}\n" +
+        $"  AutoApplySchedule: Raw={rawAas}, Parsed={(aasOk ? aas : "fail")}"
+    );
     node["ComfortHours"] = chOk ? ch : 3;
     node["TurnOffPercentile"] = tpOk ? tp : 0.9;
     node["TurnOffMaxConsecutive"] = tmcOk ? tmc : 2;
+    node["AutoApplySchedule"] = aasOk ? aas : false;
     await File.WriteAllTextAsync(path, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
     return Results.Ok(new { saved = true });
 });

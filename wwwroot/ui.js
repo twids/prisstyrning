@@ -144,6 +144,7 @@ const comfortHoursEl = document.getElementById('comfortHours');
 if(comfortHoursEl){
   const turnOffPercentileEl = document.getElementById('turnOffPercentile');
   const turnOffMaxConsecutiveEl = document.getElementById('turnOffMaxConsecutive');
+  const autoApplyScheduleEl = document.getElementById('autoApplySchedule');
   const saveUserSettingsBtn = document.getElementById('saveUserSettings');
   const userSettingsStatus = document.getElementById('userSettingsStatus');
 
@@ -152,9 +153,10 @@ if(comfortHoursEl){
       const res = await fetch('/api/user/settings');
       if(!res.ok) throw new Error('Could not load settings');
       const d = await res.json();
-  comfortHoursEl.value = d.comfortHours ?? 3;
-  if(turnOffPercentileEl) turnOffPercentileEl.value = d.turnOffPercentile ?? 0.9;
-  if(turnOffMaxConsecutiveEl) turnOffMaxConsecutiveEl.value = d.turnOffMaxConsecutive ?? 2;
+      comfortHoursEl.value = d.comfortHours ?? 3;
+      if(turnOffPercentileEl) turnOffPercentileEl.value = d.turnOffPercentile ?? 0.9;
+      if(turnOffMaxConsecutiveEl) turnOffMaxConsecutiveEl.value = d.turnOffMaxConsecutive ?? 2;
+      if(autoApplyScheduleEl) autoApplyScheduleEl.checked = !!d.autoApplySchedule;
       if(userSettingsStatus) userSettingsStatus.textContent = '';
     } catch(e) { if(userSettingsStatus) userSettingsStatus.textContent = 'Error: ' + e.message; }
   })();
@@ -165,7 +167,8 @@ if(comfortHoursEl){
       const body = {
         ComfortHours: comfortHoursEl.value || 3,
         TurnOffPercentile: turnOffPercentileEl?.value || 0.9,
-        TurnOffMaxConsecutive: turnOffMaxConsecutiveEl?.value || 2
+        TurnOffMaxConsecutive: turnOffMaxConsecutiveEl?.value || 2,
+        AutoApplySchedule: autoApplyScheduleEl?.checked || false
       };
       const res = await fetch('/api/user/settings', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
       if(!res.ok) throw new Error(await res.text());
