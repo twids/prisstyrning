@@ -116,7 +116,8 @@ internal class NordpoolPriceJob : IHostedService, IDisposable
             // Per-user auto-apply schedule
             if (Directory.Exists("tokens"))
             {
-                foreach (var userDir in Directory.GetDirectories("tokens"))
+                var userDirs = Directory.GetDirectories("tokens");
+                foreach (var userDir in userDirs)
                 {
                     try
                     {
