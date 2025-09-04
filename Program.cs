@@ -45,7 +45,7 @@ app.MapGet("/api/user/settings", async (HttpContext ctx) =>
     int comfortHours = int.TryParse(node?["ComfortHours"]?.ToString(), out var ch) ? ch : 3;
     double turnOffPercentile = double.TryParse(node?["TurnOffPercentile"]?.ToString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var tp) ? tp : 0.9;
     int turnOffMaxConsecutive = int.TryParse(node?["TurnOffMaxConsecutive"]?.ToString(), out var tmc) ? tmc : 2;
-    bool autoApplySchedule = node?["AutoApplySchedule"] != null && bool.TryParse(node?["AutoApplySchedule"]?.ToString(), out var aas) ? aas : false;
+    bool autoApplySchedule = bool.TryParse(node?["AutoApplySchedule"]?.ToString(), out var aas) ? aas : false;
     return Results.Json(new
     {
         ComfortHours = comfortHours,
