@@ -113,7 +113,7 @@ internal class NordpoolPriceJob : IHostedService, IDisposable
             }
         }
 
-            // Per-user auto-apply schedule
+                // Per-user auto-apply schedule
             if (Directory.Exists("tokens"))
             {
                 var userDirs = Directory.GetDirectories("tokens");
