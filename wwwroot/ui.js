@@ -478,10 +478,10 @@ async function loadScheduleHistory() {
       // Visualize schedule
       if (entry.schedule) {
         const gridId = `historyGrid${idx}`;
-  details.innerHTML = `<div id="${gridId}" class="schedule-grid"></div>`;
-  requestAnimationFrame(() => {
-    renderScheduleGrid(entry.schedule, gridId);
-  });
+        details.innerHTML = `<div id="${gridId}" class="schedule-grid"></div>`;
+        requestAnimationFrame(() => {
+          renderScheduleGrid(entry.schedule, gridId);
+        });
       } else {
         details.innerHTML = '<div>No schedule data</div>';
       }
