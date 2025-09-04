@@ -102,7 +102,6 @@ internal static class ScheduleAlgorithm
                 var valueStr = item["value"]?.ToString();
                 if (!DateTimeOffset.TryParse(startStr, out var startTs)) continue;
                 if (startTs.Date != date) continue;
-                if (date == now.Date && startTs.Hour < now.Hour) continue; // Skip hours before now for today
                 if (!decimal.TryParse(valueStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var val)) continue;
                 entries.Add((startTs, val));
             }
