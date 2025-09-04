@@ -10,16 +10,20 @@ internal static class ScheduleHistoryPersistence
         var dir = Path.Combine(baseDir, "schedule_history", userId);
         Directory.CreateDirectory(dir);
         var file = Path.Combine(dir, $"history.json");
-        List<JsonObject> history;
+        var history = new List<JsonObject>();
         if (File.Exists(file))
         {
-            var json = File.ReadAllText(file);
-            var node = JsonNode.Parse(json);
-            var arr = node?.AsArray();
-            var objects = arr?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>();
-            history = objects.ToList();
+            try
+            {
+                var json = File.ReadAllText(file);
+                if (!string.IsNullOrWhiteSpace(json) && JsonNode.Parse(json) is JsonArray existingArr)
+                {
+                    foreach (var n in existingArr)
+                        if (n is JsonObject o) history.Add(o);
+                }
+            }
+            catch { /* ignore corrupt history file */ }
         }
-        else history = new List<JsonObject>();
         // Add new entry
         var entry = new JsonObject
         {
@@ -30,8 +34,9 @@ internal static class ScheduleHistoryPersistence
         // Remove entries older than retentionDays
         var cutoff = DateTimeOffset.UtcNow.AddDays(-retentionDays);
         history = history.Where(e => DateTimeOffset.TryParse(e["timestamp"]?.ToString(), out var t) && t >= cutoff).ToList();
-        var arr = new JsonArray(history);
-        File.WriteAllText(file, arr.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+    var outArr = new JsonArray();
+    foreach (var h in history) outArr.Add(h);
+    File.WriteAllText(file, outArr.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
     }
 
     // Load schedule history for a user
