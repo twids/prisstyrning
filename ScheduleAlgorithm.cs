@@ -16,12 +16,13 @@ internal static class ScheduleAlgorithm
         var todayDate = now.Date;
         var tomorrowDate = todayDate.AddDays(1);
         var actionsCombined = new JsonObject();
-        int comfortHoursDefault = int.TryParse(config["Schedule:ComfortHours"], out var ch) ? Math.Clamp(ch, 1, 12) : 3;
+    int comfortHoursDefault = int.TryParse(config["Schedule:ComfortHours"], out var ch) ? Math.Clamp(ch, 1, 12) : 3;
         int turnOffMaxConsec = int.TryParse(config["Schedule:TurnOffMaxConsecutive"], out var moc) ? Math.Clamp(moc, 1, 6) : 2;
         double turnOffPercentile = double.TryParse(config["Schedule:TurnOffPercentile"], out var tp) ? Math.Clamp(tp, 0.5, 0.99) : 0.9;
         double turnOffSpikeDeltaPct = double.TryParse(config["Schedule:TurnOffSpikeDeltaPct"], out var sd) ? Math.Clamp(sd, 1, 200) : 10;
         int turnOffNeighborWindow = int.TryParse(config["Schedule:TurnOffNeighborWindow"], out var nw) ? Math.Clamp(nw, 1, 4) : 2;
         decimal comfortNextHourMaxIncreasePct = decimal.TryParse(config["Schedule:ComfortNextHourMaxIncreasePct"], out var cni) ? Math.Clamp(cni, 0, 500) : 25m;
+    int activationLimit = int.TryParse(config["Schedule:MaxActivationsPerDay"], out var mpd) ? Math.Clamp(mpd, 1, 24) : 6; // new configurable activation limit (default 6)
 
         if (logic == LogicType.CrossDayCheapestLimited)
         {
@@ -51,7 +52,7 @@ internal static class ScheduleAlgorithm
             if (allEntries.Count == 0) return (null, "No schedule generated");
             // Select comfort hours: price below percentile threshold
             var sorted = allEntries.OrderBy(e => e.value).ToList();
-            int maxActivationsPerDay = 4;
+            int maxActivationsPerDay = activationLimit; // was 4, increased default to 6
             var percentileIdx = (int)Math.Floor(allEntries.Count * 0.2); // 20th percentile
             var priceThreshold = sorted[Math.Max(0, percentileIdx)].value;
             var comfortCandidates = allEntries.Where(e => e.value <= priceThreshold).OrderBy(e => e.start).ToList();
@@ -176,10 +177,45 @@ internal static class ScheduleAlgorithm
             if (comfortStart.HasValue) { AddSegment(comfortStart.Value, "comfort"); if (comfortEnd.HasValue && comfortEnd.Value < latestHour) AddSegment(comfortEnd.Value + 1, "eco"); }
             if (turnOffBlock.HasValue && !turnOffBeforeComfort) { AddSegment(turnOffBlock.Value.start, "turn_off"); int reActHour = turnOffBlock.Value.end + 1; if (reActHour <= latestHour) AddSegment(reActHour, "eco"); }
             segments = segments.OrderBy(s => s.hour).ToList();
-            for (int i = 0; i < segments.Count; i++) { if (segments[i].state == "turn_off") { int start = segments[i].hour; int next = (i + 1 < segments.Count) ? segments[i + 1].hour : latestHour + 1; if (next - start > 2) { int react = start + 2; if (segments.Count < 4) segments.Insert(i + 1, (react, "eco")); else { segments.RemoveAt(i); i--; continue; } } } }
-            if (segments.Count > 4) { int idxPost = -1; if (comfortEnd.HasValue) idxPost = segments.FindIndex(s => s.state == "eco" && s.hour == comfortEnd.Value + 1); if (idxPost > 0 && segments.Count > 4) segments.RemoveAt(idxPost); }
-            if (segments.Count > 4) { int idxTO = segments.FindIndex(s => s.state == "turn_off"); if (idxTO >= 0) { if (idxTO + 1 < segments.Count && segments[idxTO + 1].state == "eco") segments.RemoveAt(idxTO + 1); segments.RemoveAt(idxTO); } }
-            if (segments.Count > 4) { for (int i = segments.Count - 1; i >= 0 && segments.Count > 4; i--) { if (segments[i].state == "eco" && segments[i].hour != earliestHour) segments.RemoveAt(i); } }
+            for (int i = 0; i < segments.Count; i++)
+            {
+                if (segments[i].state == "turn_off")
+                {
+                    int start = segments[i].hour;
+                    int next = (i + 1 < segments.Count) ? segments[i + 1].hour : latestHour + 1;
+                    if (next - start > 2)
+                    {
+                        int react = start + 2;
+                        if (segments.Count < activationLimit)
+                            segments.Insert(i + 1, (react, "eco"));
+                        else
+                        {
+                            segments.RemoveAt(i); i--; continue;
+                        }
+                    }
+                }
+            }
+            if (segments.Count > activationLimit)
+            {
+                int idxPost = -1; if (comfortEnd.HasValue) idxPost = segments.FindIndex(s => s.state == "eco" && s.hour == comfortEnd.Value + 1);
+                if (idxPost > 0 && segments.Count > activationLimit) segments.RemoveAt(idxPost);
+            }
+            if (segments.Count > activationLimit)
+            {
+                int idxTO = segments.FindIndex(s => s.state == "turn_off");
+                if (idxTO >= 0)
+                {
+                    if (idxTO + 1 < segments.Count && segments[idxTO + 1].state == "eco") segments.RemoveAt(idxTO + 1);
+                    segments.RemoveAt(idxTO);
+                }
+            }
+            if (segments.Count > activationLimit)
+            {
+                for (int i = segments.Count - 1; i >= 0 && segments.Count > activationLimit; i--)
+                {
+                    if (segments[i].state == "eco" && segments[i].hour != earliestHour) segments.RemoveAt(i);
+                }
+            }
             var dayObj = new JsonObject(); foreach (var seg in segments.OrderBy(s => s.hour)) { var key = new TimeSpan(seg.hour, 0, 0).ToString(); dayObj[key] = new JsonObject { ["domesticHotWaterTemperature"] = seg.state }; }
             actionsCombined[weekdayName] = dayObj;
         }
