@@ -291,7 +291,7 @@ daikinAuthGroup.MapGet("/callback", async (IConfiguration cfg, HttpContext c, st
         var allowedHosts = allowedHostsCfg.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                                           .Select(h => h.ToLowerInvariant())
                                           .ToHashSet();
-        var hostOk = allowedHosts.Count == 0 ? false : allowedHosts.Contains(abs.Host.ToLowerInvariant());
+        var hostOk = allowedHosts.Count == 0 ? true : allowedHosts.Contains(abs.Host.ToLowerInvariant());
         if (abs.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) && hostOk)
         {
             finalBase = abs.GetLeftPart(UriPartial.Path); // drop any existing query to control params we add
