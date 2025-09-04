@@ -4,6 +4,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.WebUtilities;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Linq;
@@ -271,12 +272,66 @@ daikinAuthGroup.MapGet("/callback", async (IConfiguration cfg, HttpContext c, st
     if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state))
         return Results.BadRequest(new { error = "Missing code/state" });
     var ok = await DaikinOAuthService.HandleCallbackAsync(cfg, code, state, userId);
-    // Determine where to send the browser afterwards
-    var redirectTarget = cfg["Daikin:PostAuthRedirect"] ?? "/"; // default root
-    if (!redirectTarget.StartsWith("http", StringComparison.OrdinalIgnoreCase) && !redirectTarget.StartsWith("/"))
-        redirectTarget = "/"; // safety: ensure valid relative or absolute
-    var dest = redirectTarget + (redirectTarget.Contains('?') ? "&" : "?") + "daikinAuth=" + (ok ? "ok" : "fail");
-    return Results.Redirect(dest);
+    // Secure redirect handling to avoid open redirect vulnerabilities.
+    var configured = cfg["Daikin:PostAuthRedirect"];
+    string finalBase;
+    if (string.IsNullOrWhiteSpace(configured))
+    {
+        finalBase = "/"; // fallback
+    }
+    else if (configured.StartsWith('/'))
+    {
+        // Relative path within this application. Disallow protocol-relative '//' by forcing single leading slash.
+        finalBase = configured.StartsWith("//") ? "/" : configured;
+    }
+    else if (Uri.TryCreate(configured, UriKind.Absolute, out var abs))
+    {
+        // Allow only https and hosts in optional allowlist
+        var allowedHostsCfg = cfg["Daikin:AllowedRedirectHosts"] ?? string.Empty; // comma-separated
+        var allowedHosts = allowedHostsCfg.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                                          .Select(h => h.ToLowerInvariant())
+                                          .ToHashSet();
+        var hostOk = allowedHosts.Count == 0 ? false : allowedHosts.Contains(abs.Host.ToLowerInvariant());
+        if (abs.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) && hostOk)
+        {
+            finalBase = abs.GetLeftPart(UriPartial.Path); // drop any existing query to control params we add
+        }
+        else
+        {
+            finalBase = "/"; // unsafe absolute -> fallback
+        }
+    }
+    else
+    {
+        finalBase = "/"; // invalid format
+    }
+    // Helper: append/replace daikinAuth param safely (supports relative URLs)
+    static string AddOrReplaceQueryParam(string url, string key, string value)
+    {
+        url = url.TrimEnd('?', '&');
+        var qIndex = url.IndexOf('?');
+        if (qIndex < 0)
+        {
+            return QueryHelpers.AddQueryString(url, key, value);
+        }
+        var basePart = url.Substring(0, qIndex);
+        var queryPart = url.Substring(qIndex + 1);
+        var parsed = QueryHelpers.ParseQuery(queryPart);
+        // Rebuild without existing key (case-insensitive)
+        var rebuilt = basePart;
+        foreach (var kv in parsed)
+        {
+            if (kv.Key.Equals(key, StringComparison.OrdinalIgnoreCase)) continue;
+            // Use last value if multiple
+            var lastVal = kv.Value.Count > 0 ? kv.Value[^1] : string.Empty;
+            rebuilt = QueryHelpers.AddQueryString(rebuilt, kv.Key, lastVal ?? string.Empty);
+        }
+        rebuilt = QueryHelpers.AddQueryString(rebuilt, key, value);
+        return rebuilt;
+    }
+    var dest = AddOrReplaceQueryParam(finalBase, "daikinAuth", ok ? "ok" : "fail");
+    Console.WriteLine($"[DaikinOAuth][Callback] Redirecting userId={userId} success={ok} to={dest}");
+    return Results.Redirect(dest, false);
 });
 daikinAuthGroup.MapGet("/status", async (IConfiguration cfg, HttpContext c) => {
     var userId = GetUserId(c);
