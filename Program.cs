@@ -42,9 +42,9 @@ app.MapGet("/api/user/schedule-history", (HttpContext ctx) =>
     var history = ScheduleHistoryPersistence.Load(userId ?? "default", dataDir);
     // Only return date, timestamp, and schedule summary (no raw JSON)
     var result = history.Select(e => new {
-        timestamp = e["timestamp"]?.ToString(),
-        date = DateTimeOffset.TryParse(e["timestamp"]?.ToString(), out var dt) ? dt.ToString("yyyy-MM-dd") : null,
-        schedule = e["schedule"]
+        timestamp = e?["timestamp"]?.ToString(),
+        date = DateTimeOffset.TryParse(e?["timestamp"]?.ToString(), out var dt) ? dt.ToString("yyyy-MM-dd") : null,
+        schedule = e?["schedule"]
     });
     return Results.Json(result);
 });
@@ -165,7 +165,20 @@ app.Use(async (ctx, next) =>
     await next();
 });
 
-string? GetUserId(HttpContext c) => c.Items.TryGetValue("ps_user", out var v) ? v as string : null;
+string? GetUserId(HttpContext c) 
+{
+    if (c.Items.TryGetValue("ps_user", out var v) && v is string userId)
+    {
+        // Validate that the userId is a proper GUID format or sanitized string
+        if (string.IsNullOrWhiteSpace(userId)) return null;
+        if (userId.Length > 100) return null; // Reasonable length limit
+        
+        // Only allow alphanumeric characters and hyphens (matching DaikinOAuthService.SanitizeUser logic)
+        if (userId.All(c => char.IsLetterOrDigit(c) || c == '-'))
+            return userId;
+    }
+    return null;
+}
 
 // Prices group
 var pricesGroup = app.MapGroup("/api/prices").WithTags("Prices");
