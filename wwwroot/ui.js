@@ -9,7 +9,7 @@ if(toggleCurrentRawBtn && currentScheduleRawEl){
   toggleCurrentRawBtn.onclick=()=>{
     const vis = currentScheduleRawEl.style.display!=='none';
     currentScheduleRawEl.style.display = vis?'none':'block';
-    toggleCurrentRawBtn.textContent = vis? 'Visa rå JSON':'Dölj rå JSON';
+    toggleCurrentRawBtn.textContent = vis? 'Show raw JSON':'Hide raw JSON';
   };
 }
 

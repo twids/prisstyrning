@@ -97,9 +97,9 @@ rawContainer.id='rawPriceList';
 rawContainer.style.cssText='margin-top:1rem;font-family:monospace;font-size:.7rem;white-space:pre;max-height:200px;overflow:auto;border:1px solid #333;padding:.5rem;display:none;';
 document.getElementById('priceChart').appendChild(rawContainer);
 const toggleBtn = document.createElement('button');
-toggleBtn.textContent='Visa rådata';
+toggleBtn.textContent='Show raw data';
 toggleBtn.style.marginTop='.5rem';
-toggleBtn.onclick=()=>{rawContainer.style.display= rawContainer.style.display==='none'?'block':'none'; toggleBtn.textContent = rawContainer.style.display==='none'?'Visa rådata':'Dölj rådata';};
+toggleBtn.onclick=()=>{rawContainer.style.display= rawContainer.style.display==='none'?'block':'none'; toggleBtn.textContent = rawContainer.style.display==='none'?'Show raw data':'Hide raw data';};
 document.getElementById('priceChart').appendChild(toggleBtn);
 
 async function loadChart(){
