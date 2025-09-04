@@ -11,13 +11,28 @@ internal static class PriceMemory
     {
         lock (_lock)
         {
-            Today = today?.DeepClone() as JsonArray; // defensiv kopia
+            // Only clone if we're actually storing new data
+            Today = today?.DeepClone() as JsonArray;
             Tomorrow = tomorrow?.DeepClone() as JsonArray;
             LastUpdatedUtc = DateTimeOffset.UtcNow;
         }
     }
 
     public static (JsonArray? today, JsonArray? tomorrow, DateTimeOffset? lastUpdatedUtc) Get()
+    {
+        lock (_lock)
+        {
+            // Return defensive copies to prevent external modification
+            return (
+                Today?.DeepClone() as JsonArray,
+                Tomorrow?.DeepClone() as JsonArray,
+                LastUpdatedUtc
+            );
+        }
+    }
+
+    // Get without defensive copying for read-only access (performance optimization)
+    public static (JsonArray? today, JsonArray? tomorrow, DateTimeOffset? lastUpdatedUtc) GetReadOnly()
     {
         lock (_lock)
         {

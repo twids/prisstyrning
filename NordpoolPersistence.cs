@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 
 internal static class NordpoolPersistence
 {
-    public static void Save(string zone, JsonArray today, JsonArray tomorrow, string? baseDir = null)
+    public static async Task SaveAsync(string zone, JsonArray today, JsonArray tomorrow, string? baseDir = null)
     {
         try
         {
@@ -26,12 +26,17 @@ internal static class NordpoolPersistence
                 ["tomorrow"] = tomorrow.DeepClone() as JsonArray ?? new JsonArray()
             };
             var json = snapshot.ToJsonString(new JsonSerializerOptions{ WriteIndented = true });
-            File.WriteAllText(file, json);
+            await File.WriteAllTextAsync(file, json);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[NordpoolPersistence] save failed zone={zone}: {ex.Message}");
         }
+    }
+
+    public static void Save(string zone, JsonArray today, JsonArray tomorrow, string? baseDir = null)
+    {
+        SaveAsync(zone, today, tomorrow, baseDir).GetAwaiter().GetResult();
     }
 
     public static string? GetLatestFile(string zone, string? baseDir = null)

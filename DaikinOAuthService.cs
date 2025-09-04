@@ -86,7 +86,7 @@ internal static class DaikinOAuthService
         if(!resp.IsSuccessStatusCode)
         {
             var body = await resp.Content.ReadAsStringAsync();
-            Console.WriteLine($"[DaikinOAuth][Error] Token exchange failed { (int)resp.StatusCode } {resp.StatusCode} bodySnippet={TrimForLog(body)}");
+            Console.WriteLine($"[DaikinOAuth][Error] Token exchange failed {(int)resp.StatusCode} {resp.StatusCode}");
             return false;
         }
         var json = await resp.Content.ReadAsStringAsync();
@@ -137,7 +137,7 @@ internal static class DaikinOAuthService
         if(!resp.IsSuccessStatusCode)
         {
             var body = await resp.Content.ReadAsStringAsync();
-            Console.WriteLine($"[DaikinOAuth][Error] refresh failed { (int)resp.StatusCode } {resp.StatusCode} bodySnippet={TrimForLog(body)}");
+            Console.WriteLine($"[DaikinOAuth][Error] refresh failed {(int)resp.StatusCode} {resp.StatusCode}");
             return null;
         }
         var json = await resp.Content.ReadAsStringAsync();
@@ -177,7 +177,14 @@ internal static class DaikinOAuthService
         var okRefresh = await RevokeToken(http, revokeEndpoint, clientId, clientSecret, t.refresh_token, "refresh_token");
         if(okAccess || okRefresh)
         {
-            try { File.Delete(TokenFilePath(cfg, userId)); } catch {}
+            try 
+            { 
+                File.Delete(TokenFilePath(cfg, userId)); 
+            } 
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[DaikinOAuth] Failed to delete token file: {ex.Message}");
+            }
         }
         return okAccess && okRefresh; // true only if both succeeded
     }
@@ -210,7 +217,15 @@ internal static class DaikinOAuthService
         var resp = await http.PostAsync(introspectEndpoint, new FormUrlEncodedContent(form));
         var body = await resp.Content.ReadAsStringAsync();
         Console.WriteLine($"[DaikinOAuth] Introspect {(refresh?"refresh":"access")} => {(int)resp.StatusCode}");
-        try { return JsonSerializer.Deserialize<JsonElement>(body); } catch { return new { raw = TrimForLog(body) }; }
+        try 
+        { 
+            return JsonSerializer.Deserialize<JsonElement>(body); 
+        } 
+        catch 
+        { 
+            // Don't log potentially sensitive OAuth response body
+            return new { error = "Failed to parse introspect response", statusCode = (int)resp.StatusCode }; 
+        }
     }
 
     public static string? GetAccessTokenUnsafe(IConfiguration cfg) => GetAccessTokenUnsafe(cfg, null);
@@ -229,12 +244,7 @@ internal static class DaikinOAuthService
 
     private static string Base64Url(string s) => s.Replace("+","-").Replace("/","_").Replace("=","");
 
-    private static string TrimForLog(string input, int max=180)
-    {
-        if (string.IsNullOrEmpty(input)) return "";
-        input = input.Replace('\n',' ').Replace('\r',' ');
-        return input.Length <= max ? input : input[..max] + "...";
-    }
+
 
     private static string ResolveRedirectUri(IConfiguration cfg, HttpContext? ctx)
     {
@@ -274,24 +284,38 @@ internal static class DaikinOAuthService
         return basePath;
     }
 
-    private static TokenFile? LoadTokens(IConfiguration cfg, string? userId)
+    private static async Task<TokenFile?> LoadTokensAsync(IConfiguration cfg, string? userId)
     {
         try
         {
             var path = TokenFilePath(cfg, userId);
             if(!File.Exists(path)) return null;
-            var json = File.ReadAllText(path);
+            var json = await File.ReadAllTextAsync(path);
             return JsonSerializer.Deserialize<TokenFile>(json);
         }
-        catch { return null; }
+        catch (Exception ex) 
+        { 
+            Console.WriteLine($"[DaikinOAuth] Failed to load tokens: {ex.Message}");
+            return null; 
+        }
     }
 
-    private static void SaveTokens(IConfiguration cfg, TokenFile tf, string? userId)
+    private static TokenFile? LoadTokens(IConfiguration cfg, string? userId)
+    {
+        return LoadTokensAsync(cfg, userId).GetAwaiter().GetResult();
+    }
+
+    private static async Task SaveTokensAsync(IConfiguration cfg, TokenFile tf, string? userId)
     {
         var path = TokenFilePath(cfg, userId);
         var tmp = path + ".tmp";
         var json = JsonSerializer.Serialize(tf, new JsonSerializerOptions{WriteIndented=true});
-        File.WriteAllText(tmp, json);
+        await File.WriteAllTextAsync(tmp, json);
         File.Move(tmp, path, true);
+    }
+
+    private static void SaveTokens(IConfiguration cfg, TokenFile tf, string? userId)
+    {
+        SaveTokensAsync(cfg, tf, userId).GetAwaiter().GetResult();
     }
 }

@@ -2,7 +2,7 @@ using Microsoft.Extensions.Configuration;
 
 internal static class UserSettingsService
 {
-    public static string GetUserZone(IConfiguration cfg, string? userId)
+    public static async Task<string> GetUserZoneAsync(IConfiguration cfg, string? userId)
     {
         var def = cfg["Price:Nordpool:DefaultZone"] ?? "SE3";
         if (string.IsNullOrWhiteSpace(userId)) return def;
@@ -11,17 +11,25 @@ internal static class UserSettingsService
             var path = Path.Combine("tokens", userId, "user.json");
             if (File.Exists(path))
             {
-                var json = File.ReadAllText(path);
+                var json = await File.ReadAllTextAsync(path);
                 var node = System.Text.Json.Nodes.JsonNode.Parse(json) as System.Text.Json.Nodes.JsonObject;
                 var z = node?["zone"]?.ToString()?.Trim();
-                if (IsValidZone(z)) return z;
+                if (IsValidZone(z)) return z!;
             }
         }
-        catch { }
+        catch (Exception ex) 
+        { 
+            Console.WriteLine($"[UserSettings] Failed to load user zone for {userId}: {ex.Message}");
+        }
         return def;
     }
 
-    public static bool SetUserZone(string? userId, string zone)
+    public static string GetUserZone(IConfiguration cfg, string? userId)
+    {
+        return GetUserZoneAsync(cfg, userId).GetAwaiter().GetResult();
+    }
+
+    public static async Task<bool> SetUserZoneAsync(string? userId, string zone)
     {
         if (string.IsNullOrWhiteSpace(userId)) return false;
         if (!IsValidZone(zone)) return false;
@@ -33,15 +41,24 @@ internal static class UserSettingsService
             System.Text.Json.Nodes.JsonObject node;
             if (File.Exists(path))
             {
-                var json = File.ReadAllText(path);
+                var json = await File.ReadAllTextAsync(path);
                 node = System.Text.Json.Nodes.JsonNode.Parse(json) as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
             }
             else node = new System.Text.Json.Nodes.JsonObject();
             node["zone"] = zone.Trim().ToUpperInvariant();
-            File.WriteAllText(path, node.ToJsonString(new System.Text.Json.JsonSerializerOptions{WriteIndented=true}));
+            await File.WriteAllTextAsync(path, node.ToJsonString(new System.Text.Json.JsonSerializerOptions{WriteIndented=true}));
             return true;
         }
-        catch { return false; }
+        catch (Exception ex) 
+        { 
+            Console.WriteLine($"[UserSettings] Failed to set user zone for {userId}: {ex.Message}");
+            return false; 
+        }
+    }
+
+    public static bool SetUserZone(string? userId, string zone)
+    {
+        return SetUserZoneAsync(userId, zone).GetAwaiter().GetResult();
     }
 
     public static bool IsValidZone(string? z)
