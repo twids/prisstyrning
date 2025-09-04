@@ -77,13 +77,13 @@ app.MapPost("/api/user/settings", async (HttpContext ctx) =>
     bool tpOk = double.TryParse(rawTp, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out tp);
     bool tmcOk = int.TryParse(rawTmc, out tmc);
     bool aasOk = bool.TryParse(rawAas, out aas);
-    Console.WriteLine(JsonSerializer.Serialize(new {
-        Event = "UserSettingsReceived",
-        ComfortHours = new { Raw = rawCh, Parsed = chOk ? ch : "fail" },
-        TurnOffPercentile = new { Raw = rawTp, Parsed = tpOk ? tp : "fail" },
-        TurnOffMaxConsecutive = new { Raw = rawTmc, Parsed = tmcOk ? tmc : "fail" },
-        AutoApplySchedule = new { Raw = rawAas, Parsed = aasOk ? aas : "fail" }
-    }, new JsonSerializerOptions { WriteIndented = true }));
+    Console.WriteLine(
+        $"Event: UserSettingsReceived\n" +
+        $"  ComfortHours: Raw={rawCh}, Parsed={(chOk ? ch : "fail")}\n" +
+        $"  TurnOffPercentile: Raw={rawTp}, Parsed={(tpOk ? tp : "fail")}\n" +
+        $"  TurnOffMaxConsecutive: Raw={rawTmc}, Parsed={(tmcOk ? tmc : "fail")}\n" +
+        $"  AutoApplySchedule: Raw={rawAas}, Parsed={(aasOk ? aas : "fail")}"
+    );
     node["ComfortHours"] = chOk ? ch : 3;
     node["TurnOffPercentile"] = tpOk ? tp : 0.9;
     node["TurnOffMaxConsecutive"] = tmcOk ? tmc : 2;
