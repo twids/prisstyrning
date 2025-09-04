@@ -9,6 +9,12 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Linq;
 
+// Constants for maintainability
+const int MaxUserIdLength = 100;
+const int MaxScheduleRawDisplayLength = 400;
+const int DefaultListenPort = 5000;
+const string UserCookieName = "ps_user";
+
 // Register /api/user/settings endpoints after app is declared
 
 var builder = WebApplication.CreateBuilder(args);
@@ -19,7 +25,7 @@ builder.Configuration.AddEnvironmentVariables();
 builder.Configuration.AddEnvironmentVariables(prefix: "PRISSTYRNING_");
 // Konfigurera så att appen kan lyssna på alla interfaces (0.0.0.0) istället för endast localhost
 var portValue = Environment.GetEnvironmentVariable("PORT") ?? builder.Configuration["PORT"] ?? builder.Configuration["App:Port"];
-if (!int.TryParse(portValue, out var listenPort)) listenPort = 5000;
+if (!int.TryParse(portValue, out var listenPort)) listenPort = DefaultListenPort;
 builder.WebHost.ConfigureKestrel(o =>
 {
     // Rensar ev. default endpoints och lyssnar på angiven port på alla IP
@@ -124,11 +130,11 @@ try
             JsonArray? tomorrowArr = null;
             if (root.TryGetProperty("today", out var tEl) && tEl.ValueKind == JsonValueKind.Array)
             {
-                todayArr = JsonNode.Parse(tEl.GetRawText()) as JsonArray;
+                todayArr = JsonSerializer.Deserialize<JsonArray>(tEl.GetRawText());
             }
             if (root.TryGetProperty("tomorrow", out var tmEl) && tmEl.ValueKind == JsonValueKind.Array)
             {
-                tomorrowArr = JsonNode.Parse(tmEl.GetRawText()) as JsonArray;
+                tomorrowArr = JsonSerializer.Deserialize<JsonArray>(tmEl.GetRawText());
             }
             if (todayArr != null || tomorrowArr != null)
             {
@@ -155,7 +161,7 @@ app.UseStaticFiles();
 // Simple per-user cookie (NOT secure auth – just isolation). In production replace with real auth (OIDC, etc.).
 app.Use(async (ctx, next) =>
 {
-    const string cookieName = "ps_user";
+    const string cookieName = UserCookieName;
     if (!ctx.Request.Cookies.TryGetValue(cookieName, out var userId) || string.IsNullOrWhiteSpace(userId) || userId.Length < 8)
     {
         userId = Guid.NewGuid().ToString("N");
@@ -167,11 +173,11 @@ app.Use(async (ctx, next) =>
 
 string? GetUserId(HttpContext c) 
 {
-    if (c.Items.TryGetValue("ps_user", out var v) && v is string userId)
+    if (c.Items.TryGetValue(UserCookieName, out var v) && v is string userId)
     {
         // Validate that the userId is a proper GUID format or sanitized string
         if (string.IsNullOrWhiteSpace(userId)) return null;
-        if (userId.Length > 100) return null; // Reasonable length limit
+        if (userId.Length > MaxUserIdLength) return null; // Reasonable length limit
         
         // Only allow alphanumeric characters and hyphens (matching DaikinOAuthService.SanitizeUser logic)
         if (userId.All(c => char.IsLetterOrDigit(c) || c == '-'))
@@ -274,13 +280,24 @@ pricesGroup.MapGet("/timeseries", (HttpContext ctx) =>
                     using var doc = JsonDocument.Parse(File.ReadAllText(file));
                     var root = doc.RootElement;
                     if (today == null && root.TryGetProperty("today", out var tEl) && tEl.ValueKind == JsonValueKind.Array)
-                        today = JsonNode.Parse(tEl.GetRawText()) as JsonArray;
+                    {
+                        // Convert JsonElement directly to JsonArray without re-parsing
+                        var todayNode = JsonSerializer.Deserialize<JsonArray>(tEl.GetRawText());
+                        today = todayNode;
+                    }
                     if (tomorrow == null && root.TryGetProperty("tomorrow", out var tmEl) && tmEl.ValueKind == JsonValueKind.Array)
-                        tomorrow = JsonNode.Parse(tmEl.GetRawText()) as JsonArray;
+                    {
+                        // Convert JsonElement directly to JsonArray without re-parsing
+                        var tomorrowNode = JsonSerializer.Deserialize<JsonArray>(tmEl.GetRawText());
+                        tomorrow = tomorrowNode;
+                    }
                 }
             }
         }
-        catch { }
+        catch (Exception ex) 
+        { 
+            Console.WriteLine($"[Timeseries] Failed to read fallback price file: {ex.Message}");
+        }
     }
     var items = new List<(DateTimeOffset start, decimal value, string day)>();
     void Add(JsonArray? arr, string label)
@@ -407,12 +424,23 @@ scheduleGroup.MapGet("/preview", async (HttpContext c) => {
     var userId = GetUserId(c);
     var zone = UserSettingsService.GetUserZone(cfg, userId);
     // Ensure we have prices (if memory empty try fetch)
-    var (memToday, memTomorrow, _) = PriceMemory.Get();
+    var (memToday, memTomorrow, _) = PriceMemory.GetReadOnly();
     JsonArray? today = memToday; JsonArray? tomorrow = memTomorrow;
     if (today == null || today.Count == 0)
     {
-        try { var np = new NordpoolClient(cfg["Price:Nordpool:Currency"] ?? "SEK", cfg["Price:Nordpool:PageId"]); var fetched = await np.GetTodayTomorrowAsync(zone); today = fetched.today; tomorrow = fetched.tomorrow; PriceMemory.Set(today, tomorrow); NordpoolPersistence.Save(zone, today, tomorrow, cfg["Storage:Directory"] ?? "data"); }
-        catch { }
+        try 
+        { 
+            var np = new NordpoolClient(cfg["Price:Nordpool:Currency"] ?? "SEK", cfg["Price:Nordpool:PageId"]); 
+            var fetched = await np.GetTodayTomorrowAsync(zone); 
+            today = fetched.today; 
+            tomorrow = fetched.tomorrow; 
+            PriceMemory.Set(today, tomorrow); 
+            NordpoolPersistence.Save(zone, today, tomorrow, cfg["Storage:Directory"] ?? "data"); 
+        }
+        catch (Exception ex) 
+        { 
+            Console.WriteLine($"[Schedule] Failed to fetch prices for zone {zone}: {ex.Message}");
+        }
     }
     // Läs per-user inställningar från user.json
     var comfortHours = cfg["Schedule:ComfortHours"];
@@ -577,7 +605,7 @@ daikinGroup.MapGet("/gateway/schedule", async (IConfiguration cfg, HttpContext c
         }
         if (schedulesContainer.ValueKind!=JsonValueKind.Object)
         {
-            // Include raw schedule node (first 400 chars) for debugging if present
+            // Include raw schedule node (first few chars) for debugging if present
             string? scheduleRaw = null;
             try
             {
@@ -593,7 +621,8 @@ daikinGroup.MapGet("/gateway/schedule", async (IConfiguration cfg, HttpContext c
                     }
                 }
             } catch {}
-            if (scheduleRaw!=null && scheduleRaw.Length>400) scheduleRaw = scheduleRaw.Substring(0,400)+"...";
+            if (scheduleRaw!=null && scheduleRaw.Length > MaxScheduleRawDisplayLength) 
+                scheduleRaw = scheduleRaw.Substring(0, MaxScheduleRawDisplayLength)+"...";
             return Results.Json(new { status="error", error="No schedules container", embeddedId, requestedEmbeddedId=embeddedIdQuery, candidateEmbeddedIds, scheduleRaw });
         }
         string? chosen = currentScheduleId; Dictionary<string, JsonElement> dict=new();
