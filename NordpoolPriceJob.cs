@@ -112,6 +112,38 @@ internal class NordpoolPriceJob : IHostedService, IDisposable
                 Console.WriteLine($"[NordpoolPriceJob] zone={zone} error={ex.Message}");
             }
         }
+
+            // Per-user auto-apply schedule
+            if (Directory.Exists("tokens"))
+            {
+                foreach (var userDir in Directory.GetDirectories("tokens"))
+                {
+                    try
+                    {
+                        var userId = Path.GetFileName(userDir);
+                        var userJsonPath = Path.Combine(userDir, "user.json");
+                        if (!File.Exists(userJsonPath)) continue;
+                        var json = File.ReadAllText(userJsonPath);
+                        var node = JsonNode.Parse(json) as JsonObject;
+                        if (node == null) continue;
+                        bool autoApply = bool.TryParse(node["AutoApplySchedule"]?.ToString(), out var aas) ? aas : false;
+                        if (!autoApply) continue;
+                        Console.WriteLine($"[NordpoolPriceJob] Auto-applying schedule for user {userId}");
+                        try
+                        {
+                            await BatchRunner.RunBatchAsync(_cfg, userId, applySchedule: true, persist: true);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[NordpoolPriceJob] user={userId} auto-apply error: {ex.Message}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[NordpoolPriceJob] userdir={userDir} error: {ex.Message}");
+                    }
+                }
+            }
     }
 
     public Task StopAsync(CancellationToken cancellationToken)
