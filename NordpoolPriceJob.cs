@@ -124,7 +124,7 @@ internal class NordpoolPriceJob : IHostedService, IDisposable
                         var userId = Path.GetFileName(userDir);
                         var userJsonPath = Path.Combine(userDir, "user.json");
                         if (!File.Exists(userJsonPath)) continue;
-                        var json = File.ReadAllText(userJsonPath);
+                        var json = await File.ReadAllTextAsync(userJsonPath);
                         var node = JsonNode.Parse(json) as JsonObject;
                         if (node == null) continue;
                         bool autoApply = bool.TryParse(node["AutoApplySchedule"]?.ToString(), out var aas) ? aas : false;
