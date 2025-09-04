@@ -476,7 +476,7 @@ async function loadScheduleHistory() {
       if (entry.schedule) {
         const gridId = `historyGrid${idx}`;
         details.innerHTML = `<div id="${gridId}" class="schedule-grid"></div>`;
-  renderScheduleGrid(entry.schedule, gridId);
+        renderScheduleGrid(entry.schedule, gridId);
       } else {
         details.innerHTML = '<div>No schedule data</div>';
       }
