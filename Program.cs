@@ -265,7 +265,19 @@ pricesGroup.MapGet("/timeseries", (HttpContext ctx) =>
 var daikinAuthGroup = app.MapGroup("/auth/daikin").WithTags("Daikin Auth");
 daikinAuthGroup.MapGet("/start", (IConfiguration cfg, HttpContext c) => { try { var url = DaikinOAuthService.GetAuthorizationUrl(cfg, c); return Results.Json(new { url }); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); } });
 daikinAuthGroup.MapGet("/start-min", (IConfiguration cfg, HttpContext c) => { try { var url = DaikinOAuthService.GetMinimalAuthorizationUrl(cfg, c); return Results.Json(new { url }); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); } });
-daikinAuthGroup.MapGet("/callback", async (IConfiguration cfg, HttpContext c, string? code, string? state) => { var userId = GetUserId(c); if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state)) return Results.BadRequest(new { error = "Missing code/state" }); var ok = await DaikinOAuthService.HandleCallbackAsync(cfg, code, state, userId); return ok ? Results.Ok(new { message = "Authorization stored", userId }) : Results.BadRequest(new { error = "Auth failed" }); });
+daikinAuthGroup.MapGet("/callback", async (IConfiguration cfg, HttpContext c, string? code, string? state) =>
+{
+    var userId = GetUserId(c);
+    if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state))
+        return Results.BadRequest(new { error = "Missing code/state" });
+    var ok = await DaikinOAuthService.HandleCallbackAsync(cfg, code, state, userId);
+    // Determine where to send the browser afterwards
+    var redirectTarget = cfg["Daikin:PostAuthRedirect"] ?? "/"; // default root
+    if (!redirectTarget.StartsWith("http", StringComparison.OrdinalIgnoreCase) && !redirectTarget.StartsWith("/"))
+        redirectTarget = "/"; // safety: ensure valid relative or absolute
+    var dest = redirectTarget + (redirectTarget.Contains('?') ? "&" : "?") + "daikinAuth=" + (ok ? "ok" : "fail");
+    return Results.Redirect(dest);
+});
 daikinAuthGroup.MapGet("/status", async (IConfiguration cfg, HttpContext c) => {
     var userId = GetUserId(c);
     var raw = DaikinOAuthService.Status(cfg, userId); // anonymous object { authorized, expiresAtUtc, ... }
