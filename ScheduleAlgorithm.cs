@@ -52,7 +52,7 @@ internal static class ScheduleAlgorithm
             if (allEntries.Count == 0) return (null, "No schedule generated");
             // Select comfort hours: price below percentile threshold
             var sorted = allEntries.OrderBy(e => e.value).ToList();
-            int maxActivationsPerDay = activationLimit; // was 4, increased default to 6
+            int maxActivationsPerDay = activationLimit;
             var percentileIdx = (int)Math.Floor(allEntries.Count * 0.2); // 20th percentile
             var priceThreshold = sorted[Math.Max(0, percentileIdx)].value;
             var comfortCandidates = allEntries.Where(e => e.value <= priceThreshold).OrderBy(e => e.start).ToList();
