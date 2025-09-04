@@ -48,7 +48,14 @@ internal static class BatchRunner
             }
         }
 
-        return await RunBatchAsync(userConfig, applySchedule, persist);
+        var result = await RunBatchAsync(userConfig, applySchedule, persist);
+        // Persist schedule history if generated
+        if (result.generated && result.schedulePayload is JsonObject payload && !string.IsNullOrWhiteSpace(userId))
+        {
+            var dataDir = config["Storage:Directory"] ?? "data";
+            ScheduleHistoryPersistence.Save(userId, payload, DateTimeOffset.UtcNow, 7, dataDir);
+        }
+        return result;
     }
 
     // Returnerar schedulePayload som JsonNode istället för sträng för att API-responsen ska ha ett inbäddat JSON-objekt
