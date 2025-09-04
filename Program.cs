@@ -38,7 +38,8 @@ app.MapGet("/api/user/settings", async (HttpContext ctx) =>
 {
     var cfg = (IConfiguration)builder.Configuration;
     var userId = GetUserId(ctx);
-    var path = Path.Combine("tokens", userId ?? "", "user.json");
+    var dataDir = builder.Configuration["Storage:Directory"] ?? "data";
+    var path = Path.Combine(dataDir, "tokens", userId ?? "", "user.json");
     if (!File.Exists(path)) return Results.Json(new { ComfortHours = 3, TurnOffPercentile = 0.9, TurnOffMaxConsecutive = 2 });
     var json = await File.ReadAllTextAsync(path);
     var node = JsonNode.Parse(json) as JsonObject;
@@ -60,7 +61,8 @@ app.MapPost("/api/user/settings", async (HttpContext ctx) =>
     var userId = GetUserId(ctx);
     var body = await JsonNode.ParseAsync(ctx.Request.Body) as JsonObject;
     if (body == null) return Results.BadRequest(new { error = "Missing body" });
-    var path = Path.Combine("tokens", userId ?? "", "user.json");
+    var dataDir = builder.Configuration["Storage:Directory"] ?? "data";
+    var path = Path.Combine(dataDir, "tokens", userId ?? "", "user.json");
     JsonObject node;
     if (File.Exists(path))
     {
@@ -390,7 +392,8 @@ scheduleGroup.MapGet("/preview", async (HttpContext c) => {
     var turnOffPercentile = cfg["Schedule:TurnOffPercentile"];
     var turnOffMaxConsecutive = cfg["Schedule:TurnOffMaxConsecutive"];
     try {
-    var path = System.IO.Path.Combine("tokens", userId ?? "default", "user.json");
+    var dataDir = builder.Configuration["Storage:Directory"] ?? "data";
+    var path = System.IO.Path.Combine(dataDir, "tokens", userId ?? "default", "user.json");
         if (System.IO.File.Exists(path)) {
             var json = System.IO.File.ReadAllText(path);
             var node = System.Text.Json.Nodes.JsonNode.Parse(json) as System.Text.Json.Nodes.JsonObject;
