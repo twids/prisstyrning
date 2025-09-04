@@ -464,12 +464,12 @@ async function loadScheduleHistory() {
       header.style.cursor = 'pointer';
       header.style.background = '#222';
       header.style.padding = '.5rem 1rem';
-      header.style.borderRadius = '6px';
-      header.innerHTML = `
-        <span style="font-weight:bold;">${localizedDate}</span>
-        <span style="font-size:.9em;opacity:.7;">${localizedTimestamp}</span>
-        <button style="margin-left:auto;">${idx === 0 ? '▼' : '▶'}</button>
-      `;
+  header.style.borderRadius = '6px';
+  header.innerHTML = `
+    <span style="font-weight:bold;">${localizedDate}</span>
+    <span style="font-size:.9em;opacity:.7;">${localizedTimestamp}</span>
+    <button style="margin-left:auto;">${idx === 0 ? '▼' : '▶'}</button>
+  `;
       container.appendChild(header);
       const details = document.createElement('div');
       details.style.display = idx === 0 ? 'block' : 'none';

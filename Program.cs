@@ -45,7 +45,6 @@ app.MapGet("/api/user/schedule-history", (HttpContext ctx) =>
 {
     var userId = GetUserId(ctx);
     var history = ScheduleHistoryPersistence.Load(userId ?? "default", StoragePaths.GetBaseDir(builder.Configuration));
-    // Only return date, timestamp, and schedule summary (no raw JSON)
     var result = history.Select(e => new {
         timestamp = e?["timestamp"]?.ToString(),
         date = DateTimeOffset.TryParse(e?["timestamp"]?.ToString(), out var dt) ? dt.ToString("yyyy-MM-dd") : null,

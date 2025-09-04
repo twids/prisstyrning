@@ -22,7 +22,8 @@ internal static class BatchRunner
         var (generated, schedulePayload, message) = await RunBatchInternalAsync(config, settings, activationLimit, applySchedule, persist, userId);
         if (generated && schedulePayload is JsonObject payload && !string.IsNullOrWhiteSpace(userId))
         {
-            ScheduleHistoryPersistence.Save(userId, payload, DateTimeOffset.UtcNow, 7, StoragePaths.GetBaseDir(config));
+            // Fire and forget async save
+            _ = ScheduleHistoryPersistence.SaveAsync(userId, payload, DateTimeOffset.UtcNow, 7, StoragePaths.GetBaseDir(config));
         }
         return (generated, schedulePayload, message);
     }
