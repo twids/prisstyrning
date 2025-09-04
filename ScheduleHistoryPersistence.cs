@@ -26,7 +26,7 @@ internal static class ScheduleHistoryPersistence
         var entry = new JsonObject
         {
             ["timestamp"] = timestamp.ToString("o"),
-            ["schedule"] = JsonNode.Parse(schedulePayload.ToJsonString()) as JsonObject,
+            ["schedule"] = schedulePayload.DeepClone() as JsonObject,
         };
         history.Add(entry);
         // Remove entries older than retentionDays
