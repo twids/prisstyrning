@@ -16,9 +16,7 @@ internal static class ScheduleHistoryPersistence
             var json = File.ReadAllText(file);
             var node = JsonNode.Parse(json);
             var arr = node?.AsArray();
-            var objects = arr != null
-                ? arr.Select(n => n as JsonObject).Where(n => n != null)
-                : Enumerable.Empty<JsonObject>();
+            var objects = arr?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>();
             history = objects.ToList();
         }
         else history = new List<JsonObject>();
