@@ -44,8 +44,7 @@ var app = builder.Build();
 app.MapGet("/api/user/schedule-history", (HttpContext ctx) =>
 {
     var userId = GetUserId(ctx);
-    var dataDir = builder.Configuration["Storage:Directory"] ?? "data";
-    var history = ScheduleHistoryPersistence.Load(userId ?? "default", dataDir);
+    var history = ScheduleHistoryPersistence.Load(userId ?? "default", StoragePaths.GetBaseDir(builder.Configuration));
     // Only return date, timestamp, and schedule summary (no raw JSON)
     var result = history.Select(e => new {
         timestamp = e?["timestamp"]?.ToString(),
@@ -58,8 +57,7 @@ app.MapGet("/api/user/settings", async (HttpContext ctx) =>
 {
     var cfg = (IConfiguration)builder.Configuration;
     var userId = GetUserId(ctx);
-    var dataDir = builder.Configuration["Storage:Directory"] ?? "data";
-    var path = Path.Combine(dataDir, "tokens", userId ?? "", "user.json");
+    var path = Path.Combine(StoragePaths.GetTokensDir(builder.Configuration), userId ?? "", "user.json");
     if (!File.Exists(path)) return Results.Json(new { ComfortHours = 3, TurnOffPercentile = 0.9, TurnOffMaxConsecutive = 2, AutoApplySchedule = false });
     var json = await File.ReadAllTextAsync(path);
     var node = JsonNode.Parse(json) as JsonObject;
@@ -81,8 +79,7 @@ app.MapPost("/api/user/settings", async (HttpContext ctx) =>
     var userId = GetUserId(ctx);
     var body = await JsonNode.ParseAsync(ctx.Request.Body) as JsonObject;
     if (body == null) return Results.BadRequest(new { error = "Missing body" });
-    var dataDir = builder.Configuration["Storage:Directory"] ?? "data";
-    var path = Path.Combine(dataDir, "tokens", userId ?? "", "user.json");
+    var path = Path.Combine(StoragePaths.GetTokensDir(builder.Configuration), userId ?? "", "user.json");
     JsonObject node;
     if (File.Exists(path))
     {
@@ -455,17 +452,16 @@ scheduleGroup.MapGet("/preview", async (HttpContext c) => {
     var turnOffPercentile = cfg["Schedule:TurnOffPercentile"];
     var turnOffMaxConsecutive = cfg["Schedule:TurnOffMaxConsecutive"];
     try {
-    var dataDir = builder.Configuration["Storage:Directory"] ?? "data";
-    var path = System.IO.Path.Combine(dataDir, "tokens", userId ?? "default", "user.json");
-        if (System.IO.File.Exists(path)) {
-            var json = System.IO.File.ReadAllText(path);
-            var node = System.Text.Json.Nodes.JsonNode.Parse(json) as System.Text.Json.Nodes.JsonObject;
-            if (node != null) {
-                comfortHours = node["ComfortHours"]?.ToString() ?? comfortHours;
-                turnOffPercentile = node["TurnOffPercentile"]?.ToString() ?? turnOffPercentile;
-                turnOffMaxConsecutive = node["TurnOffMaxConsecutive"]?.ToString() ?? turnOffMaxConsecutive;
-            }
+    var path = StoragePaths.GetUserJsonPath(builder.Configuration, userId ?? "default");
+    if (System.IO.File.Exists(path)) {
+        var json = System.IO.File.ReadAllText(path);
+        var node = System.Text.Json.Nodes.JsonNode.Parse(json) as System.Text.Json.Nodes.JsonObject;
+        if (node != null) {
+            comfortHours = node["ComfortHours"]?.ToString() ?? comfortHours;
+            turnOffPercentile = node["TurnOffPercentile"]?.ToString() ?? turnOffPercentile;
+            turnOffMaxConsecutive = node["TurnOffMaxConsecutive"]?.ToString() ?? turnOffMaxConsecutive;
         }
+    }
     } catch {}
     // Skapa en temporär config med per-user värden
     var configDict = new Dictionary<string, string?> {

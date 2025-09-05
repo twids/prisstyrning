@@ -8,8 +8,8 @@ internal static class NordpoolPersistence
         try
         {
             zone = zone.Trim().ToUpperInvariant();
-            baseDir ??= "data";
-            var dir = Path.Combine(baseDir, "nordpool", zone);
+            var cfg = new ConfigurationBuilder().AddJsonFile("appsettings.json", optional: true).Build();
+            var dir = Path.Combine(StoragePaths.GetNordpoolDir(cfg), zone);
             Directory.CreateDirectory(dir);
             var file = Path.Combine(dir, $"prices-{DateTimeOffset.UtcNow:yyyyMMdd}-{zone}.json");
             if (File.Exists(file))
@@ -42,8 +42,8 @@ internal static class NordpoolPersistence
     public static string? GetLatestFile(string zone, string? baseDir = null)
     {
         zone = zone.Trim().ToUpperInvariant();
-        baseDir ??= "data";
-        var dir = Path.Combine(baseDir, "nordpool", zone);
+    var cfg = new ConfigurationBuilder().AddJsonFile("appsettings.json", optional: true).Build();
+    var dir = Path.Combine(StoragePaths.GetNordpoolDir(cfg), zone);
         if (!Directory.Exists(dir)) return null;
         // Endast filer med formatet prices-YYYYMMDD-ZON.json (ignorera tid)
         var files = Directory.GetFiles(dir, $"prices-???????.json");

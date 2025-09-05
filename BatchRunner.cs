@@ -23,7 +23,7 @@ internal static class BatchRunner
         {
             try
             {
-                var path = Path.Combine("tokens", userId, "user.json");
+                var path = Path.Combine(StoragePaths.GetTokensDir(config), userId, "user.json");
                 if (File.Exists(path))
                 {
                     var json = await File.ReadAllTextAsync(path);
@@ -52,8 +52,7 @@ internal static class BatchRunner
         // Persist schedule history if generated
         if (result.generated && result.schedulePayload is JsonObject payload && !string.IsNullOrWhiteSpace(userId))
         {
-            var dataDir = config["Storage:Directory"] ?? "data";
-            ScheduleHistoryPersistence.Save(userId, payload, DateTimeOffset.UtcNow, 7, dataDir);
+            ScheduleHistoryPersistence.Save(userId, payload, DateTimeOffset.UtcNow, 7, StoragePaths.GetBaseDir(config));
         }
         return result;
     }

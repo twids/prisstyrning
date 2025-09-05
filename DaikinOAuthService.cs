@@ -270,14 +270,15 @@ internal static class DaikinOAuthService
 
     private static string TokenFilePath(IConfiguration cfg, string? userId)
     {
-        var basePath = cfg["Daikin:TokenFile"] ?? Path.Combine("tokens","daikin.json");
         var sanitized = SanitizeUser(userId);
+        string basePath;
         if (!string.IsNullOrEmpty(sanitized))
         {
-            // Replace filename with per-user dir + filename
-            var fileName = Path.GetFileName(basePath);
-            var parent = Path.GetDirectoryName(basePath) ?? "tokens";
-            basePath = Path.Combine(parent, sanitized, fileName);
+            basePath = Path.Combine(StoragePaths.GetUserTokenDir(sanitized, cfg), "daikin.json");
+        }
+        else
+        {
+            basePath = Path.Combine(StoragePaths.GetTokensDir(cfg), "daikin.json");
         }
         var dir = Path.GetDirectoryName(basePath)!;
         Directory.CreateDirectory(dir);

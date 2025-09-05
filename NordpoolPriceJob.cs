@@ -37,30 +37,31 @@ internal class NordpoolPriceJob : IHostedService, IDisposable
     {
     var currency = _cfg["Price:Nordpool:Currency"] ?? "SEK";
     var page = _cfg["Price:Nordpool:PageId"];
-        var defaultZone = _cfg["Price:Nordpool:DefaultZone"] ?? "SE3";
-        var zones = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { defaultZone };
-        try
+    var defaultZone = _cfg["Price:Nordpool:DefaultZone"] ?? "SE3";
+    var zones = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { defaultZone };
+    try
+    {
+        // Discover user zones by scanning token subdirs
+        var tokensDirOuter = StoragePaths.GetTokensDir(_cfg);
+        if (Directory.Exists(tokensDirOuter))
         {
-            // Discover user zones by scanning token subdirs
-            if (Directory.Exists("tokens"))
+            foreach (var userDir in Directory.GetDirectories(tokensDirOuter))
             {
-                foreach (var userDir in Directory.GetDirectories("tokens"))
+                try
                 {
-                    try
+                    var zoneFile = Path.Combine(userDir, "zone.txt");
+                    if (File.Exists(zoneFile))
                     {
-                        var zoneFile = Path.Combine(userDir, "zone.txt");
-                        if (File.Exists(zoneFile))
-                        {
-                            var z = File.ReadAllText(zoneFile).Trim();
-                            if (UserSettingsService.IsValidZone(z)) zones.Add(z.Trim().ToUpperInvariant());
-                        }
+                        var z = File.ReadAllText(zoneFile).Trim();
+                        if (UserSettingsService.IsValidZone(z)) zones.Add(z.Trim().ToUpperInvariant());
                     }
-                    catch { }
-                    if (zones.Count > 20) break; // safety cap
                 }
+                catch { }
+                if (zones.Count > 20) break; // safety cap
             }
         }
-        catch { }
+    }
+    catch { }
 
         Console.WriteLine($"[NordpoolPriceJob] fetching zones={string.Join(',', zones)} currency={currency}");
     var client = new NordpoolClient(currency, page);
@@ -68,8 +69,8 @@ internal class NordpoolPriceJob : IHostedService, IDisposable
         {
             try
             {
-                var storageDir = _cfg["Storage:Directory"] ?? "data";
-                var file = NordpoolPersistence.GetLatestFile(zone, storageDir);
+                var nordpoolDir = StoragePaths.GetNordpoolDir(_cfg);
+                var file = NordpoolPersistence.GetLatestFile(zone, nordpoolDir);
                 bool needUpdate = false;
                 JsonArray? today = null;
                 JsonArray? tomorrow = null;
@@ -99,7 +100,7 @@ internal class NordpoolPriceJob : IHostedService, IDisposable
                     var fetched = await client.GetTodayTomorrowAsync(zone);
                     today = fetched.today;
                     tomorrow = fetched.tomorrow;
-                    NordpoolPersistence.Save(zone, today, tomorrow, storageDir);
+                    NordpoolPersistence.Save(zone, today, tomorrow, StoragePaths.GetNordpoolDir(_cfg));
                 }
                 if (string.Equals(zone, defaultZone, StringComparison.OrdinalIgnoreCase))
                 {
@@ -114,9 +115,10 @@ internal class NordpoolPriceJob : IHostedService, IDisposable
         }
 
                 // Per-user auto-apply schedule
-            if (Directory.Exists("tokens"))
+            var tokensDirInner = StoragePaths.GetTokensDir(_cfg);
+            if (Directory.Exists(tokensDirInner))
             {
-                var userDirs = Directory.GetDirectories("tokens");
+                var userDirs = Directory.GetDirectories(tokensDirInner);
                 foreach (var userDir in userDirs)
                 {
                     try
