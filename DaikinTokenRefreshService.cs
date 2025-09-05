@@ -40,7 +40,7 @@ internal sealed class DaikinTokenRefreshService : BackgroundService
 
     private async Task ScanAndRefreshAsync(CancellationToken ct)
     {
-        var tokenDir = _cfg["Daikin:TokenBasePath"] ?? "tokens"; // base folder already used by existing logic
+        var tokenDir = StoragePaths.GetTokensDir(_cfg);
         if (!Directory.Exists(tokenDir)) return;
 
         // Find all daikin.json files (root and subdirectories)
