@@ -60,7 +60,7 @@ app.MapGet("/api/user/settings", async (HttpContext ctx) =>
     var userId = GetUserId(ctx);
     var dataDir = builder.Configuration["Storage:Directory"] ?? "data";
     var path = Path.Combine(dataDir, "tokens", userId ?? "", "user.json");
-    if (!File.Exists(path)) return Results.Json(new { ComfortHours = 3, TurnOffPercentile = 0.9, TurnOffMaxConsecutive = 2 });
+    if (!File.Exists(path)) return Results.Json(new { ComfortHours = 3, TurnOffPercentile = 0.9, TurnOffMaxConsecutive = 2, AutoApplySchedule = false });
     var json = await File.ReadAllTextAsync(path);
     var node = JsonNode.Parse(json) as JsonObject;
     int comfortHours = int.TryParse(node?["ComfortHours"]?.ToString(), out var ch) ? ch : 3;
@@ -110,6 +110,14 @@ app.MapPost("/api/user/settings", async (HttpContext ctx) =>
     node["TurnOffPercentile"] = tpOk ? tp : 0.9;
     node["TurnOffMaxConsecutive"] = tmcOk ? tmc : 2;
     node["AutoApplySchedule"] = aasOk ? aas : false;
+    
+    // Ensure directory exists before writing file
+    var directory = Path.GetDirectoryName(path);
+    if (!string.IsNullOrEmpty(directory))
+    {
+        Directory.CreateDirectory(directory);
+    }
+    
     await File.WriteAllTextAsync(path, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
     return Results.Ok(new { saved = true });
 });
