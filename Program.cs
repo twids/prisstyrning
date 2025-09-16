@@ -470,7 +470,18 @@ scheduleGroup.MapGet("/preview", async (HttpContext c) => {
         { "Schedule:TurnOffMaxConsecutive", turnOffMaxConsecutive }
     };
     var configUser = new ConfigurationBuilder().AddInMemoryCollection(configDict).AddConfiguration(cfg).Build();
-    var (payload, msg) = ScheduleAlgorithm.Generate(today, tomorrow, configUser, null, ScheduleAlgorithm.LogicType.PerDayOriginal);
+    var userSettings = UserSettingsService.LoadScheduleSettings(cfg, userId);
+    int activationLimit = int.TryParse(cfg["Schedule:MaxActivationsPerDay"], out var mpd) ? Math.Clamp(mpd, 1, 24) : 4;
+    var (payload, msg) = ScheduleAlgorithm.Generate(
+        today,
+        tomorrow,
+        userSettings.ComfortHours,
+        userSettings.TurnOffPercentile,
+        userSettings.TurnOffMaxConsecutive,
+        activationLimit,
+        configUser,
+        null,
+        ScheduleAlgorithm.LogicType.PerDayOriginal);
     return Results.Json(new { schedulePayload = payload, generated = payload != null, message = msg, zone });
 });
 scheduleGroup.MapPost("/apply", async (HttpContext ctx) => { var userId = GetUserId(ctx); var result = await BatchRunner.RunBatchAsync(builder.Configuration, userId, applySchedule:false, persist:true); return Results.Json(result); });
@@ -786,7 +797,7 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IConfiguration cfg, HttpCont
 
 // Kör initial batch (persist + ev. schedule) utan att exponera svar
 // Initial batch now only fetches/prerenders (no auto apply)
-_ = Task.Run(async () => await BatchRunner.RunBatchAsync((IConfiguration)builder.Configuration, applySchedule:false, persist:true));
+_ = Task.Run(async () => await BatchRunner.RunBatchAsync((IConfiguration)builder.Configuration, null, applySchedule:false, persist:true));
 
 await app.RunAsync();
 
@@ -805,7 +816,7 @@ public class DailyPriceJob : IHostedService, IDisposable
         var dir = _cfg["Storage:Directory"] ?? "data";
         Directory.CreateDirectory(dir);
         var hasAny = Directory.GetFiles(dir, "prices-*.json").Length > 0;
-    _ = BatchRunner.RunBatchAsync(_cfg, applySchedule:false, persist:true);
+    _ = BatchRunner.RunBatchAsync(_cfg, null, applySchedule:false, persist:true);
         // Start timer (check var 10:e minut om klockan passerat 14:00 och dagens tomorrow saknas)
         _timer = new Timer(Check, null, TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(10));
         return Task.CompletedTask;
@@ -818,7 +829,7 @@ public class DailyPriceJob : IHostedService, IDisposable
             var now = DateTimeOffset.Now;
             if (now.Hour == 14 && now.Minute < 10) // första 10 min efter 14
             {
-                await BatchRunner.RunBatchAsync(_cfg, applySchedule:false, persist:true);
+                await BatchRunner.RunBatchAsync(_cfg, null, applySchedule:false, persist:true);
             }
         }
         catch (Exception ex)

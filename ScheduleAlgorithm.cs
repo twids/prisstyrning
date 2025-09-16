@@ -8,6 +8,10 @@ internal static class ScheduleAlgorithm
     public static (JsonNode? schedulePayload, string message) Generate(
         JsonArray? rawToday,
         JsonArray? rawTomorrow,
+        int comfortHoursDefault,
+        double turnOffPercentile,
+        int turnOffMaxConsec,
+        int activationLimit,
         IConfiguration config,
         DateTimeOffset? nowOverride = null,
         LogicType logic = LogicType.PerDayOriginal)
@@ -16,13 +20,11 @@ internal static class ScheduleAlgorithm
         var todayDate = now.Date;
         var tomorrowDate = todayDate.AddDays(1);
         var actionsCombined = new JsonObject();
-    int comfortHoursDefault = int.TryParse(config["Schedule:ComfortHours"], out var ch) ? Math.Clamp(ch, 1, 12) : 3;
-        int turnOffMaxConsec = int.TryParse(config["Schedule:TurnOffMaxConsecutive"], out var moc) ? Math.Clamp(moc, 1, 6) : 2;
-        double turnOffPercentile = double.TryParse(config["Schedule:TurnOffPercentile"], out var tp) ? Math.Clamp(tp, 0.5, 0.99) : 0.9;
+    // comfortHoursDefault, turnOffPercentile, turnOffMaxConsec provided explicitly per-user
         double turnOffSpikeDeltaPct = double.TryParse(config["Schedule:TurnOffSpikeDeltaPct"], out var sd) ? Math.Clamp(sd, 1, 200) : 10;
         int turnOffNeighborWindow = int.TryParse(config["Schedule:TurnOffNeighborWindow"], out var nw) ? Math.Clamp(nw, 1, 4) : 2;
         decimal comfortNextHourMaxIncreasePct = decimal.TryParse(config["Schedule:ComfortNextHourMaxIncreasePct"], out var cni) ? Math.Clamp(cni, 0, 500) : 25m;
-    int activationLimit = int.TryParse(config["Schedule:MaxActivationsPerDay"], out var mpd) ? Math.Clamp(mpd, 1, 24) : 4; // reverted default activation limit to 4
+    // activationLimit provided explicitly
 
         if (logic == LogicType.CrossDayCheapestLimited)
         {
