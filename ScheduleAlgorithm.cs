@@ -1,7 +1,7 @@
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
 
-internal static class ScheduleAlgorithm
+public static class ScheduleAlgorithm
 {
     public enum LogicType { PerDayOriginal, CrossDayCheapestLimited }
 
