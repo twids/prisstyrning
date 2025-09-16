@@ -1,0 +1,47 @@
+name: PR Build Verification
+
+on:
+  pull_request:
+    branches: [ master ]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  build-verification:
+    name: Build Verification
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/Prisstyrning.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+      
+      - name: Restore dependencies
+        run: dotnet restore
+      
+      - name: Build project
+        run: dotnet build --configuration Release --no-restore
+      
+      - name: Verify build output
+        run: |
+          DLL_PATH=$(find bin/Release -name 'Prisstyrning.dll' -type f | head -1)
+          if [ -z "$DLL_PATH" ] || [ ! -f "$DLL_PATH" ]; then
+            echo "❌ Build artifact not found"
+            exit 1
+          fi
+          echo "✅ Build completed successfully"
+          echo "Build artifact size: $(stat -c%s "$DLL_PATH") bytes"
