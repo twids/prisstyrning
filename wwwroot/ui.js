@@ -267,13 +267,10 @@ async function loadSchedule(){
     renderScheduleGrid(d.schedulePayload,'scheduleGrid');
     msgEl.textContent='';
     window._lastPreview = d; // cache for PUT
-    // Show the update button only after schedule is generated
-    const updateBtn = document.getElementById('applyScheduleBtn');
-    if(updateBtn) updateBtn.style.display = 'inline-block';
+    toggleUpdateButton(true);
   }catch(e){
     schedulePreviewEl.textContent='Fel: '+e.message;
-    const updateBtn = document.getElementById('applyScheduleBtn');
-    if(updateBtn) updateBtn.style.display = 'none';
+    toggleUpdateButton(false);
   }
 }
 async function loadCurrentSchedule(){
@@ -420,13 +417,17 @@ if(showSitesBtn) showSitesBtn.onclick = loadSites;
 const gwBtn = document.getElementById('showGateway');
 if(gwBtn) gwBtn.onclick = loadGateway;
 
+function toggleUpdateButton(visible){
+  const btn=document.getElementById('applyScheduleBtn');
+  if(!btn) return;
+  btn.style.display = visible ? 'inline-block' : 'none';
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   loadAuth();
   loadPrices();
   loadScheduleHistory();
-  // Hide update button until schedule is generated
-  const updateBtn = document.getElementById('applyScheduleBtn');
-  if(updateBtn) updateBtn.style.display = 'none';
+  toggleUpdateButton(false);
   // Do NOT load gateway automatically on page load. Only load on explicit user action (button click)
   // Check URL for auth success callback
   const urlParams = new URLSearchParams(window.location.search);

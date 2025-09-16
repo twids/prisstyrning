@@ -10,7 +10,7 @@ internal static class BatchRunner
 {
     public static async Task<object> GenerateSchedulePreview(IConfiguration config)
     {
-    var res = await RunBatchAsync(config, null, applySchedule:false, persist:false);
+        var res = await RunBatchAsync(config, null, applySchedule:false, persist:false);
         return new { res.schedulePayload, res.generated, res.message };
     }
 
