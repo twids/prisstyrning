@@ -44,9 +44,7 @@ var app = builder.Build();
 app.MapGet("/api/user/schedule-history", (HttpContext ctx) =>
 {
     var userId = GetUserId(ctx);
-    var dataDir = builder.Configuration["Storage:Directory"] ?? "data";
-    var history = ScheduleHistoryPersistence.Load(userId ?? "default", dataDir);
-    // Only return date, timestamp, and schedule summary (no raw JSON)
+    var history = ScheduleHistoryPersistence.Load(userId ?? "default", StoragePaths.GetBaseDir(builder.Configuration));
     var result = history.Select(e => new {
         timestamp = e?["timestamp"]?.ToString(),
         date = DateTimeOffset.TryParse(e?["timestamp"]?.ToString(), out var dt) ? dt.ToString("yyyy-MM-dd") : null,
@@ -240,21 +238,19 @@ pricesGroup.MapPost("/zone", async (HttpContext c, IConfiguration cfg) => {
         var zone = zEl.GetString();
         if (!UserSettingsService.IsValidZone(zone)) return Results.BadRequest(new { error = "Invalid zone" });
         var userId = GetUserId(c);
-        if (!UserSettingsService.SetUserZone(userId, zone!)) return Results.BadRequest(new { error = "Failed to save" });
+        // Persist user zone inside user.json (merge/update existing)
+        var userJsonPath = StoragePaths.GetUserJsonPath(builder.Configuration, userId ?? "");
+        Directory.CreateDirectory(Path.GetDirectoryName(userJsonPath)!);
+        JsonObject userNode;
+        if (File.Exists(userJsonPath))
+        {
+            try { userNode = JsonNode.Parse(await File.ReadAllTextAsync(userJsonPath)) as JsonObject ?? new JsonObject(); }
+            catch { userNode = new JsonObject(); }
+        }
+        else userNode = new JsonObject();
+        userNode["Zone"] = zone;
+        await File.WriteAllTextAsync(userJsonPath, userNode.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
         return Results.Ok(new { saved = true, zone });
-    } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
-});
-// Force refresh Nordpool prices immediately for current user's zone (updates shared cache for now)
-pricesGroup.MapPost("/refresh", async (HttpContext c, IConfiguration cfg) => {
-    var userId = GetUserId(c); var zone = UserSettingsService.GetUserZone(cfg, userId);
-    try {
-        var currency = cfg["Price:Nordpool:Currency"] ?? "SEK";
-        var page = cfg["Price:Nordpool:PageId"]; // optional override
-        var np = new NordpoolClient(currency, page);
-        var (today, tomorrow) = await np.GetTodayTomorrowAsync(zone);
-        PriceMemory.Set(today, tomorrow);
-        NordpoolPersistence.Save(zone, today, tomorrow, cfg["Storage:Directory"] ?? "data");
-        return Results.Ok(new { refreshed = true, zone, today = today.Count, tomorrow = tomorrow.Count });
     } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
 // Get latest persisted Nordpool snapshot for zone
@@ -451,10 +447,9 @@ scheduleGroup.MapGet("/preview", async (HttpContext c) => {
     var turnOffPercentile = cfg["Schedule:TurnOffPercentile"];
     var turnOffMaxConsecutive = cfg["Schedule:TurnOffMaxConsecutive"];
     try {
-    var dataDir = builder.Configuration["Storage:Directory"] ?? "data";
-    var path = System.IO.Path.Combine(dataDir, "tokens", userId ?? "default", "user.json");
-        if (System.IO.File.Exists(path)) {
-            var json = System.IO.File.ReadAllText(path);
+        var userJsonPath = StoragePaths.GetUserJsonPath(builder.Configuration, userId ?? "default");
+        if (System.IO.File.Exists(userJsonPath)) {
+            var json = System.IO.File.ReadAllText(userJsonPath);
             var node = System.Text.Json.Nodes.JsonNode.Parse(json) as System.Text.Json.Nodes.JsonObject;
             if (node != null) {
                 comfortHours = node["ComfortHours"]?.ToString() ?? comfortHours;
@@ -470,7 +465,18 @@ scheduleGroup.MapGet("/preview", async (HttpContext c) => {
         { "Schedule:TurnOffMaxConsecutive", turnOffMaxConsecutive }
     };
     var configUser = new ConfigurationBuilder().AddInMemoryCollection(configDict).AddConfiguration(cfg).Build();
-    var (payload, msg) = ScheduleAlgorithm.Generate(today, tomorrow, configUser, null, ScheduleAlgorithm.LogicType.PerDayOriginal);
+    var userSettings = UserSettingsService.LoadScheduleSettings(cfg, userId);
+    int activationLimit = int.TryParse(cfg["Schedule:MaxActivationsPerDay"], out var mpd) ? Math.Clamp(mpd, 1, 24) : 4;
+    var (payload, msg) = ScheduleAlgorithm.Generate(
+        today,
+        tomorrow,
+        userSettings.ComfortHours,
+        userSettings.TurnOffPercentile,
+        userSettings.TurnOffMaxConsecutive,
+        activationLimit,
+        configUser,
+        null,
+        ScheduleAlgorithm.LogicType.PerDayOriginal);
     return Results.Json(new { schedulePayload = payload, generated = payload != null, message = msg, zone });
 });
 scheduleGroup.MapPost("/apply", async (HttpContext ctx) => { var userId = GetUserId(ctx); var result = await BatchRunner.RunBatchAsync(builder.Configuration, userId, applySchedule:false, persist:true); return Results.Json(result); });
@@ -786,7 +792,7 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IConfiguration cfg, HttpCont
 
 // Kör initial batch (persist + ev. schedule) utan att exponera svar
 // Initial batch now only fetches/prerenders (no auto apply)
-_ = Task.Run(async () => await BatchRunner.RunBatchAsync((IConfiguration)builder.Configuration, applySchedule:false, persist:true));
+_ = Task.Run(async () => await BatchRunner.RunBatchAsync((IConfiguration)builder.Configuration, null, applySchedule:false, persist:true));
 
 await app.RunAsync();
 
@@ -805,7 +811,7 @@ public class DailyPriceJob : IHostedService, IDisposable
         var dir = _cfg["Storage:Directory"] ?? "data";
         Directory.CreateDirectory(dir);
         var hasAny = Directory.GetFiles(dir, "prices-*.json").Length > 0;
-    _ = BatchRunner.RunBatchAsync(_cfg, applySchedule:false, persist:true);
+    _ = BatchRunner.RunBatchAsync(_cfg, null, applySchedule:false, persist:true);
         // Start timer (check var 10:e minut om klockan passerat 14:00 och dagens tomorrow saknas)
         _timer = new Timer(Check, null, TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(10));
         return Task.CompletedTask;
@@ -818,7 +824,7 @@ public class DailyPriceJob : IHostedService, IDisposable
             var now = DateTimeOffset.Now;
             if (now.Hour == 14 && now.Minute < 10) // första 10 min efter 14
             {
-                await BatchRunner.RunBatchAsync(_cfg, applySchedule:false, persist:true);
+                await BatchRunner.RunBatchAsync(_cfg, null, applySchedule:false, persist:true);
             }
         }
         catch (Exception ex)

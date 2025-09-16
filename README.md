@@ -112,10 +112,19 @@ On `master` pushes and version tags (`v*.*.*`).
 ## Multi-arch notes
 The GitHub Actions pipeline enables `linux/amd64` and `linux/arm64` with QEMU emulation. If you only need one architecture, drop the `platforms:` line for faster builds.
 
+## Build Verification
+All pull requests are automatically verified with GitHub Actions (`.github/workflows/pr-build-verification.yml`):
+* **Restore**: Ensures NuGet packages can be restored
+* **Build**: Compiles the project in Release configuration
+* **Artifact Check**: Verifies the build produces expected output (`Prisstyrning.dll`)
+
+Pull requests cannot be merged until the build verification passes. This ensures code quality and prevents broken builds from entering the main branch.
+
 ## OAuth tokens
 After completing OAuth, tokens are persisted to `tokens/daikin.json` (if the volume is mounted). You may also inject `Daikin:AccessToken` / `Daikin:RefreshToken` directly for testing.
 
 ## Development hints
+* **Local build verification**: Run `dotnet restore && dotnet build --configuration Release` to verify your changes locally before submitting a PR
 * Local Nordpool snapshots stored as `data/nordpool/<ZONE>/prices-*.json`
 * Frontend served from `wwwroot` (static + minimal JS)
 * Schedule preview endpoint: `/api/schedule/preview`
