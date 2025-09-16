@@ -337,7 +337,7 @@ public class ScheduleAlgorithmTests
             var timestamp = new DateTimeOffset(date.Year, date.Month, date.Day, hour, 0, 0, date.Offset);
             var priceEntry = new JsonObject
             {
-                ["start"] = timestamp.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                ["start"] = timestamp.ToString("O"),
                 ["value"] = price.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)
             };
             jsonArray.Add(priceEntry);
