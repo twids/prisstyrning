@@ -233,6 +233,10 @@ if(refreshNordpoolBtn) refreshNordpoolBtn.onclick=refreshNordpool;
 loadZone();
 function renderScheduleGrid(schedulePayload, targetId){
   const grid=document.getElementById(targetId);
+  if (!grid) {
+    console.error('renderScheduleGrid: Element not found:', targetId);
+    return;
+  }
   grid.innerHTML='';
   if(!schedulePayload){ grid.textContent='Inget schema'; return; }
   // payload format: {"0": { actions: { monday: {"10:00:00": {domesticHotWaterTemperature:"eco"}, ... } } } }
