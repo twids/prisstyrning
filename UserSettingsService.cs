@@ -8,7 +8,7 @@ internal static class UserSettingsService
         if (string.IsNullOrWhiteSpace(userId)) return def;
         try
         {
-            var path = Path.Combine("tokens", userId, "user.json");
+            var path = StoragePaths.GetUserJsonPath(cfg, userId);
             if (File.Exists(path))
             {
                 var json = await File.ReadAllTextAsync(path);
@@ -35,9 +35,9 @@ internal static class UserSettingsService
         if (!IsValidZone(zone)) return false;
         try
         {
-            var dir = Path.Combine("tokens", userId);
+            var dir = StoragePaths.GetUserTokenDir(userId, null); // null config uses default
             Directory.CreateDirectory(dir);
-            var path = Path.Combine(dir, "user.json");
+            var path = StoragePaths.GetUserJsonPath(null, userId); // null config uses default
             System.Text.Json.Nodes.JsonObject node;
             if (File.Exists(path))
             {

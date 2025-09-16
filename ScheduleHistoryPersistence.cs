@@ -6,8 +6,8 @@ internal static class ScheduleHistoryPersistence
     // Save a schedule change for a user, keeping only last X days
     public static async Task SaveAsync(string userId, JsonObject schedulePayload, DateTimeOffset timestamp, int retentionDays = 7, string? baseDir = null)
     {
-        baseDir ??= "data";
-        var dir = Path.Combine(baseDir, "schedule_history", userId);
+    var cfg = new ConfigurationBuilder().AddJsonFile("appsettings.json", optional: true).Build();
+    var dir = Path.Combine(StoragePaths.GetScheduleHistoryDir(cfg), userId);
         Directory.CreateDirectory(dir);
         var file = Path.Combine(dir, $"history.json");
         List<JsonObject> history;
