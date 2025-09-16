@@ -55,65 +55,63 @@ app.MapGet("/api/user/schedule-history", (HttpContext ctx) =>
 app.MapGet("/api/user/settings", async (HttpContext ctx) =>
 {
     var cfg = (IConfiguration)builder.Configuration;
-    var userId = GetUserId(ctx);
-    var path = StoragePaths.GetUserJsonPath(builder.Configuration, userId ?? "");
+    var userId = GetUserId(ctx) ?? "default";
+    var path = StoragePaths.GetUserJsonPath(cfg, userId);
     if (!File.Exists(path)) return Results.Json(new { ComfortHours = 3, TurnOffPercentile = 0.9, TurnOffMaxConsecutive = 2, AutoApplySchedule = false });
-    var json = await File.ReadAllTextAsync(path);
-    var node = JsonNode.Parse(json) as JsonObject;
-    int comfortHours = int.TryParse(node?["ComfortHours"]?.ToString(), out var ch) ? ch : 3;
-    double turnOffPercentile = double.TryParse(node?["TurnOffPercentile"]?.ToString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var tp) ? tp : 0.9;
-    int turnOffMaxConsecutive = int.TryParse(node?["TurnOffMaxConsecutive"]?.ToString(), out var tmc) ? tmc : 2;
-    bool autoApplySchedule = bool.TryParse(node?["AutoApplySchedule"]?.ToString(), out var aas) ? aas : false;
-    return Results.Json(new
+    try
     {
-        ComfortHours = comfortHours,
-        TurnOffPercentile = turnOffPercentile,
-        TurnOffMaxConsecutive = turnOffMaxConsecutive,
-        AutoApplySchedule = autoApplySchedule
-    });
+        var json = await File.ReadAllTextAsync(path);
+        var node = JsonNode.Parse(json) as JsonObject;
+        int comfortHours = int.TryParse(node?["ComfortHours"]?.ToString(), out var ch) ? ch : 3;
+        double turnOffPercentile = double.TryParse(node?["TurnOffPercentile"]?.ToString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var tp) ? tp : 0.9;
+        int turnOffMaxConsecutive = int.TryParse(node?["TurnOffMaxConsecutive"]?.ToString(), out var tmc) ? tmc : 2;
+        bool autoApplySchedule = bool.TryParse(node?["AutoApplySchedule"]?.ToString(), out var aas) ? aas : false;
+        return Results.Json(new { ComfortHours = comfortHours, TurnOffPercentile = turnOffPercentile, TurnOffMaxConsecutive = turnOffMaxConsecutive, AutoApplySchedule = autoApplySchedule });
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[UserSettings] read error: {ex.Message}");
+        return Results.Json(new { ComfortHours = 3, TurnOffPercentile = 0.9, TurnOffMaxConsecutive = 2, AutoApplySchedule = false });
+    }
 });
 
 app.MapPost("/api/user/settings", async (HttpContext ctx) =>
 {
-    var userId = GetUserId(ctx);
+    var userId = GetUserId(ctx) ?? "default";
     var body = await JsonNode.ParseAsync(ctx.Request.Body) as JsonObject;
     if (body == null) return Results.BadRequest(new { error = "Missing body" });
-    var path = Path.Combine(StoragePaths.GetTokensDir(builder.Configuration), userId ?? "", "user.json");
+    var cfg = (IConfiguration)builder.Configuration;
+    var path = StoragePaths.GetUserJsonPath(cfg, userId);
     JsonObject node;
     if (File.Exists(path))
     {
-        var json = await File.ReadAllTextAsync(path);
-        node = JsonNode.Parse(json) as JsonObject ?? new JsonObject();
+        try { var jsonExisting = await File.ReadAllTextAsync(path); node = JsonNode.Parse(jsonExisting) as JsonObject ?? new JsonObject(); }
+        catch { node = new JsonObject(); }
     }
     else node = new JsonObject();
-    var rawCh = body["ComfortHours"]?.ToString();
-    var rawTp = body["TurnOffPercentile"]?.ToString();
-    var rawTmc = body["TurnOffMaxConsecutive"]?.ToString();
-    var rawAas = body["AutoApplySchedule"]?.ToString();
-    int ch; double tp; int tmc; bool aas;
-    bool chOk = int.TryParse(rawCh, out ch);
-    bool tpOk = double.TryParse(rawTp, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out tp);
-    bool tmcOk = int.TryParse(rawTmc, out tmc);
-    bool aasOk = bool.TryParse(rawAas, out aas);
-    Console.WriteLine(
-        $"Event: UserSettingsReceived\n" +
-        $"  ComfortHours: Raw={rawCh}, Parsed={(chOk ? ch : "fail")}\n" +
-        $"  TurnOffPercentile: Raw={rawTp}, Parsed={(tpOk ? tp : "fail")}\n" +
-        $"  TurnOffMaxConsecutive: Raw={rawTmc}, Parsed={(tmcOk ? tmc : "fail")}\n" +
-        $"  AutoApplySchedule: Raw={rawAas}, Parsed={(aasOk ? aas : "fail")}"
-    );
-    node["ComfortHours"] = chOk ? ch : 3;
-    node["TurnOffPercentile"] = tpOk ? tp : 0.9;
-    node["TurnOffMaxConsecutive"] = tmcOk ? tmc : 2;
-    node["AutoApplySchedule"] = aasOk ? aas : false;
-    
-    // Ensure directory exists before writing file
-    var directory = Path.GetDirectoryName(path);
-    if (!string.IsNullOrEmpty(directory))
-    {
-        Directory.CreateDirectory(directory);
-    }
-    
+    string? rawCh = body["ComfortHours"]?.ToString();
+    string? rawTp = body["TurnOffPercentile"]?.ToString();
+    string? rawTmc = body["TurnOffMaxConsecutive"]?.ToString();
+    string? rawAas = body["AutoApplySchedule"]?.ToString();
+    var errors = new List<string>();
+    int comfortHours = 3;
+    if (!string.IsNullOrWhiteSpace(rawCh))
+    { if (!int.TryParse(rawCh, out comfortHours) || comfortHours < 1 || comfortHours > 12) { errors.Add("ComfortHours must be an integer between 1 and 12"); comfortHours = 3; } }
+    int turnOffMaxConsecutive = 2;
+    if (!string.IsNullOrWhiteSpace(rawTmc))
+    { if (!int.TryParse(rawTmc, out turnOffMaxConsecutive) || turnOffMaxConsecutive < 1 || turnOffMaxConsecutive > 6) { errors.Add("TurnOffMaxConsecutive must be an integer between 1 and 6"); turnOffMaxConsecutive = 2; } }
+    double turnOffPercentile = 0.9;
+    if (!string.IsNullOrWhiteSpace(rawTp))
+    { if (!double.TryParse(rawTp, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out turnOffPercentile) || turnOffPercentile < 0.5 || turnOffPercentile > 0.99) { errors.Add("TurnOffPercentile must be a number between 0.5 and 0.99"); turnOffPercentile = 0.9; } }
+    bool autoApplySchedule = false;
+    if (!string.IsNullOrWhiteSpace(rawAas))
+    { if (!bool.TryParse(rawAas, out autoApplySchedule)) { errors.Add("AutoApplySchedule must be true or false"); autoApplySchedule = false; } }
+    if (errors.Count > 0) return Results.BadRequest(new { error = "Validation failed", errors });
+    node["ComfortHours"] = comfortHours;
+    node["TurnOffPercentile"] = turnOffPercentile;
+    node["TurnOffMaxConsecutive"] = turnOffMaxConsecutive;
+    node["AutoApplySchedule"] = autoApplySchedule;
+    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
     await File.WriteAllTextAsync(path, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
     return Results.Ok(new { saved = true });
 });

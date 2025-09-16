@@ -151,27 +151,43 @@ if(comfortHoursEl){
       const res = await fetch('/api/user/settings');
       if(!res.ok) throw new Error('Could not load settings');
       const d = await res.json();
-      comfortHoursEl.value = d.comfortHours ?? 3;
-      if(turnOffPercentileEl) turnOffPercentileEl.value = d.turnOffPercentile ?? 0.9;
-      if(turnOffMaxConsecutiveEl) turnOffMaxConsecutiveEl.value = d.turnOffMaxConsecutive ?? 2;
-      if(autoApplyScheduleEl) autoApplyScheduleEl.checked = !!d.autoApplySchedule;
+      // Accept both PascalCase (server) and camelCase (legacy client expectation)
+      comfortHoursEl.value = d.ComfortHours ?? d.comfortHours ?? 3;
+      if(turnOffPercentileEl) turnOffPercentileEl.value = d.TurnOffPercentile ?? d.turnOffPercentile ?? 0.9;
+      if(turnOffMaxConsecutiveEl) turnOffMaxConsecutiveEl.value = d.TurnOffMaxConsecutive ?? d.turnOffMaxConsecutive ?? 2;
+      if(autoApplyScheduleEl) autoApplyScheduleEl.checked = (d.AutoApplySchedule ?? d.autoApplySchedule) || false;
       if(userSettingsStatus) userSettingsStatus.textContent = '';
     } catch(e) { if(userSettingsStatus) userSettingsStatus.textContent = 'Error: ' + e.message; }
   })();
 
   async function saveUserSettings(){
-    if(userSettingsStatus) userSettingsStatus.textContent = 'Saving...';
-    try {
-      const body = {
-        ComfortHours: comfortHoursEl.value || 3,
-        TurnOffPercentile: turnOffPercentileEl?.value || 0.9,
-        TurnOffMaxConsecutive: turnOffMaxConsecutiveEl?.value || 2,
-        AutoApplySchedule: autoApplyScheduleEl?.checked || false
-      };
-      const res = await fetch('/api/user/settings', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
-      if(!res.ok) throw new Error(await res.text());
-      if(userSettingsStatus) userSettingsStatus.textContent = 'Saved!';
-    } catch(e){ if(userSettingsStatus) userSettingsStatus.textContent = 'Error: ' + e.message; }
+    if(!comfortHoursEl) return;
+    if(userSettingsStatus) { userSettingsStatus.textContent = ''; userSettingsStatus.classList.remove('good','bad'); }
+    const errors=[];
+    const ch = parseInt(comfortHoursEl.value,10);
+    if(isNaN(ch) || ch < 1 || ch > 12) errors.push('Comfort hours must be 1–12');
+    const tpRaw = turnOffPercentileEl?.value;
+    const tp = tpRaw? parseFloat(tpRaw) : 0.9;
+    if(isNaN(tp) || tp < 0.5 || tp > 0.99) errors.push('Turn-off percentile must be 0.5–0.99');
+    const tmcRaw = turnOffMaxConsecutiveEl?.value;
+    const tmc = tmcRaw? parseInt(tmcRaw,10) : 2;
+    if(isNaN(tmc) || tmc < 1 || tmc > 6) errors.push('Max consecutive turn-off hours must be 1–6');
+    if(errors.length){
+      if(userSettingsStatus){ userSettingsStatus.textContent = 'Validation: ' + errors.join('; '); userSettingsStatus.classList.add('bad'); }
+      return;
+    }
+    if(userSettingsStatus){ userSettingsStatus.textContent='Saving...'; userSettingsStatus.classList.remove('bad'); }
+    try{
+      const body={ ComfortHours: ch, TurnOffPercentile: tp, TurnOffMaxConsecutive: tmc, AutoApplySchedule: !!autoApplyScheduleEl?.checked };
+      const res = await fetch('/api/user/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      if(!res.ok){
+        // Try parse structured error
+        let msg=await res.text();
+        try{ const o=JSON.parse(msg); if(o && o.errors) msg = o.errors.join('; '); }catch{}
+        throw new Error(msg);
+      }
+      if(userSettingsStatus){ userSettingsStatus.textContent='Saved!'; userSettingsStatus.classList.add('good'); }
+    }catch(e){ if(userSettingsStatus){ userSettingsStatus.textContent='Error: '+e.message; userSettingsStatus.classList.add('bad'); } }
   }
   if(saveUserSettingsBtn) saveUserSettingsBtn.onclick = saveUserSettings;
 }

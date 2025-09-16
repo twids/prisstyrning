@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Configuration;
 
-internal static class StoragePaths
+public static class StoragePaths
 {
     public static string GetUserTokenDir(string userId, IConfiguration? config)
     {
