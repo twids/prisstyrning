@@ -38,9 +38,10 @@ jobs:
       
       - name: Verify build output
         run: |
-          if [ ! -f "bin/Release/net8.0/Prisstyrning.dll" ]; then
+          DLL_PATH=$(find bin/Release -name 'Prisstyrning.dll' -type f | head -1)
+          if [ -z "$DLL_PATH" ] || [ ! -f "$DLL_PATH" ]; then
             echo "❌ Build artifact not found"
             exit 1
           fi
           echo "✅ Build completed successfully"
-          echo "Build artifact size: $(stat -c%s bin/Release/net8.0/Prisstyrning.dll) bytes"
+          echo "Build artifact size: $(stat -c%s "$DLL_PATH") bytes"
