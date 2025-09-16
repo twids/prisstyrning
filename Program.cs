@@ -45,7 +45,6 @@ app.MapGet("/api/user/schedule-history", (HttpContext ctx) =>
 {
     var userId = GetUserId(ctx);
     var history = ScheduleHistoryPersistence.Load(userId ?? "default", StoragePaths.GetBaseDir(builder.Configuration));
-    // Only return date, timestamp, and schedule summary (no raw JSON)
     var result = history.Select(e => new {
         timestamp = e?["timestamp"]?.ToString(),
         date = DateTimeOffset.TryParse(e?["timestamp"]?.ToString(), out var dt) ? dt.ToString("yyyy-MM-dd") : null,
@@ -57,7 +56,7 @@ app.MapGet("/api/user/settings", async (HttpContext ctx) =>
 {
     var cfg = (IConfiguration)builder.Configuration;
     var userId = GetUserId(ctx);
-    var path = Path.Combine(StoragePaths.GetTokensDir(builder.Configuration), userId ?? "", "user.json");
+    var path = StoragePaths.GetUserJsonPath(builder.Configuration, userId ?? "");
     if (!File.Exists(path)) return Results.Json(new { ComfortHours = 3, TurnOffPercentile = 0.9, TurnOffMaxConsecutive = 2, AutoApplySchedule = false });
     var json = await File.ReadAllTextAsync(path);
     var node = JsonNode.Parse(json) as JsonObject;
@@ -241,21 +240,19 @@ pricesGroup.MapPost("/zone", async (HttpContext c, IConfiguration cfg) => {
         var zone = zEl.GetString();
         if (!UserSettingsService.IsValidZone(zone)) return Results.BadRequest(new { error = "Invalid zone" });
         var userId = GetUserId(c);
-        if (!UserSettingsService.SetUserZone(userId, zone!)) return Results.BadRequest(new { error = "Failed to save" });
+        // Persist user zone inside user.json (merge/update existing)
+        var userJsonPath = StoragePaths.GetUserJsonPath(builder.Configuration, userId ?? "");
+        Directory.CreateDirectory(Path.GetDirectoryName(userJsonPath)!);
+        JsonObject userNode;
+        if (File.Exists(userJsonPath))
+        {
+            try { userNode = JsonNode.Parse(await File.ReadAllTextAsync(userJsonPath)) as JsonObject ?? new JsonObject(); }
+            catch { userNode = new JsonObject(); }
+        }
+        else userNode = new JsonObject();
+        userNode["Zone"] = zone;
+        await File.WriteAllTextAsync(userJsonPath, userNode.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
         return Results.Ok(new { saved = true, zone });
-    } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
-});
-// Force refresh Nordpool prices immediately for current user's zone (updates shared cache for now)
-pricesGroup.MapPost("/refresh", async (HttpContext c, IConfiguration cfg) => {
-    var userId = GetUserId(c); var zone = UserSettingsService.GetUserZone(cfg, userId);
-    try {
-        var currency = cfg["Price:Nordpool:Currency"] ?? "SEK";
-        var page = cfg["Price:Nordpool:PageId"]; // optional override
-        var np = new NordpoolClient(currency, page);
-        var (today, tomorrow) = await np.GetTodayTomorrowAsync(zone);
-        PriceMemory.Set(today, tomorrow);
-        NordpoolPersistence.Save(zone, today, tomorrow, cfg["Storage:Directory"] ?? "data");
-        return Results.Ok(new { refreshed = true, zone, today = today.Count, tomorrow = tomorrow.Count });
     } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
 // Get latest persisted Nordpool snapshot for zone
@@ -452,16 +449,16 @@ scheduleGroup.MapGet("/preview", async (HttpContext c) => {
     var turnOffPercentile = cfg["Schedule:TurnOffPercentile"];
     var turnOffMaxConsecutive = cfg["Schedule:TurnOffMaxConsecutive"];
     try {
-    var path = StoragePaths.GetUserJsonPath(builder.Configuration, userId ?? "default");
-    if (System.IO.File.Exists(path)) {
-        var json = System.IO.File.ReadAllText(path);
-        var node = System.Text.Json.Nodes.JsonNode.Parse(json) as System.Text.Json.Nodes.JsonObject;
-        if (node != null) {
-            comfortHours = node["ComfortHours"]?.ToString() ?? comfortHours;
-            turnOffPercentile = node["TurnOffPercentile"]?.ToString() ?? turnOffPercentile;
-            turnOffMaxConsecutive = node["TurnOffMaxConsecutive"]?.ToString() ?? turnOffMaxConsecutive;
+        var userJsonPath = StoragePaths.GetUserJsonPath(builder.Configuration, userId ?? "default");
+        if (System.IO.File.Exists(userJsonPath)) {
+            var json = System.IO.File.ReadAllText(userJsonPath);
+            var node = System.Text.Json.Nodes.JsonNode.Parse(json) as System.Text.Json.Nodes.JsonObject;
+            if (node != null) {
+                comfortHours = node["ComfortHours"]?.ToString() ?? comfortHours;
+                turnOffPercentile = node["TurnOffPercentile"]?.ToString() ?? turnOffPercentile;
+                turnOffMaxConsecutive = node["TurnOffMaxConsecutive"]?.ToString() ?? turnOffMaxConsecutive;
+            }
         }
-    }
     } catch {}
     // Skapa en temporär config med per-user värden
     var configDict = new Dictionary<string, string?> {
