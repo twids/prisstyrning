@@ -325,6 +325,119 @@ public class ScheduleAlgorithmTests
         Assert.NotEqual(resultPerDay.message, resultCrossDay.message);
     }
 
+    [Fact]
+    public void Generate_MaxConsecutiveTurnOff_RespectsUserSetting()
+    {
+        // Arrange
+        var today = DateTimeOffset.Now.Date;
+        
+        // Create scenario with multiple consecutive expensive hours that should be turned off
+        // Make sure the expensive hours around 19 qualify as "spikes"
+        var rawToday = CreatePriceData(today, new[] { 
+            (0, 0.30m), (1, 0.25m), (2, 0.20m), (3, 0.22m),
+            (4, 0.28m), (5, 0.35m), (6, 0.45m), (7, 0.55m),
+            (8, 0.40m), (9, 0.35m), (10, 0.30m), (11, 0.25m),  // Keep these low to make 17-20 spikes
+            (12, 0.25m), (13, 0.30m), (14, 0.35m), (15, 0.40m),  // Gradual increase
+            (16, 0.45m), (17, 0.85m), (18, 1.00m), (19, 1.20m), // Big spikes that should all be turned off
+            (20, 1.10m), (21, 0.50m), (22, 0.35m), (23, 0.25m)   // Back to normal
+        });
+
+        // Act - Test with turnOffMaxConsec = 4 (user's setting)
+        var result = ScheduleAlgorithm.Generate(
+            rawToday,
+            null,
+            comfortHoursDefault: 3,
+            turnOffPercentile: 0.9,
+            turnOffMaxConsec: 4,  // User setting: allow up to 4 consecutive hours
+            activationLimit: 4,
+            _testConfig,
+            nowOverride: today,
+            ScheduleAlgorithm.LogicType.PerDayOriginal);
+
+        // Assert
+        Assert.NotNull(result.schedulePayload);
+        
+        // Verify the schedule allows for consecutive turn-offs that can reach the peak
+        var actions = result.schedulePayload["0"]?["actions"];
+        Assert.NotNull(actions);
+        
+        // Check that we have a schedule for today
+        var todayKey = today.DayOfWeek.ToString().ToLower();
+        var todaySchedule = actions[todayKey] as JsonObject;
+        Assert.NotNull(todaySchedule);
+        
+        // Count consecutive turn_off periods
+        var turnOffHours = new List<int>();
+        for (int hour = 0; hour < 24; hour++)
+        {
+            var timeKey = new TimeSpan(hour, 0, 0).ToString();
+            if (todaySchedule.ContainsKey(timeKey))
+            {
+                var action = todaySchedule[timeKey]?["domesticHotWaterTemperature"]?.ToString();
+                if (action == "turn_off")
+                {
+                    turnOffHours.Add(hour);
+                }
+            }
+        }
+        
+        // If we have turn-offs, verify they can be consecutive up to the max setting
+        if (turnOffHours.Count > 0)
+        {
+            // Find longest consecutive sequence
+            turnOffHours.Sort();
+            int maxConsecutive = 1;
+            int currentConsecutive = 1;
+            
+            for (int i = 1; i < turnOffHours.Count; i++)
+            {
+                if (turnOffHours[i] == turnOffHours[i-1] + 1)
+                {
+                    currentConsecutive++;
+                    maxConsecutive = Math.Max(maxConsecutive, currentConsecutive);
+                }
+                else
+                {
+                    currentConsecutive = 1;
+                }
+            }
+            
+            // The algorithm should allow consecutive turn-offs up to the user's setting
+            // and should capture the expensive hours 17-20 with proper consecutive blocks
+            Assert.True(maxConsecutive <= 4, $"Consecutive turn-offs ({maxConsecutive}) should not exceed user setting (4)");
+            
+            // With the expensive hours at 17-20, we should get more than just 1 hour
+            Assert.True(turnOffHours.Count >= 2, $"Should turn off multiple expensive hours, but only got: {string.Join(", ", turnOffHours)}");
+            
+            // Print debug info to understand current behavior
+            var turnOffHoursStr = string.Join(", ", turnOffHours);
+            Console.WriteLine($"Turn-off hours: {turnOffHoursStr}");
+            Console.WriteLine($"Max consecutive: {maxConsecutive}");
+            Console.WriteLine($"Schedule: {result.schedulePayload.ToJsonString()}");
+        }
+        else
+        {
+            Console.WriteLine("No turn-off hours found in schedule");
+            Console.WriteLine($"Full schedule: {result.schedulePayload.ToJsonString()}");
+            
+            // Debug: print all hours and their classifications
+            for (int hour = 0; hour < 24; hour++)
+            {
+                var timeKey = new TimeSpan(hour, 0, 0).ToString();
+                if (todaySchedule.ContainsKey(timeKey))
+                {
+                    var action = todaySchedule[timeKey]?["domesticHotWaterTemperature"]?.ToString();
+                    Console.WriteLine($"Hour {hour}: {action}");
+                }
+                else
+                {
+                    Console.WriteLine($"Hour {hour}: (no action)");
+                }
+            }
+            Assert.True(false, "No turn-off hours found in schedule");
+        }
+    }
+
     /// <summary>
     /// Helper method to create test price data in the expected JSON format
     /// </summary>

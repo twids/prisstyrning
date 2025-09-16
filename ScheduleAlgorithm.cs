@@ -149,16 +149,42 @@ public static class ScheduleAlgorithm
                     var spikePct = (double)((value - avg) / avg) * 100.0;
                     if (spikePct >= turnOffSpikeDeltaPct) candidateHours.Add(start.Hour);
                 }
-                candidateHours.Sort(); int consec = 0; int prev = -10;
+                candidateHours.Sort(); 
                 foreach (var h in candidateHours)
                 {
-                    if (h == prev + 1) consec++; else consec = 1; prev = h; if (consec > turnOffMaxConsec) continue;
                     bool nearPeers = false;
                     for (int nh = h - turnOffNeighborWindow; nh <= h + turnOffNeighborWindow; nh++)
                     {
-                        if (nh == h) continue; if (byHour.TryGetValue(nh, out var pv)) { var baseVal = byHour[h]; if (pv > 0 && (double)Math.Abs(baseVal - pv) / (double)pv * 100.0 < turnOffSpikeDeltaPct) { nearPeers = true; break; } }
+                        if (nh == h) continue; 
+                        if (byHour.TryGetValue(nh, out var pv)) 
+                        { 
+                            var baseVal = byHour[h]; 
+                            if (pv > 0 && (double)Math.Abs(baseVal - pv) / (double)pv * 100.0 < turnOffSpikeDeltaPct) 
+                            { 
+                                nearPeers = true; 
+                                break; 
+                            } 
+                        }
                     }
-                    if (nearPeers) continue; if (cheapestHours.Contains(h)) continue; turnOffHours.Add(h);
+                    // For consecutive expensive hours, allow them even if they have similar neighbors
+                    // Only skip if nearPeers and it's not part of a consecutive block above percentile
+                    if (nearPeers) 
+                    {
+                        // Check if neighbors are also above percentile - if so, allow this as part of a block
+                        bool hasExpensiveNeighbors = false;
+                        for (int nh = Math.Max(0, h - 1); nh <= Math.Min(23, h + 1); nh++)
+                        {
+                            if (nh == h) continue;
+                            if (byHour.TryGetValue(nh, out var neighborPrice) && neighborPrice >= percentileThreshold)
+                            {
+                                hasExpensiveNeighbors = true;
+                                break;
+                            }
+                        }
+                        if (!hasExpensiveNeighbors) continue; // Skip isolated spikes with similar neighbors
+                    }
+                    if (cheapestHours.Contains(h)) continue; 
+                    turnOffHours.Add(h);
                 }
             }
             int earliestHour = entries.Min(e => e.start.Hour); int latestHour = entries.Max(e => e.start.Hour);
@@ -169,7 +195,7 @@ public static class ScheduleAlgorithm
                 var ordered = turnOffHours.OrderBy(h => h).ToList(); int blockStart = ordered[0]; int prev = ordered[0]; var blocks = new List<(int start, int end)>();
                 for (int i = 1; i < ordered.Count; i++) { var h = ordered[i]; if (h == prev + 1) { prev = h; continue; } blocks.Add((blockStart, prev)); blockStart = h; prev = h; }
                 blocks.Add((blockStart, prev)); if (comfortStart.HasValue && comfortEnd.HasValue) blocks = blocks.Where(b => b.end < comfortStart.Value || b.start > comfortEnd.Value).ToList();
-                blocks = blocks.Select(b => (b.start, end: b.start + Math.Min(1, b.end - b.start))).ToList();
+                blocks = blocks.Select(b => (b.start, end: Math.Min(b.end, b.start + turnOffMaxConsec - 1))).ToList();
                 if (blocks.Count > 0) { decimal Score((int start, int end) b) { decimal sum = 0; int c = 0; for (int h = b.start; h <= b.end; h++) { if (entries.Any(e => e.start.Hour == h)) { sum += entries.First(e => e.start.Hour == h).value; c++; } } return c == 0 ? 0 : sum / c; } turnOffBlock = blocks.OrderByDescending(b => Score(b)).First(); }
             }
             bool turnOffBeforeComfort = false; if (turnOffBlock.HasValue && comfortStart.HasValue) turnOffBeforeComfort = turnOffBlock.Value.end < comfortStart.Value;
