@@ -29,3 +29,4 @@ appsettings.Local.json
 # Price snapshots
 data/prices-*.json
 tokens/daikin.json
+cookies.txt
