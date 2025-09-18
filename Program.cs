@@ -181,8 +181,8 @@ string? GetUserId(HttpContext c)
         if (string.IsNullOrWhiteSpace(userId)) return null;
         if (userId.Length > MaxUserIdLength) return null; // Reasonable length limit
         
-        // Only allow alphanumeric characters and hyphens (matching DaikinOAuthService.SanitizeUser logic)
-        if (userId.All(c => char.IsLetterOrDigit(c) || c == '-'))
+        // Only allow alphanumeric characters, hyphens, and underscores (matching DaikinOAuthService.SanitizeUser logic)
+        if (userId.All(c => char.IsLetterOrDigit(c) || c == '-' || c == '_'))
             return userId;
     }
     return null;
@@ -479,7 +479,11 @@ scheduleGroup.MapGet("/preview", async (HttpContext c) => {
         ScheduleAlgorithm.LogicType.PerDayOriginal);
     return Results.Json(new { schedulePayload = payload, generated = payload != null, message = msg, zone });
 });
-scheduleGroup.MapPost("/apply", async (HttpContext ctx) => { var userId = GetUserId(ctx); var result = await BatchRunner.RunBatchAsync(builder.Configuration, userId, applySchedule:false, persist:true); return Results.Json(result); });
+scheduleGroup.MapPost("/apply", async (HttpContext ctx) => { 
+    var userId = GetUserId(ctx); 
+    var result = await BatchRunner.RunBatchAsync(builder.Configuration, userId, applySchedule:false, persist:true); 
+    return Results.Json(new { generated = result.generated, schedulePayload = result.schedulePayload, message = result.message }); 
+});
 
 // Daikin data group
 var daikinGroup = app.MapGroup("/api/daikin").WithTags("Daikin");
