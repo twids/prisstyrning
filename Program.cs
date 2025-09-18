@@ -422,62 +422,12 @@ var scheduleGroup = app.MapGroup("/api/schedule").WithTags("Schedule");
 scheduleGroup.MapGet("/preview", async (HttpContext c) => {
     var cfg = (IConfiguration)builder.Configuration;
     var userId = GetUserId(c);
+    
+    // Use BatchRunner to generate schedule and handle history persistence
+    var (generated, schedulePayload, message) = await BatchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: false);
     var zone = UserSettingsService.GetUserZone(cfg, userId);
-    // Ensure we have prices (if memory empty try fetch)
-    var (memToday, memTomorrow, _) = PriceMemory.GetReadOnly();
-    JsonArray? today = memToday; JsonArray? tomorrow = memTomorrow;
-    if (today == null || today.Count == 0)
-    {
-        try 
-        { 
-            var np = new NordpoolClient(cfg["Price:Nordpool:Currency"] ?? "SEK", cfg["Price:Nordpool:PageId"]); 
-            var fetched = await np.GetTodayTomorrowAsync(zone); 
-            today = fetched.today; 
-            tomorrow = fetched.tomorrow; 
-            PriceMemory.Set(today, tomorrow); 
-            NordpoolPersistence.Save(zone, today, tomorrow, cfg["Storage:Directory"] ?? "data"); 
-        }
-        catch (Exception ex) 
-        { 
-            Console.WriteLine($"[Schedule] Failed to fetch prices for zone {zone}: {ex.Message}");
-        }
-    }
-    // Läs per-user inställningar från user.json
-    var comfortHours = cfg["Schedule:ComfortHours"];
-    var turnOffPercentile = cfg["Schedule:TurnOffPercentile"];
-    var turnOffMaxConsecutive = cfg["Schedule:TurnOffMaxConsecutive"];
-    try {
-        var userJsonPath = StoragePaths.GetUserJsonPath(builder.Configuration, userId ?? "default");
-        if (System.IO.File.Exists(userJsonPath)) {
-            var json = System.IO.File.ReadAllText(userJsonPath);
-            var node = System.Text.Json.Nodes.JsonNode.Parse(json) as System.Text.Json.Nodes.JsonObject;
-            if (node != null) {
-                comfortHours = node["ComfortHours"]?.ToString() ?? comfortHours;
-                turnOffPercentile = node["TurnOffPercentile"]?.ToString() ?? turnOffPercentile;
-                turnOffMaxConsecutive = node["TurnOffMaxConsecutive"]?.ToString() ?? turnOffMaxConsecutive;
-            }
-        }
-    } catch {}
-    // Skapa en temporär config med per-user värden
-    var configDict = new Dictionary<string, string?> {
-        { "Schedule:ComfortHours", comfortHours },
-        { "Schedule:TurnOffPercentile", turnOffPercentile },
-        { "Schedule:TurnOffMaxConsecutive", turnOffMaxConsecutive }
-    };
-    var configUser = new ConfigurationBuilder().AddInMemoryCollection(configDict).AddConfiguration(cfg).Build();
-    var userSettings = UserSettingsService.LoadScheduleSettings(cfg, userId);
-    int activationLimit = int.TryParse(cfg["Schedule:MaxActivationsPerDay"], out var mpd) ? Math.Clamp(mpd, 1, 24) : 4;
-    var (payload, msg) = ScheduleAlgorithm.Generate(
-        today,
-        tomorrow,
-        userSettings.ComfortHours,
-        userSettings.TurnOffPercentile,
-        userSettings.TurnOffMaxConsecutive,
-        activationLimit,
-        configUser,
-        null,
-        ScheduleAlgorithm.LogicType.PerDayOriginal);
-    return Results.Json(new { schedulePayload = payload, generated = payload != null, message = msg, zone });
+    
+    return Results.Json(new { schedulePayload, generated, message, zone });
 });
 scheduleGroup.MapPost("/apply", async (HttpContext ctx) => { var userId = GetUserId(ctx); var result = await BatchRunner.RunBatchAsync(builder.Configuration, userId, applySchedule:false, persist:true); return Results.Json(result); });
 
