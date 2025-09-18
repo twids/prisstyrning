@@ -20,9 +20,9 @@ internal static class BatchRunner
         var settings = UserSettingsService.LoadScheduleSettings(config, userId);
         int activationLimit = int.TryParse(config["Schedule:MaxActivationsPerDay"], out var mpd) ? Math.Clamp(mpd, 1, 24) : 4;
         var (generated, schedulePayload, message) = await RunBatchInternalAsync(config, settings, activationLimit, applySchedule, persist, userId);
-        if (generated && schedulePayload is JsonObject payload && !string.IsNullOrWhiteSpace(userId))
+        if (generated && schedulePayload is JsonObject payload && !string.IsNullOrWhiteSpace(userId) && persist)
         {
-            // Fire and forget async save
+            // Fire and forget async save - only when persist is true
             _ = ScheduleHistoryPersistence.SaveAsync(userId, payload, DateTimeOffset.UtcNow, 7, StoragePaths.GetBaseDir(config));
         }
         return (generated, schedulePayload, message);
