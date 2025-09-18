@@ -7,9 +7,9 @@ Always reference these instructions first and fallback to search or bash command
 ## Working Effectively
 
 ### Bootstrap, Build, and Test - NEVER CANCEL Commands
-- `dotnet restore` - takes 15 seconds. NEVER CANCEL. Set timeout to 60+ seconds.
+- `dotnet restore` - takes 17 seconds. NEVER CANCEL. Set timeout to 60+ seconds.
 - `dotnet build --configuration Release --no-restore` - takes 10 seconds. NEVER CANCEL. Set timeout to 60+ seconds.
-- `dotnet test --configuration Release --no-build --verbosity normal` - takes 9 seconds, runs 13 tests. NEVER CANCEL. Set timeout to 60+ seconds.
+- `dotnet test --configuration Release --no-build --verbosity normal` - takes 6 seconds, runs 14 tests. NEVER CANCEL. Set timeout to 60+ seconds.
 
 ### Run the Application
 - ALWAYS run the build steps first before running the application.
@@ -33,7 +33,7 @@ ALWAYS manually validate changes by running through these complete end-to-end sc
    - `GET /api/schedule/preview` - Should return JSON with schedule data
    - `GET /api/user/settings` - Should return user configuration (comfortHours, turnOffPercentile, etc.)
    - `GET /api/prices/timeseries` - Should return 48 price data points for today and tomorrow
-   - `GET /api/status` - Should return status: "ok" with timestamp
+   - `GET /api/status` - Should return status information with timestamp
 
 ### Testing with Real Data
 - The application automatically fetches real Nordpool pricing data for SE3 zone on startup
@@ -150,7 +150,7 @@ Key settings (see README.md for complete list):
 ### Performance Expectations
 - Application startup: ~1 second
 - Price data fetch: ~2-5 seconds for full day
-- Schedule generation: <100ms for typical scenarios
+- Schedule generation: <1 second with cached price data
 - Web interface load: <1 second with cached price data
 
 Always prioritize testing the actual user workflows rather than just checking that commands exit successfully.
