@@ -114,39 +114,39 @@ internal class NordpoolPriceJob : IHostedService, IDisposable
             }
         }
 
-                // Per-user auto-apply schedule
-            var tokensDirInner = StoragePaths.GetTokensDir(_cfg);
-            if (Directory.Exists(tokensDirInner))
+        // Per-user auto-apply schedule
+        var tokensDirInner = StoragePaths.GetTokensDir(_cfg);
+        if (Directory.Exists(tokensDirInner))
+        {
+            var userDirs = Directory.GetDirectories(tokensDirInner);
+            foreach (var userDir in userDirs)
             {
-                var userDirs = Directory.GetDirectories(tokensDirInner);
-                foreach (var userDir in userDirs)
+                try
                 {
+                    var userId = Path.GetFileName(userDir);
+                    var userJsonPath = Path.Combine(userDir, "user.json");
+                    if (!File.Exists(userJsonPath)) continue;
+                    var json = await File.ReadAllTextAsync(userJsonPath);
+                    var node = JsonNode.Parse(json) as JsonObject;
+                    if (node == null) continue;
+                    bool autoApply = bool.TryParse(node["AutoApplySchedule"]?.ToString(), out var aas) ? aas : false;
+                    if (!autoApply) continue;
+                    Console.WriteLine($"[NordpoolPriceJob] Auto-applying schedule for user {userId}");
                     try
                     {
-                        var userId = Path.GetFileName(userDir);
-                        var userJsonPath = Path.Combine(userDir, "user.json");
-                        if (!File.Exists(userJsonPath)) continue;
-                        var json = await File.ReadAllTextAsync(userJsonPath);
-                        var node = JsonNode.Parse(json) as JsonObject;
-                        if (node == null) continue;
-                        bool autoApply = bool.TryParse(node["AutoApplySchedule"]?.ToString(), out var aas) ? aas : false;
-                        if (!autoApply) continue;
-                        Console.WriteLine($"[NordpoolPriceJob] Auto-applying schedule for user {userId}");
-                        try
-                        {
-                            await BatchRunner.RunBatchAsync(_cfg, userId, applySchedule: true, persist: true);
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"[NordpoolPriceJob] user={userId} auto-apply error: {ex.Message}");
-                        }
+                        await BatchRunner.RunBatchAsync(_cfg, userId, applySchedule: true, persist: true);
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"[NordpoolPriceJob] userdir={userDir} error: {ex.Message}");
+                        Console.WriteLine($"[NordpoolPriceJob] user={userId} auto-apply error: {ex.Message}");
                     }
                 }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[NordpoolPriceJob] userdir={userDir} error: {ex.Message}");
+                }
             }
+        }
     }
 
     public Task StopAsync(CancellationToken cancellationToken)
