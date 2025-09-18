@@ -479,12 +479,15 @@ scheduleGroup.MapGet("/preview", async (HttpContext c) => {
         ScheduleAlgorithm.LogicType.PerDayOriginal);
     return Results.Json(new { schedulePayload = payload, generated = payload != null, message = msg, zone });
 });
-scheduleGroup.MapPost("/apply", async (HttpContext ctx) => { 
-    var userId = GetUserId(ctx); 
-    var result = await BatchRunner.RunBatchAsync(builder.Configuration, userId, applySchedule:false, persist:true); 
-    return Results.Json(new { generated = result.generated, schedulePayload = result.schedulePayload, message = result.message }); 
-});
+scheduleGroup.MapPost("/apply", async (HttpContext ctx) => await HandleApplyScheduleAsync(ctx, builder.Configuration));
 
+// Extracted method for /apply endpoint logic
+private static async Task<IResult> HandleApplyScheduleAsync(HttpContext ctx, IConfiguration configuration)
+{
+    var userId = GetUserId(ctx);
+    var result = await BatchRunner.RunBatchAsync(configuration, userId, applySchedule: false, persist: true);
+    return Results.Json(new { generated = result.generated, schedulePayload = result.schedulePayload, message = result.message });
+}
 // Daikin data group
 var daikinGroup = app.MapGroup("/api/daikin").WithTags("Daikin");
 // Simple proxy for sites (needed by frontend Sites button) – user-scoped
