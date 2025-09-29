@@ -1,70 +1,56 @@
 using System.Text.Json.Nodes;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Configuration;
+using Hangfire;
 
-internal class NordpoolPriceJob : IHostedService, IDisposable
+namespace Prisstyrning.Jobs;
+
+/// <summary>
+/// Hangfire job that fetches Nordpool electricity prices and handles per-user auto-apply schedule
+/// </summary>
+public class NordpoolPriceHangfireJob
 {
     private readonly IConfiguration _cfg;
-    private Timer? _timer;
-    private readonly object _runLock = new();
-    private bool _running;
-    public NordpoolPriceJob(IConfiguration cfg) { _cfg = cfg; }
 
-    public Task StartAsync(CancellationToken cancellationToken)
+    public NordpoolPriceHangfireJob(IConfiguration cfg)
     {
-        // Run immediately
-        _ = Task.Run(RunOnceSafe);
-        var hoursCfg = _cfg["Price:Nordpool:RefreshHours"]; // optional override
-        if (!int.TryParse(hoursCfg, out var hours) || hours <= 0) hours = 6;
-        var period = TimeSpan.FromHours(hours);
-        _timer = new Timer(_ => RunOnceSafe(), null, period, period);
-        Console.WriteLine($"[NordpoolPriceJob] started interval={period}");
-        return Task.CompletedTask;
+        _cfg = cfg;
     }
 
-    private async void RunOnceSafe()
+    [DisableConcurrentExecution(60)] // Prevent overlapping executions with 60s timeout
+    public async Task ExecuteAsync()
     {
-        lock(_runLock)
+        var currency = _cfg["Price:Nordpool:Currency"] ?? "SEK";
+        var page = _cfg["Price:Nordpool:PageId"];
+        var defaultZone = _cfg["Price:Nordpool:DefaultZone"] ?? "SE3";
+        var zones = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { defaultZone };
+        
+        try
         {
-            if (_running) return; _running = true;
-        }
-        try { await RunOnceAsync(); }
-        catch (Exception ex) { Console.WriteLine($"[NordpoolPriceJob] error {ex.Message}"); }
-        finally { lock(_runLock) _running = false; }
-    }
-
-    private async Task RunOnceAsync()
-    {
-    var currency = _cfg["Price:Nordpool:Currency"] ?? "SEK";
-    var page = _cfg["Price:Nordpool:PageId"];
-    var defaultZone = _cfg["Price:Nordpool:DefaultZone"] ?? "SE3";
-    var zones = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { defaultZone };
-    try
-    {
-        // Discover user zones by scanning token subdirs
-        var tokensDirOuter = StoragePaths.GetTokensDir(_cfg);
-        if (Directory.Exists(tokensDirOuter))
-        {
-            foreach (var userDir in Directory.GetDirectories(tokensDirOuter))
+            // Discover user zones by scanning token subdirs
+            var tokensDirOuter = StoragePaths.GetTokensDir(_cfg);
+            if (Directory.Exists(tokensDirOuter))
             {
-                try
+                foreach (var userDir in Directory.GetDirectories(tokensDirOuter))
                 {
-                    var zoneFile = Path.Combine(userDir, "zone.txt");
-                    if (File.Exists(zoneFile))
+                    try
                     {
-                        var z = File.ReadAllText(zoneFile).Trim();
-                        if (UserSettingsService.IsValidZone(z)) zones.Add(z.Trim().ToUpperInvariant());
+                        var zoneFile = Path.Combine(userDir, "zone.txt");
+                        if (File.Exists(zoneFile))
+                        {
+                            var z = File.ReadAllText(zoneFile).Trim();
+                            if (UserSettingsService.IsValidZone(z)) zones.Add(z.Trim().ToUpperInvariant());
+                        }
                     }
+                    catch { }
+                    if (zones.Count > 20) break; // safety cap
                 }
-                catch { }
-                if (zones.Count > 20) break; // safety cap
             }
         }
-    }
-    catch { }
+        catch { }
 
-        Console.WriteLine($"[NordpoolPriceJob] fetching zones={string.Join(',', zones)} currency={currency}");
-    var client = new NordpoolClient(currency, page);
+        Console.WriteLine($"[NordpoolPriceHangfireJob] fetching zones={string.Join(',', zones)} currency={currency}");
+        var client = new NordpoolClient(currency, page);
+        
         foreach (var zone in zones)
         {
             try
@@ -74,6 +60,7 @@ internal class NordpoolPriceJob : IHostedService, IDisposable
                 bool needUpdate = false;
                 JsonArray? today = null;
                 JsonArray? tomorrow = null;
+                
                 if (file != null && File.Exists(file))
                 {
                     var json = File.ReadAllText(file);
@@ -88,13 +75,14 @@ internal class NordpoolPriceJob : IHostedService, IDisposable
                     if (now.Hour >= 13 && (tomorrow == null || tomorrow.Count == 0))
                     {
                         needUpdate = true;
-                        Console.WriteLine($"[NordpoolPriceJob] saknar morgondagens priser för zone={zone}, hämtar...");
+                        Console.WriteLine($"[NordpoolPriceHangfireJob] saknar morgondagens priser för zone={zone}, hämtar...");
                     }
                 }
                 else
                 {
                     needUpdate = true;
                 }
+                
                 if (needUpdate)
                 {
                     var fetched = await client.GetTodayTomorrowAsync(zone);
@@ -102,15 +90,17 @@ internal class NordpoolPriceJob : IHostedService, IDisposable
                     tomorrow = fetched.tomorrow;
                     NordpoolPersistence.Save(zone, today, tomorrow, StoragePaths.GetNordpoolDir(_cfg));
                 }
+                
                 if (string.Equals(zone, defaultZone, StringComparison.OrdinalIgnoreCase))
                 {
                     PriceMemory.Set(today, tomorrow);
                 }
-                Console.WriteLine($"[NordpoolPriceJob] ok zone={zone} today={(today!=null?today.Count:0)} tomorrow={(tomorrow!=null?tomorrow.Count:0)}");
+                
+                Console.WriteLine($"[NordpoolPriceHangfireJob] ok zone={zone} today={(today?.Count ?? 0)} tomorrow={(tomorrow?.Count ?? 0)}");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[NordpoolPriceJob] zone={zone} error={ex.Message}");
+                Console.WriteLine($"[NordpoolPriceHangfireJob] zone={zone} error={ex.Message}");
             }
         }
 
@@ -131,25 +121,21 @@ internal class NordpoolPriceJob : IHostedService, IDisposable
                     if (node == null) continue;
                     bool autoApply = bool.TryParse(node["AutoApplySchedule"]?.ToString(), out var aas) ? aas : false;
                     if (!autoApply) continue;
-                    Console.WriteLine($"[NordpoolPriceJob] Auto-applying schedule for user {userId}");
+                    Console.WriteLine($"[NordpoolPriceHangfireJob] Auto-applying schedule for user {userId}");
                     try
                     {
                         await BatchRunner.RunBatchAsync(_cfg, userId, applySchedule: true, persist: true);
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"[NordpoolPriceJob] user={userId} auto-apply error: {ex.Message}");
+                        Console.WriteLine($"[NordpoolPriceHangfireJob] user={userId} auto-apply error: {ex.Message}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[NordpoolPriceJob] userdir={userDir} error: {ex.Message}");
+                    Console.WriteLine($"[NordpoolPriceHangfireJob] userdir={userDir} error: {ex.Message}");
                 }
             }
         }
     }
-
-    public Task StopAsync(CancellationToken cancellationToken)
-    { _timer?.Change(Timeout.Infinite, 0); return Task.CompletedTask; }
-    public void Dispose() => _timer?.Dispose();
 }
