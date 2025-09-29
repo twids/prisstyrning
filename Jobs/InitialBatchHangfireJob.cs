@@ -5,9 +5,9 @@ using System.ComponentModel;
 namespace Prisstyrning.Jobs;
 
 /// <summary>
-/// Hangfire job for initial batch execution that can be triggered on-demand.
+/// Hangfire job for initial batch execution scheduled to run daily at 14:30.
 /// This job fetches/prerenders data without auto-applying schedules.
-/// Can be triggered manually from Hangfire dashboard or programmatically.
+/// Can also be triggered manually from Hangfire dashboard if needed.
 /// </summary>
 public class InitialBatchHangfireJob
 {
@@ -18,7 +18,7 @@ public class InitialBatchHangfireJob
         _cfg = cfg;
     }
 
-    [DisplayName("Initial Batch - Fetch and Prerender Data")]
+    [DisplayName("Daily Batch - Fetch and Prerender Data (14:30)")]
     public async Task ExecuteAsync()
     {
         try

@@ -71,15 +71,10 @@ RecurringJob.AddOrUpdate<DailyPriceHangfireJob>("daily-price-job",
     job => job.ExecuteAsync(),
     "*/10 * * * *"); // Every 10 minutes
 
-// InitialBatchHangfireJob is available for manual triggering from Hangfire dashboard
-// or can be scheduled as needed instead of running automatically at startup
-
-// API endpoint to trigger initial batch job manually
-app.MapPost("/api/jobs/initial-batch", () =>
-{
-    var jobId = BackgroundJob.Enqueue<InitialBatchHangfireJob>(job => job.ExecuteAsync());
-    return Results.Ok(new { jobId, message = "Initial batch job queued successfully" });
-}).WithTags("Jobs").WithSummary("Trigger initial batch job to fetch and prerender data");
+// Schedule initial batch job to run daily at 14:30
+RecurringJob.AddOrUpdate<InitialBatchHangfireJob>("initial-batch-job",
+    job => job.ExecuteAsync(),
+    "30 14 * * *"); // Daily at 14:30
 
 // User settings endpoints
 // Schedule history endpoint for frontend visualization
