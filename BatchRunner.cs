@@ -23,18 +23,7 @@ internal static class BatchRunner
         if (generated && schedulePayload is JsonObject payload && !string.IsNullOrWhiteSpace(userId) && persist)
         {
             // Fire and forget async save - only when persist is true
-            _ = Task.Run(async () => 
-            {
-                try 
-                {
-                    await ScheduleHistoryPersistence.SaveAsync(userId, payload, DateTimeOffset.UtcNow, 7, StoragePaths.GetBaseDir(config));
-                    Console.WriteLine($"[BatchRunner] Saved schedule history for user {userId}");
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[BatchRunner] Failed to save schedule history for user {userId}: {ex.Message}");
-                }
-            });
+            _ = SaveHistoryAsync(userId, payload, config);
         }
         return (generated, schedulePayload, message);
     }
@@ -243,5 +232,19 @@ internal static class BatchRunner
             message += $" (attempts={applyAttempts}{(lastApplyError!=null?" error='"+lastApplyError+"'":"")})";
     }
     return (schedulePayload != null, schedulePayload, message);
+    }
+
+    // Helper method for fire-and-forget history save with error handling
+    private static async Task SaveHistoryAsync(string userId, JsonObject payload, IConfiguration config)
+    {
+        try 
+        {
+            await ScheduleHistoryPersistence.SaveAsync(userId, payload, DateTimeOffset.UtcNow, 7, StoragePaths.GetBaseDir(config));
+            Console.WriteLine($"[BatchRunner] Saved schedule history for user {userId}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[BatchRunner] Failed to save schedule history for user {userId}: {ex.Message}");
+        }
     }
 }
