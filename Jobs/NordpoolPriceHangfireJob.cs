@@ -124,7 +124,8 @@ public class NordpoolPriceHangfireJob
                     Console.WriteLine($"[NordpoolPriceHangfireJob] Auto-applying schedule for user {userId}");
                     try
                     {
-                        await BatchRunner.RunBatchAsync(_cfg, userId, applySchedule: true, persist: true);
+                        var (generated, schedulePayload, message) = await BatchRunner.RunBatchAsync(_cfg, userId, applySchedule: true, persist: true);
+                        Console.WriteLine($"[NordpoolPriceHangfireJob] user={userId} generated={generated} message={message}");
                     }
                     catch (Exception ex)
                     {

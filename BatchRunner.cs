@@ -23,7 +23,18 @@ internal static class BatchRunner
         if (generated && schedulePayload is JsonObject payload && !string.IsNullOrWhiteSpace(userId) && persist)
         {
             // Fire and forget async save - only when persist is true
-            _ = ScheduleHistoryPersistence.SaveAsync(userId, payload, DateTimeOffset.UtcNow, 7, StoragePaths.GetBaseDir(config));
+            _ = Task.Run(async () => 
+            {
+                try 
+                {
+                    await ScheduleHistoryPersistence.SaveAsync(userId, payload, DateTimeOffset.UtcNow, 7, StoragePaths.GetBaseDir(config));
+                    Console.WriteLine($"[BatchRunner] Saved schedule history for user {userId}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[BatchRunner] Failed to save schedule history for user {userId}: {ex.Message}");
+                }
+            });
         }
         return (generated, schedulePayload, message);
     }

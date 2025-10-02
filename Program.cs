@@ -778,6 +778,21 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IConfiguration cfg, HttpCont
         }
 
         await client.PutSchedulesAsync(gatewayDeviceId, embeddedId, modeUsed, schedulePayloadJson);
+    
+    // Save to schedule history
+    if (schedulePayloadNode is JsonObject scheduleObj && !string.IsNullOrWhiteSpace(userId))
+    {
+        try
+        {
+            await ScheduleHistoryPersistence.SaveAsync(userId, scheduleObj, DateTimeOffset.UtcNow, 7, StoragePaths.GetBaseDir(cfg));
+            Console.WriteLine($"[SchedulePut] Saved schedule to history for user {userId}");
+        }
+        catch (Exception exHist)
+        {
+            Console.WriteLine($"[SchedulePut] Failed to save history for user {userId}: {exHist.Message}");
+        }
+    }
+    
     // Activation step removed: only PUT schedule, do not activate
     return Results.Ok(new { put = true, activateScheduleId, modeUsed, requestedMode });
     }
