@@ -1,45 +1,30 @@
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Configuration;
 using System.Text.Json;
+using Hangfire;
+
+namespace Prisstyrning.Jobs;
 
 /// <summary>
-/// Background service that periodically scans token files and refreshes them proactively
+/// Hangfire job that periodically scans token files and refreshes them proactively
 /// so that normal requests rarely encounter an expired access token.
 /// </summary>
-internal sealed class DaikinTokenRefreshService : BackgroundService
+public class DaikinTokenRefreshHangfireJob
 {
     private readonly IConfiguration _cfg;
-    private readonly TimeSpan _interval;
     private readonly TimeSpan _refreshWindow;
 
-    public DaikinTokenRefreshService(IConfiguration cfg)
+    public DaikinTokenRefreshHangfireJob(IConfiguration cfg)
     {
         _cfg = cfg;
-        // Allow override via config; defaults: check every 5 minutes, refresh if < 5 min remains
-        _interval = TimeSpan.FromMinutes(ParseInt(cfg["Daikin:RefreshScanMinutes"], 5));
+        // Allow override via config; default: refresh if < 5 min remains
         _refreshWindow = TimeSpan.FromMinutes(ParseInt(cfg["Daikin:ProactiveRefreshWindowMinutes"], 5));
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    [DisableConcurrentExecution(30)] // Prevent overlapping executions with 30s timeout
+    public async Task ExecuteAsync()
     {
-        Console.WriteLine($"[DaikinRefreshService] Started interval={_interval} window={_refreshWindow}");
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                await ScanAndRefreshAsync(stoppingToken);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[DaikinRefreshService][Error] {ex.Message}");
-            }
-            try { await Task.Delay(_interval, stoppingToken); } catch { }
-        }
-        Console.WriteLine("[DaikinRefreshService] Stopped");
-    }
-
-    private async Task ScanAndRefreshAsync(CancellationToken ct)
-    {
+        Console.WriteLine($"[DaikinTokenRefreshHangfireJob] Starting scan with window={_refreshWindow}");
+        
         var tokenDir = StoragePaths.GetTokensDir(_cfg);
         if (!Directory.Exists(tokenDir)) return;
 
@@ -51,10 +36,9 @@ internal sealed class DaikinTokenRefreshService : BackgroundService
 
         foreach (var file in files)
         {
-            if (ct.IsCancellationRequested) break;
             try
             {
-                var json = await File.ReadAllTextAsync(file, ct);
+                var json = await File.ReadAllTextAsync(file);
                 using var doc = JsonDocument.Parse(json);
                 if (!doc.RootElement.TryGetProperty("expires_at_utc", out var expProp)) continue;
                 if (!DateTimeOffset.TryParse(expProp.GetString(), out var expiresAt)) continue;
@@ -76,12 +60,12 @@ internal sealed class DaikinTokenRefreshService : BackgroundService
                 var access = await DaikinOAuthService.RefreshIfNeededAsync(_cfg, userId);
                 if (access != null)
                 {
-                    Console.WriteLine($"[DaikinRefreshService] Refreshed token file={file} user={(userId??"(global)")} beforeRemaining={(int)before.TotalSeconds}s");
+                    Console.WriteLine($"[DaikinTokenRefreshHangfireJob] Refreshed token file={file} user={(userId ?? "(global)")} beforeRemaining={(int)before.TotalSeconds}s");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[DaikinRefreshService][Warn] file={file} {ex.Message}");
+                Console.WriteLine($"[DaikinTokenRefreshHangfireJob][Warn] file={file} {ex.Message}");
             }
         }
     }

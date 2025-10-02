@@ -8,6 +8,10 @@ using Microsoft.AspNetCore.WebUtilities;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Linq;
+using Hangfire;
+using Hangfire.InMemory;
+using Hangfire.Dashboard;
+using Prisstyrning.Jobs;
 
 // Constants for maintainability
 const int MaxUserIdLength = 100;
@@ -34,11 +38,44 @@ builder.WebHost.ConfigureKestrel(o =>
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-builder.Services.AddHostedService<DailyPriceJob>();
-builder.Services.AddHostedService<NordpoolPriceJob>();
-builder.Services.AddHostedService<DaikinTokenRefreshService>();
+
+// Configure Hangfire with in-memory storage
+builder.Services.AddHangfire(config => config
+    .UseInMemoryStorage());
+builder.Services.AddHangfireServer();
+
+// Register job classes for dependency injection
+builder.Services.AddTransient<NordpoolPriceHangfireJob>();
+builder.Services.AddTransient<DaikinTokenRefreshHangfireJob>();
+builder.Services.AddTransient<DailyPriceHangfireJob>();
+builder.Services.AddTransient<InitialBatchHangfireJob>();
 
 var app = builder.Build();
+
+// Configure Hangfire middleware
+app.UseHangfireDashboard("/hangfire", new DashboardOptions
+{
+    Authorization = new[] { new AllowAllDashboardAuthorizationFilter() }
+});
+
+// Schedule recurring jobs
+RecurringJob.AddOrUpdate<NordpoolPriceHangfireJob>("nordpool-price-job", 
+    job => job.ExecuteAsync(), 
+    "0 */6 * * *"); // Every 6 hours
+
+RecurringJob.AddOrUpdate<DaikinTokenRefreshHangfireJob>("daikin-token-refresh-job",
+    job => job.ExecuteAsync(),
+    "*/5 * * * *"); // Every 5 minutes
+
+RecurringJob.AddOrUpdate<DailyPriceHangfireJob>("daily-price-job",
+    job => job.ExecuteAsync(),
+    "*/10 * * * *"); // Every 10 minutes
+
+// Schedule initial batch job to run daily at 14:30
+RecurringJob.AddOrUpdate<InitialBatchHangfireJob>("initial-batch-job",
+    job => job.ExecuteAsync(),
+    "30 14 * * *"); // Daily at 14:30
+
 // User settings endpoints
 // Schedule history endpoint for frontend visualization
 app.MapGet("/api/user/schedule-history", (HttpContext ctx) =>
@@ -749,50 +786,10 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IConfiguration cfg, HttpCont
     }
 });
 
-// Kör initial batch (persist + ev. schedule) utan att exponera svar
-// Initial batch now only fetches/prerenders (no auto apply)
-_ = Task.Run(async () => await BatchRunner.RunBatchAsync((IConfiguration)builder.Configuration, null, applySchedule:false, persist:true));
-
 await app.RunAsync();
 
-
-public class DailyPriceJob : IHostedService, IDisposable
+// Allow all users to access Hangfire dashboard - customize for production
+public class AllowAllDashboardAuthorizationFilter : IDashboardAuthorizationFilter
 {
-    private Timer? _timer;
-    private readonly IServiceProvider _sp;
-    private readonly IConfiguration _cfg;
-    public DailyPriceJob(IServiceProvider sp, IConfiguration cfg)
-    { _sp = sp; _cfg = cfg; }
-
-    public Task StartAsync(CancellationToken cancellationToken)
-    {
-        // Kör direkt om ingen fil finns
-        var dir = _cfg["Storage:Directory"] ?? "data";
-        Directory.CreateDirectory(dir);
-        var hasAny = Directory.GetFiles(dir, "prices-*.json").Length > 0;
-    _ = BatchRunner.RunBatchAsync(_cfg, null, applySchedule:false, persist:true);
-        // Start timer (check var 10:e minut om klockan passerat 14:00 och dagens tomorrow saknas)
-        _timer = new Timer(Check, null, TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(10));
-        return Task.CompletedTask;
-    }
-
-    private async void Check(object? state)
-    {
-        try
-        {
-            var now = DateTimeOffset.Now;
-            if (now.Hour == 14 && now.Minute < 10) // första 10 min efter 14
-            {
-                await BatchRunner.RunBatchAsync(_cfg, null, applySchedule:false, persist:true);
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[DailyJob] error: {ex.Message}");
-        }
-    }
-
-    public Task StopAsync(CancellationToken cancellationToken)
-    { _timer?.Change(Timeout.Infinite, 0); return Task.CompletedTask; }
-    public void Dispose() => _timer?.Dispose();
+    public bool Authorize(DashboardContext context) => true;
 }
