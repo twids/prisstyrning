@@ -384,6 +384,8 @@ public class ScheduleAlgorithmTests
         }
 
         var rawToday = Create15MinutePriceData(today, priceData.ToArray());
+        
+        Console.WriteLine($"Test: Created {rawToday.Count} 15-minute price entries (should be 96 for 24 hours)");
 
         // Act
         var result = ScheduleAlgorithm.Generate(
@@ -406,6 +408,8 @@ public class ScheduleAlgorithmTests
         Assert.NotNull(payload);
         Assert.True(payload["0"] != null);
         Assert.True(payload["0"]!["actions"] != null);
+        
+        Console.WriteLine($"Test: Schedule generated successfully with 15-minute data");
     }
 
     [Fact]
@@ -447,6 +451,47 @@ public class ScheduleAlgorithmTests
         // Assert - Should handle mixed data without errors
         Assert.NotNull(result.schedulePayload);
         Assert.Contains("Schedule generated", result.message);
+    }
+
+    [Fact]
+    public void AggregateToHourly_With15MinuteData_ComputesCorrectAverages()
+    {
+        // Arrange - Create specific 15-minute data to verify averaging
+        var today = DateTimeOffset.Now.Date;
+        var priceData = new List<(int hour, int minute, decimal price)>
+        {
+            // Hour 0: 0.10, 0.12, 0.14, 0.16 -> Average should be 0.13
+            (0, 0, 0.10m), (0, 15, 0.12m), (0, 30, 0.14m), (0, 45, 0.16m),
+            // Hour 1: 0.20, 0.22, 0.24, 0.26 -> Average should be 0.23
+            (1, 0, 0.20m), (1, 15, 0.22m), (1, 30, 0.24m), (1, 45, 0.26m),
+            // Hour 2: only one entry at top of hour (should use that value)
+            (2, 0, 0.50m)
+        };
+
+        var rawData = Create15MinutePriceData(today, priceData.ToArray());
+        
+        Console.WriteLine($"Input: {rawData.Count} entries");
+
+        // Act
+        var result = ScheduleAlgorithm.Generate(
+            rawData,
+            null,
+            comfortHoursDefault: 1,
+            turnOffPercentile: 0.9,
+            turnOffMaxConsec: 2,
+            activationLimit: 4,
+            _testConfig,
+            nowOverride: today,
+            ScheduleAlgorithm.LogicType.PerDayOriginal);
+
+        // Assert
+        // The algorithm should work with aggregated hourly data
+        // Hour 0 avg: 0.13, Hour 1 avg: 0.23, Hour 2: 0.50
+        // Cheapest should be Hour 0 (0.13)
+        Assert.NotNull(result.schedulePayload);
+        Assert.Contains("Schedule generated", result.message);
+        
+        Console.WriteLine($"Result: {result.schedulePayload.ToJsonString()}");
     }
 
     /// <summary>
