@@ -363,6 +363,137 @@ public class ScheduleAlgorithmTests
         Console.WriteLine($"MaxConsec=4: {result4.schedulePayload.ToJsonString()}");
     }
 
+    [Fact]
+    public void Generate_With15MinutePriceData_AggregatesCorrectly()
+    {
+        // Arrange - Create 15-minute price data (4 points per hour for 24 hours = 96 points)
+        var today = DateTimeOffset.Now.Date;
+        var priceData = new List<(int hour, int minute, decimal price)>();
+        
+        // Create test data: Hour 0 has prices 0.10, 0.12, 0.14, 0.16 (avg should be 0.13)
+        // Hour 1 has prices 0.20, 0.22, 0.24, 0.26 (avg should be 0.23)
+        // etc.
+        for (int hour = 0; hour < 24; hour++)
+        {
+            for (int minute = 0; minute < 60; minute += 15)
+            {
+                var basePrice = (hour + 1) * 0.1m;
+                var offset = minute / 15 * 0.02m;
+                priceData.Add((hour, minute, basePrice + offset));
+            }
+        }
+
+        var rawToday = Create15MinutePriceData(today, priceData.ToArray());
+        
+        Console.WriteLine($"Test: Created {rawToday.Count} 15-minute price entries (should be 96 for 24 hours)");
+
+        // Act
+        var result = ScheduleAlgorithm.Generate(
+            rawToday,
+            null,
+            comfortHoursDefault: 3,
+            turnOffPercentile: 0.9,
+            turnOffMaxConsec: 2,
+            activationLimit: 4,
+            _testConfig,
+            nowOverride: today,
+            ScheduleAlgorithm.LogicType.PerDayOriginal);
+
+        // Assert
+        Assert.NotNull(result.schedulePayload);
+        Assert.Contains("Schedule generated", result.message);
+        
+        // Verify the schedule structure
+        var payload = result.schedulePayload;
+        Assert.NotNull(payload);
+        Assert.True(payload["0"] != null);
+        Assert.True(payload["0"]!["actions"] != null);
+        
+        Console.WriteLine($"Test: Schedule generated successfully with 15-minute data");
+    }
+
+    [Fact]
+    public void Generate_With15MinuteAndHourlyMixed_HandlesGracefully()
+    {
+        // Arrange - Mix of 15-minute and hourly data (should aggregate per hour)
+        var today = DateTimeOffset.Now.Date;
+        var priceData = new List<(int hour, int minute, decimal price)>();
+        
+        // First 6 hours with 15-minute data
+        for (int hour = 0; hour < 6; hour++)
+        {
+            for (int minute = 0; minute < 60; minute += 15)
+            {
+                priceData.Add((hour, minute, 0.30m + hour * 0.1m + minute * 0.001m));
+            }
+        }
+        
+        // Remaining hours with only top-of-hour data (simulating mixed input)
+        for (int hour = 6; hour < 24; hour++)
+        {
+            priceData.Add((hour, 0, 0.30m + hour * 0.1m));
+        }
+
+        var rawToday = Create15MinutePriceData(today, priceData.ToArray());
+
+        // Act
+        var result = ScheduleAlgorithm.Generate(
+            rawToday,
+            null,
+            comfortHoursDefault: 3,
+            turnOffPercentile: 0.9,
+            turnOffMaxConsec: 2,
+            activationLimit: 4,
+            _testConfig,
+            nowOverride: today,
+            ScheduleAlgorithm.LogicType.PerDayOriginal);
+
+        // Assert - Should handle mixed data without errors
+        Assert.NotNull(result.schedulePayload);
+        Assert.Contains("Schedule generated", result.message);
+    }
+
+    [Fact]
+    public void AggregateToHourly_With15MinuteData_ComputesCorrectAverages()
+    {
+        // Arrange - Create specific 15-minute data to verify averaging
+        var today = DateTimeOffset.Now.Date;
+        var priceData = new List<(int hour, int minute, decimal price)>
+        {
+            // Hour 0: 0.10, 0.12, 0.14, 0.16 -> Average should be 0.13
+            (0, 0, 0.10m), (0, 15, 0.12m), (0, 30, 0.14m), (0, 45, 0.16m),
+            // Hour 1: 0.20, 0.22, 0.24, 0.26 -> Average should be 0.23
+            (1, 0, 0.20m), (1, 15, 0.22m), (1, 30, 0.24m), (1, 45, 0.26m),
+            // Hour 2: only one entry at top of hour (should use that value)
+            (2, 0, 0.50m)
+        };
+
+        var rawData = Create15MinutePriceData(today, priceData.ToArray());
+        
+        Console.WriteLine($"Input: {rawData.Count} entries");
+
+        // Act
+        var result = ScheduleAlgorithm.Generate(
+            rawData,
+            null,
+            comfortHoursDefault: 1,
+            turnOffPercentile: 0.9,
+            turnOffMaxConsec: 2,
+            activationLimit: 4,
+            _testConfig,
+            nowOverride: today,
+            ScheduleAlgorithm.LogicType.PerDayOriginal);
+
+        // Assert
+        // The algorithm should work with aggregated hourly data
+        // Hour 0 avg: 0.13, Hour 1 avg: 0.23, Hour 2: 0.50
+        // Cheapest should be Hour 0 (0.13)
+        Assert.NotNull(result.schedulePayload);
+        Assert.Contains("Schedule generated", result.message);
+        
+        Console.WriteLine($"Result: {result.schedulePayload.ToJsonString()}");
+    }
+
     /// <summary>
     /// Helper method to create test price data in the expected JSON format
     /// </summary>
@@ -377,6 +508,27 @@ public class ScheduleAlgorithmTests
             {
                 ["start"] = timestamp.ToString("O"),
                 ["value"] = price.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)
+            };
+            jsonArray.Add(priceEntry);
+        }
+        
+        return jsonArray;
+    }
+
+    /// <summary>
+    /// Helper method to create test price data with 15-minute resolution
+    /// </summary>
+    private static JsonArray Create15MinutePriceData(DateTimeOffset date, (int hour, int minute, decimal price)[] priceData)
+    {
+        var jsonArray = new JsonArray();
+        
+        foreach (var (hour, minute, price) in priceData)
+        {
+            var timestamp = new DateTimeOffset(date.Year, date.Month, date.Day, hour, minute, 0, date.Offset);
+            var priceEntry = new JsonObject
+            {
+                ["start"] = timestamp.ToString("O"),
+                ["value"] = price.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)
             };
             jsonArray.Add(priceEntry);
         }

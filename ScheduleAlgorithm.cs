@@ -5,6 +5,55 @@ public static class ScheduleAlgorithm
 {
     public enum LogicType { PerDayOriginal, CrossDayCheapestLimited }
 
+    /// <summary>
+    /// Aggregates 15-minute price data into hourly averages.
+    /// If data is already hourly (24 or fewer entries per day), returns it as-is.
+    /// If data has 15-minute resolution (more than 24 entries per day), averages each hour's 4 data points.
+    /// </summary>
+    private static JsonArray AggregateToHourly(JsonArray? rawData)
+    {
+        if (rawData == null || rawData.Count == 0)
+            return new JsonArray();
+
+        var result = new JsonArray();
+        var entriesByHour = new Dictionary<(DateTime date, int hour), List<(DateTimeOffset start, decimal value)>>();
+
+        // Group entries by date and hour
+        foreach (var item in rawData)
+        {
+            if (item == null) continue;
+            var startStr = item["start"]?.ToString();
+            var valueStr = item["value"]?.ToString();
+            if (!DateTimeOffset.TryParse(startStr, out var startTs)) continue;
+            if (!decimal.TryParse(valueStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var val)) continue;
+
+            var key = (startTs.Date, startTs.Hour);
+            if (!entriesByHour.ContainsKey(key))
+                entriesByHour[key] = new List<(DateTimeOffset, decimal)>();
+            entriesByHour[key].Add((startTs, val));
+        }
+
+        // For each hour, calculate average if multiple entries exist
+        foreach (var kvp in entriesByHour.OrderBy(x => x.Key.date).ThenBy(x => x.Key.hour))
+        {
+            var entries = kvp.Value;
+            var avgValue = entries.Average(e => e.value);
+            var firstEntry = entries.OrderBy(e => e.start).First();
+            
+            // Use the hour's start time and averaged value
+            var hourStart = new DateTimeOffset(kvp.Key.date.Year, kvp.Key.date.Month, kvp.Key.date.Day, 
+                                                kvp.Key.hour, 0, 0, firstEntry.start.Offset);
+            
+            result.Add(new JsonObject 
+            { 
+                ["start"] = hourStart.ToString("O"),
+                ["value"] = avgValue.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)
+            });
+        }
+
+        return result;
+    }
+
     public static (JsonNode? schedulePayload, string message) Generate(
         JsonArray? rawToday,
         JsonArray? rawTomorrow,
@@ -16,6 +65,10 @@ public static class ScheduleAlgorithm
         DateTimeOffset? nowOverride = null,
         LogicType logic = LogicType.PerDayOriginal)
     {
+        // Aggregate 15-minute price data to hourly averages if needed
+        rawToday = AggregateToHourly(rawToday);
+        rawTomorrow = AggregateToHourly(rawTomorrow);
+
         var now = nowOverride ?? DateTimeOffset.Now;
         var todayDate = now.Date;
         var tomorrowDate = todayDate.AddDays(1);
