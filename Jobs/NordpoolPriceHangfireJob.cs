@@ -5,7 +5,7 @@ using Hangfire;
 namespace Prisstyrning.Jobs;
 
 /// <summary>
-/// Hangfire job that fetches Nordpool electricity prices and handles per-user auto-apply schedule
+/// Hangfire job that fetches Nordpool electricity prices for all configured zones
 /// </summary>
 public class NordpoolPriceHangfireJob
 {
@@ -101,41 +101,6 @@ public class NordpoolPriceHangfireJob
             catch (Exception ex)
             {
                 Console.WriteLine($"[NordpoolPriceHangfireJob] zone={zone} error={ex.Message}");
-            }
-        }
-
-        // Per-user auto-apply schedule
-        var tokensDirInner = StoragePaths.GetTokensDir(_cfg);
-        if (Directory.Exists(tokensDirInner))
-        {
-            var userDirs = Directory.GetDirectories(tokensDirInner);
-            foreach (var userDir in userDirs)
-            {
-                try
-                {
-                    var userId = Path.GetFileName(userDir);
-                    var userJsonPath = Path.Combine(userDir, "user.json");
-                    if (!File.Exists(userJsonPath)) continue;
-                    var json = await File.ReadAllTextAsync(userJsonPath);
-                    var node = JsonNode.Parse(json) as JsonObject;
-                    if (node == null) continue;
-                    bool autoApply = bool.TryParse(node["AutoApplySchedule"]?.ToString(), out var aas) ? aas : false;
-                    if (!autoApply) continue;
-                    Console.WriteLine($"[NordpoolPriceHangfireJob] Auto-applying schedule for user {userId}");
-                    try
-                    {
-                        var (generated, schedulePayload, message) = await BatchRunner.RunBatchAsync(_cfg, userId, applySchedule: true, persist: true);
-                        Console.WriteLine($"[NordpoolPriceHangfireJob] user={userId} generated={generated} message={message}");
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[NordpoolPriceHangfireJob] user={userId} auto-apply error: {ex.Message}");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[NordpoolPriceHangfireJob] userdir={userDir} error: {ex.Message}");
-                }
             }
         }
     }

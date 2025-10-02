@@ -49,6 +49,7 @@ builder.Services.AddTransient<NordpoolPriceHangfireJob>();
 builder.Services.AddTransient<DaikinTokenRefreshHangfireJob>();
 builder.Services.AddTransient<DailyPriceHangfireJob>();
 builder.Services.AddTransient<InitialBatchHangfireJob>();
+builder.Services.AddTransient<ScheduleUpdateHangfireJob>();
 
 var app = builder.Build();
 
@@ -63,6 +64,10 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 RecurringJob.AddOrUpdate<NordpoolPriceHangfireJob>("nordpool-price-job", 
     job => job.ExecuteAsync(), 
     "0 */6 * * *"); // Every 6 hours
+
+RecurringJob.AddOrUpdate<ScheduleUpdateHangfireJob>("schedule-update-job",
+    job => job.ExecuteAsync(),
+    "15 */6 * * *"); // Every 6 hours at :15 minutes past the hour (15 minutes after price update)
 
 RecurringJob.AddOrUpdate<DaikinTokenRefreshHangfireJob>("daikin-token-refresh-job",
     job => job.ExecuteAsync(),
