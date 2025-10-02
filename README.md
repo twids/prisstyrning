@@ -22,6 +22,7 @@ Double underscore `__` maps to nested sections (standard .NET config convention)
 ### Key settings
 | Section | Key | Environment variable | Description |
 |---------|-----|----------------------|-------------|
+| Hangfire | DashboardPassword | `PRISSTYRNING_Hangfire__DashboardPassword` | Password for Hangfire dashboard (Basic Auth). If not set, dashboard is inaccessible. |
 | Price:Nordpool | DefaultZone | `PRISSTYRNING_Price__Nordpool__DefaultZone` | Default zone (e.g. SE3) |
 | Price:Nordpool | Currency | `PRISSTYRNING_Price__Nordpool__Currency` | Currency (e.g. SEK, EUR) |
 | Price:Nordpool | RefreshHours | `PRISSTYRNING_Price__Nordpool__RefreshHours` | Interval hours for background fetch (default 6) |
@@ -81,6 +82,7 @@ services:
     image: ghcr.io/twids/prisstyrning:latest
     restart: unless-stopped
     environment:
+      PRISSTYRNING_Hangfire__DashboardPassword: CHANGE_ME
       PRISSTYRNING_Price__Nordpool__DefaultZone: SE3
       PRISSTYRNING_Price__Nordpool__Currency: SEK
       PRISSTYRNING_Daikin__ClientId: CHANGE_ME

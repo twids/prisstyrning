@@ -5,6 +5,8 @@ services:
     container_name: prisstyrning
     restart: unless-stopped
     environment:
+      # Hangfire dashboard password (Basic Auth)
+      PRISSTYRNING_Hangfire__DashboardPassword: "CHANGE_ME_HANGFIRE_PASSWORD"
       # Nordpool (default zone & currency)
       PRISSTYRNING_Price__Nordpool__DefaultZone: "SE3"
       PRISSTYRNING_Price__Nordpool__Currency: "SEK"
