@@ -53,9 +53,10 @@ builder.Services.AddTransient<InitialBatchHangfireJob>();
 var app = builder.Build();
 
 // Configure Hangfire middleware
+var hangfirePassword = builder.Configuration["Hangfire:DashboardPassword"];
 app.UseHangfireDashboard("/hangfire", new DashboardOptions
 {
-    Authorization = new[] { new AllowAllDashboardAuthorizationFilter() }
+    Authorization = new[] { new HangfirePasswordAuthorizationFilter(hangfirePassword) }
 });
 
 // Schedule recurring jobs
@@ -788,8 +789,62 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IConfiguration cfg, HttpCont
 
 await app.RunAsync();
 
-// Allow all users to access Hangfire dashboard - customize for production
-public class AllowAllDashboardAuthorizationFilter : IDashboardAuthorizationFilter
+// Hangfire dashboard authorization filter with password protection
+public class HangfirePasswordAuthorizationFilter : IDashboardAuthorizationFilter
 {
-    public bool Authorize(DashboardContext context) => true;
+    private readonly string? _password;
+
+    public HangfirePasswordAuthorizationFilter(string? password)
+    {
+        _password = password;
+    }
+
+    public bool Authorize(DashboardContext context)
+    {
+        var httpContext = context.GetHttpContext();
+
+        // If no password is configured, deny access
+        if (string.IsNullOrWhiteSpace(_password))
+        {
+            httpContext.Response.StatusCode = 401;
+            httpContext.Response.Headers["WWW-Authenticate"] = "Basic realm=\"Hangfire Dashboard\"";
+            return false;
+        }
+
+        // Check for Authorization header with Basic authentication
+        var authHeader = httpContext.Request.Headers["Authorization"].ToString();
+        if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
+        {
+            httpContext.Response.StatusCode = 401;
+            httpContext.Response.Headers["WWW-Authenticate"] = "Basic realm=\"Hangfire Dashboard\"";
+            return false;
+        }
+
+        try
+        {
+            // Decode the Base64-encoded credentials
+            var encodedCredentials = authHeader.Substring(6).Trim();
+            var decodedCredentials = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encodedCredentials));
+            var parts = decodedCredentials.Split(':', 2);
+
+            if (parts.Length == 2)
+            {
+                // Username can be anything, only password is checked
+                var providedPassword = parts[1];
+                if (providedPassword == _password)
+                {
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+            // Invalid authorization header format
+        }
+
+        // Authentication failed
+        httpContext.Response.StatusCode = 401;
+        httpContext.Response.Headers["WWW-Authenticate"] = "Basic realm=\"Hangfire Dashboard\"";
+        return false;
+    }
 }
