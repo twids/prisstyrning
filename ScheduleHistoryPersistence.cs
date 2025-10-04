@@ -25,10 +25,12 @@ internal static class ScheduleHistoryPersistence
             catch { /* ignore corrupt history file; start fresh */ }
         }
         // Add new entry
+        // Create a proper deep clone by serializing and deserializing to avoid "node already has a parent" errors
+        var scheduleClone = JsonNode.Parse(schedulePayload.ToJsonString()) as JsonObject ?? new JsonObject();
         var entry = new JsonObject
         {
             ["timestamp"] = timestamp.ToString("o"),
-            ["schedule"] = schedulePayload.DeepClone() as JsonObject ?? new JsonObject(),
+            ["schedule"] = scheduleClone,
         };
         history.Add(entry);
         // Remove entries older than retentionDays
