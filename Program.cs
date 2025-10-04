@@ -49,6 +49,7 @@ builder.Services.AddTransient<NordpoolPriceHangfireJob>();
 builder.Services.AddTransient<DaikinTokenRefreshHangfireJob>();
 builder.Services.AddTransient<DailyPriceHangfireJob>();
 builder.Services.AddTransient<InitialBatchHangfireJob>();
+builder.Services.AddTransient<ScheduleUpdateHangfireJob>();
 
 var app = builder.Build();
 
@@ -63,6 +64,10 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 RecurringJob.AddOrUpdate<NordpoolPriceHangfireJob>("nordpool-price-job", 
     job => job.ExecuteAsync(), 
     "0 */6 * * *"); // Every 6 hours
+
+RecurringJob.AddOrUpdate<ScheduleUpdateHangfireJob>("schedule-update-job",
+    job => job.ExecuteAsync(),
+    "15 */6 * * *"); // Every 6 hours at :15 minutes past the hour (15 minutes after price update)
 
 RecurringJob.AddOrUpdate<DaikinTokenRefreshHangfireJob>("daikin-token-refresh-job",
     job => job.ExecuteAsync(),
@@ -778,6 +783,21 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IConfiguration cfg, HttpCont
         }
 
         await client.PutSchedulesAsync(gatewayDeviceId, embeddedId, modeUsed, schedulePayloadJson);
+    
+    // Save to schedule history
+    if (schedulePayloadNode is JsonObject scheduleObj && !string.IsNullOrWhiteSpace(userId))
+    {
+        try
+        {
+            await ScheduleHistoryPersistence.SaveAsync(userId, scheduleObj, DateTimeOffset.UtcNow, 7, StoragePaths.GetBaseDir(cfg));
+            Console.WriteLine($"[SchedulePut] Saved schedule to history for user {userId}");
+        }
+        catch (Exception exHist)
+        {
+            Console.WriteLine($"[SchedulePut] Failed to save history for user {userId}: {exHist.Message}");
+        }
+    }
+    
     // Activation step removed: only PUT schedule, do not activate
     return Results.Ok(new { put = true, activateScheduleId, modeUsed, requestedMode });
     }
