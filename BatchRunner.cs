@@ -35,8 +35,8 @@ internal static class BatchRunner
         var accessToken = config["Daikin:AccessToken"] ?? string.Empty;
         if (string.IsNullOrWhiteSpace(accessToken))
         {
-            var (tkn, _) = DaikinOAuthService.TryGetValidAccessToken(config);
-            if (tkn == null) tkn = await DaikinOAuthService.RefreshIfNeededAsync(config);
+            var (tkn, _) = DaikinOAuthService.TryGetValidAccessToken(config, userId);
+            if (tkn == null) tkn = await DaikinOAuthService.RefreshIfNeededAsync(config, userId);
             accessToken = tkn ?? string.Empty;
         }
         var zone = config["Price:Nordpool:DefaultZone"] ?? "SE3";
@@ -207,7 +207,7 @@ internal static class BatchRunner
         if (!scheduleApplied)
         {
             // Try refresh if possible
-            var refreshed = await DaikinOAuthService.RefreshIfNeededAsync(config);
+            var refreshed = await DaikinOAuthService.RefreshIfNeededAsync(config, userId);
             if (!string.IsNullOrEmpty(refreshed) && refreshed != accessToken)
             {
                 applyAttempts++;

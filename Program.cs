@@ -67,7 +67,8 @@ RecurringJob.AddOrUpdate<NordpoolPriceHangfireJob>("nordpool-price-job",
 
 RecurringJob.AddOrUpdate<ScheduleUpdateHangfireJob>("schedule-update-job",
     job => job.ExecuteAsync(),
-    "15 */6 * * *"); // Every 6 hours at :15 minutes past the hour (15 minutes after price update)
+    "5 14 * * *", // Daily at 14:05 (5 minutes after prices are updated)
+    new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm") });
 
 RecurringJob.AddOrUpdate<DaikinTokenRefreshHangfireJob>("daikin-token-refresh-job",
     job => job.ExecuteAsync(),
@@ -80,7 +81,8 @@ RecurringJob.AddOrUpdate<DailyPriceHangfireJob>("daily-price-job",
 // Schedule initial batch job to run daily at 14:30
 RecurringJob.AddOrUpdate<InitialBatchHangfireJob>("initial-batch-job",
     job => job.ExecuteAsync(),
-    "30 14 * * *"); // Daily at 14:30
+    "30 14 * * *", // Daily at 14:30
+    new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm") });
 
 // User settings endpoints
 // Schedule history endpoint for frontend visualization
