@@ -54,7 +54,7 @@ public class ScheduleUpdateHangfireJob
                     continue;
                 }
 
-                bool autoApply = bool.TryParse(node["AutoApplySchedule"]?.ToString(), out var aas) ? aas : false;
+                bool autoApply = bool.TryParse(node["AutoApplySchedule"]?.ToString(), out var parsedAutoApply) ? parsedAutoApply : false;
                 if (!autoApply)
                 {
                     skippedCount++;
