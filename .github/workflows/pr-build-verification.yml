@@ -36,8 +36,58 @@ jobs:
       - name: Build project
         run: dotnet build --configuration Release --no-restore
 
-      - name: Run tests
-        run: dotnet test --configuration Release --no-build --verbosity normal
+      - name: Run unit tests (including schema creation tests)
+        run: dotnet test --configuration Release --no-build --verbosity normal --logger "console;verbosity=detailed"
+      
+      - name: Verify schema creation tests ran
+        run: |
+          echo "🔍 Verifying schema creation tests were executed..."
+          
+          # Run tests again with filter to ensure schema tests exist and pass
+          dotnet test Prisstyrning.Tests/Prisstyrning.Tests.csproj \
+            --configuration Release \
+            --no-build \
+            --filter "FullyQualifiedName~ScheduleAlgorithmTests" \
+            --verbosity normal \
+            --logger "console;verbosity=normal" > /tmp/schema_test_results.txt 2>&1
+          
+          TEST_EXIT_CODE=$?
+          cat /tmp/schema_test_results.txt
+          
+          # Check if tests actually ran
+          if ! grep -q "Total tests:" /tmp/schema_test_results.txt; then
+            echo "❌ ERROR: No test results found. Schema creation tests may not have run."
+            exit 1
+          fi
+          
+          # Extract test counts
+          TOTAL_TESTS=$(grep "Total tests:" /tmp/schema_test_results.txt | grep -oP '\d+' | head -1)
+          PASSED_TESTS=$(grep "Passed:" /tmp/schema_test_results.txt | grep -oP '\d+' | head -1)
+          
+          echo "📊 Schema creation test results:"
+          echo "   Total tests: $TOTAL_TESTS"
+          echo "   Passed: $PASSED_TESTS"
+          
+          # Verify minimum test count (ensures test discovery is working)
+          MIN_EXPECTED_TESTS=15
+          if [ "$TOTAL_TESTS" -lt "$MIN_EXPECTED_TESTS" ]; then
+            echo "❌ ERROR: Expected at least $MIN_EXPECTED_TESTS schema tests, but only found $TOTAL_TESTS"
+            echo "   This may indicate test discovery issues or missing tests."
+            exit 1
+          fi
+          
+          # Verify all tests passed
+          if [ "$TEST_EXIT_CODE" -ne 0 ]; then
+            echo "❌ Schema creation tests FAILED"
+            exit 1
+          fi
+          
+          if [ "$TOTAL_TESTS" != "$PASSED_TESTS" ]; then
+            echo "❌ Not all schema creation tests passed ($PASSED_TESTS/$TOTAL_TESTS)"
+            exit 1
+          fi
+          
+          echo "✅ All $TOTAL_TESTS schema creation tests passed successfully"
       
       - name: Verify build output
         run: |
