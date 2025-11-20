@@ -41,12 +41,16 @@ jobs:
       
       - name: Verify schema creation tests ran
         env:
-          MIN_SCHEMA_TESTS: 15
+          MIN_SCHEMA_TESTS: 15  # Current: 17 tests (13 methods + 4 Theory variations). Minimum ensures test discovery works.
         run: |
           echo "🔍 Verifying schema creation tests were executed..."
           
-          # Run tests again with filter to ensure schema tests exist and pass
-          TEST_PROJECT=$(find . -name "*.Tests.csproj" -type f | head -1)
+          # Find the test project - prefer Prisstyrning.Tests if multiple exist
+          TEST_PROJECT=$(find . -name "Prisstyrning.Tests.csproj" -type f | head -1)
+          if [ -z "$TEST_PROJECT" ]; then
+            # Fallback to any test project
+            TEST_PROJECT=$(find . -name "*.Tests.csproj" -type f | head -1)
+          fi
           if [ -z "$TEST_PROJECT" ]; then
             echo "❌ ERROR: Test project not found"
             exit 1
@@ -68,9 +72,13 @@ jobs:
             exit 1
           fi
           
-          # Extract test counts with defaults
-          TOTAL_TESTS=$(grep "Total tests:" /tmp/schema_test_results.txt | grep -oP '\d+' | head -1 || echo "0")
-          PASSED_TESTS=$(grep "Passed:" /tmp/schema_test_results.txt | grep -oP '\d+' | head -1 || echo "0")
+          # Extract test counts with defaults (portable approach using awk)
+          TOTAL_TESTS=$(grep "Total tests:" /tmp/schema_test_results.txt | awk '{for(i=1;i<=NF;i++){if($i~/^[0-9]+$/){print $i; exit}}}')
+          PASSED_TESTS=$(grep "Passed:" /tmp/schema_test_results.txt | awk '{for(i=1;i<=NF;i++){if($i~/^[0-9]+$/){print $i; exit}}}')
+          
+          # Set defaults if extraction failed
+          TOTAL_TESTS=${TOTAL_TESTS:-0}
+          PASSED_TESTS=${PASSED_TESTS:-0}
           
           echo "📊 Schema creation test results:"
           echo "   Total tests: $TOTAL_TESTS"
