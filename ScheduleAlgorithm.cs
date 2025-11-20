@@ -61,6 +61,7 @@ public static class ScheduleAlgorithm
         double turnOffPercentile,
         int turnOffMaxConsec,
         int activationLimit,
+        int maxComfortGapHours,
         IConfiguration config,
         DateTimeOffset? nowOverride = null,
         LogicType logic = LogicType.PerDayOriginal)
@@ -334,6 +335,88 @@ public static class ScheduleAlgorithm
         }
 
         if (actionsCombined.Count == 0) return (null, "No schedule generated");
+        
+        // Validate MaxComfortGapHours constraint across today and tomorrow
+        if (maxComfortGapHours > 0)
+        {
+            var allComfortHours = new List<DateTimeOffset>();
+            
+            // Collect all comfort hours from both days
+            foreach (var dayName in new[] { "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday" })
+            {
+                if (actionsCombined[dayName] is JsonObject dayObj)
+                {
+                    DateTimeOffset dayDate;
+                    // Determine which date this day represents
+                    if (rawToday != null && rawToday.Count > 0)
+                    {
+                        var firstTodayStr = rawToday[0]?["start"]?.ToString();
+                        if (DateTimeOffset.TryParse(firstTodayStr, out var firstToday))
+                        {
+                            if (firstToday.DayOfWeek.ToString().Equals(dayName, StringComparison.OrdinalIgnoreCase))
+                                dayDate = firstToday.Date;
+                            else if (rawTomorrow != null && rawTomorrow.Count > 0)
+                            {
+                                var firstTomorrowStr = rawTomorrow[0]?["start"]?.ToString();
+                                if (DateTimeOffset.TryParse(firstTomorrowStr, out var firstTomorrow) && 
+                                    firstTomorrow.DayOfWeek.ToString().Equals(dayName, StringComparison.OrdinalIgnoreCase))
+                                    dayDate = firstTomorrow.Date;
+                                else
+                                    continue;
+                            }
+                            else
+                                continue;
+                        }
+                        else
+                            continue;
+                    }
+                    else
+                        continue;
+                    
+                    foreach (var prop in dayObj)
+                    {
+                        if (prop.Value is JsonObject stateObj && 
+                            stateObj["domesticHotWaterTemperature"]?.ToString() == "comfort")
+                        {
+                            if (TimeSpan.TryParse(prop.Key, out var timeOfDay))
+                            {
+                                allComfortHours.Add(dayDate.Add(timeOfDay));
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Sort comfort hours chronologically
+            allComfortHours = allComfortHours.OrderBy(h => h).ToList();
+            
+            // Check gaps between consecutive comfort periods
+            if (allComfortHours.Count > 1)
+            {
+                for (int i = 1; i < allComfortHours.Count; i++)
+                {
+                    var gap = (allComfortHours[i] - allComfortHours[i - 1]).TotalHours;
+                    if (gap > maxComfortGapHours)
+                    {
+                        // Gap exceeds limit - insert additional comfort period at midpoint
+                        var midpoint = allComfortHours[i - 1].AddHours(gap / 2);
+                        var midDayName = midpoint.DayOfWeek.ToString().ToLower();
+                        
+                        if (actionsCombined[midDayName] is JsonObject midDayObj)
+                        {
+                            var midTimeKey = new TimeSpan(midpoint.Hour, 0, 0).ToString();
+                            // Only add if we haven't exceeded activation limits
+                            if (midDayObj.Count < activationLimit)
+                            {
+                                midDayObj[midTimeKey] = new JsonObject { ["domesticHotWaterTemperature"] = "comfort" };
+                                Console.WriteLine($"[Schedule] Added comfort at {midpoint:yyyy-MM-dd HH:mm} to respect MaxComfortGapHours={maxComfortGapHours}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
         string message;
         if (todayHas && tomorrowHas) message = "Schedule generated (today + tomorrow)";
         else if (todayHas) message = "Schedule generated (today)";

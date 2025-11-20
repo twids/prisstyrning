@@ -65,9 +65,14 @@ RecurringJob.AddOrUpdate<NordpoolPriceHangfireJob>("nordpool-price-job",
     job => job.ExecuteAsync(), 
     "0 */6 * * *"); // Every 6 hours
 
-RecurringJob.AddOrUpdate<ScheduleUpdateHangfireJob>("schedule-update-job",
+RecurringJob.AddOrUpdate<ScheduleUpdateHangfireJob>("schedule-update-job-midnight",
     job => job.ExecuteAsync(),
-    "5 14 * * *", // Daily at 14:05 (5 minutes after prices are updated)
+    "5 0 * * *", // Daily at 00:05 (5 minutes after midnight)
+    new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm") });
+
+RecurringJob.AddOrUpdate<ScheduleUpdateHangfireJob>("schedule-update-job-noon",
+    job => job.ExecuteAsync(),
+    "5 12 * * *", // Daily at 12:05 (5 minutes after noon)
     new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm") });
 
 RecurringJob.AddOrUpdate<DaikinTokenRefreshHangfireJob>("daikin-token-refresh-job",
@@ -102,7 +107,7 @@ app.MapGet("/api/user/settings", async (HttpContext ctx) =>
     var cfg = (IConfiguration)builder.Configuration;
     var userId = GetUserId(ctx) ?? "default";
     var path = StoragePaths.GetUserJsonPath(cfg, userId);
-    if (!File.Exists(path)) return Results.Json(new { ComfortHours = 3, TurnOffPercentile = 0.9, TurnOffMaxConsecutive = 2, AutoApplySchedule = false });
+    if (!File.Exists(path)) return Results.Json(new { ComfortHours = 3, TurnOffPercentile = 0.9, TurnOffMaxConsecutive = 2, AutoApplySchedule = false, MaxComfortGapHours = 28 });
     try
     {
         var json = await File.ReadAllTextAsync(path);
@@ -111,12 +116,13 @@ app.MapGet("/api/user/settings", async (HttpContext ctx) =>
         double turnOffPercentile = double.TryParse(node?["TurnOffPercentile"]?.ToString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var tp) ? tp : 0.9;
         int turnOffMaxConsecutive = int.TryParse(node?["TurnOffMaxConsecutive"]?.ToString(), out var tmc) ? tmc : 2;
         bool autoApplySchedule = bool.TryParse(node?["AutoApplySchedule"]?.ToString(), out var aas) ? aas : false;
-        return Results.Json(new { ComfortHours = comfortHours, TurnOffPercentile = turnOffPercentile, TurnOffMaxConsecutive = turnOffMaxConsecutive, AutoApplySchedule = autoApplySchedule });
+        int maxComfortGapHours = int.TryParse(node?["MaxComfortGapHours"]?.ToString(), out var mcgh) ? mcgh : 28;
+        return Results.Json(new { ComfortHours = comfortHours, TurnOffPercentile = turnOffPercentile, TurnOffMaxConsecutive = turnOffMaxConsecutive, AutoApplySchedule = autoApplySchedule, MaxComfortGapHours = maxComfortGapHours });
     }
     catch (Exception ex)
     {
         Console.WriteLine($"[UserSettings] read error: {ex.Message}");
-        return Results.Json(new { ComfortHours = 3, TurnOffPercentile = 0.9, TurnOffMaxConsecutive = 2, AutoApplySchedule = false });
+        return Results.Json(new { ComfortHours = 3, TurnOffPercentile = 0.9, TurnOffMaxConsecutive = 2, AutoApplySchedule = false, MaxComfortGapHours = 28 });
     }
 });
 
@@ -138,6 +144,7 @@ app.MapPost("/api/user/settings", async (HttpContext ctx) =>
     string? rawTp = body["TurnOffPercentile"]?.ToString();
     string? rawTmc = body["TurnOffMaxConsecutive"]?.ToString();
     string? rawAas = body["AutoApplySchedule"]?.ToString();
+    string? rawMcgh = body["MaxComfortGapHours"]?.ToString();
     var errors = new List<string>();
     int comfortHours = 3;
     if (!string.IsNullOrWhiteSpace(rawCh))
@@ -151,11 +158,15 @@ app.MapPost("/api/user/settings", async (HttpContext ctx) =>
     bool autoApplySchedule = false;
     if (!string.IsNullOrWhiteSpace(rawAas))
     { if (!bool.TryParse(rawAas, out autoApplySchedule)) { errors.Add("AutoApplySchedule must be true or false"); autoApplySchedule = false; } }
+    int maxComfortGapHours = 28;
+    if (!string.IsNullOrWhiteSpace(rawMcgh))
+    { if (!int.TryParse(rawMcgh, out maxComfortGapHours) || maxComfortGapHours < 1 || maxComfortGapHours > 72) { errors.Add("MaxComfortGapHours must be an integer between 1 and 72"); maxComfortGapHours = 28; } }
     if (errors.Count > 0) return Results.BadRequest(new { error = "Validation failed", errors });
     node["ComfortHours"] = comfortHours;
     node["TurnOffPercentile"] = turnOffPercentile;
     node["TurnOffMaxConsecutive"] = turnOffMaxConsecutive;
     node["AutoApplySchedule"] = autoApplySchedule;
+    node["MaxComfortGapHours"] = maxComfortGapHours;
     Directory.CreateDirectory(Path.GetDirectoryName(path)!);
     await File.WriteAllTextAsync(path, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
     return Results.Ok(new { saved = true });

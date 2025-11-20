@@ -36,6 +36,7 @@ public class ScheduleAlgorithmTests
             turnOffPercentile: 0.9,
             turnOffMaxConsec: 2,
             activationLimit: 4,
+            maxComfortGapHours: 28,
             _testConfig);
 
         // Assert
@@ -58,6 +59,7 @@ public class ScheduleAlgorithmTests
             turnOffPercentile: 0.9,
             turnOffMaxConsec: 2,
             activationLimit: 4,
+            maxComfortGapHours: 28,
             _testConfig);
 
         // Assert
@@ -87,6 +89,7 @@ public class ScheduleAlgorithmTests
             turnOffPercentile: 0.9,
             turnOffMaxConsec: 2,
             activationLimit: 4,
+            maxComfortGapHours: 28,
             _testConfig,
             nowOverride: today,
             ScheduleAlgorithm.LogicType.PerDayOriginal);
@@ -121,6 +124,7 @@ public class ScheduleAlgorithmTests
             turnOffPercentile: 0.9,
             turnOffMaxConsec: 2,
             activationLimit: 4,
+            maxComfortGapHours: 28,
             _testConfig,
             nowOverride: today,
             ScheduleAlgorithm.LogicType.CrossDayCheapestLimited);
@@ -161,6 +165,7 @@ public class ScheduleAlgorithmTests
             turnOffPercentile: 0.9,
             turnOffMaxConsec: 2,
             activationLimit: 4,
+            maxComfortGapHours: 28,
             _testConfig,
             nowOverride: today,
             ScheduleAlgorithm.LogicType.PerDayOriginal);
@@ -190,6 +195,7 @@ public class ScheduleAlgorithmTests
             turnOffPercentile: 0.5, // Lower percentile = more turn-offs
             turnOffMaxConsec: 2,
             activationLimit: 4,
+            maxComfortGapHours: 28,
             _testConfig,
             nowOverride: today,
             ScheduleAlgorithm.LogicType.PerDayOriginal);
@@ -221,6 +227,7 @@ public class ScheduleAlgorithmTests
             turnOffPercentile: 0.9,
             turnOffMaxConsec: 2,
             activationLimit: 4,
+            maxComfortGapHours: 28,
             _testConfig,
             nowOverride: today,
             ScheduleAlgorithm.LogicType.PerDayOriginal);
@@ -248,6 +255,7 @@ public class ScheduleAlgorithmTests
             turnOffPercentile: 0.9,
             turnOffMaxConsec: 2,
             activationLimit: 4,
+            maxComfortGapHours: 28,
             _testConfig,
             nowOverride: today,
             ScheduleAlgorithm.LogicType.PerDayOriginal);
@@ -281,9 +289,10 @@ public class ScheduleAlgorithmTests
             turnOffPercentile: 0.8,
             turnOffMaxConsec: 1,
             activationLimit: activationLimit,
+            maxComfortGapHours: 28,
             _testConfig,
             nowOverride: today,
-            ScheduleAlgorithm.LogicType.PerDayOriginal);
+            logic: ScheduleAlgorithm.LogicType.PerDayOriginal);
 
         // Assert
         Assert.NotNull(result.schedulePayload);
@@ -310,12 +319,30 @@ public class ScheduleAlgorithmTests
 
         // Act
         var resultPerDay = ScheduleAlgorithm.Generate(
-            rawToday, rawTomorrow, 3, 0.9, 2, 4, _testConfig,
-            nowOverride: today, ScheduleAlgorithm.LogicType.PerDayOriginal);
+            
+            rawToday,
+            rawTomorrow,
+            comfortHoursDefault: 3,
+            turnOffPercentile: 0.9,
+            turnOffMaxConsec: 2,
+            activationLimit: 4,
+            maxComfortGapHours: 28,
+            _testConfig,
+            nowOverride: today,
+            ScheduleAlgorithm.LogicType.PerDayOriginal);
             
         var resultCrossDay = ScheduleAlgorithm.Generate(
-            rawToday, rawTomorrow, 3, 0.9, 2, 4, _testConfig,
-            nowOverride: today, ScheduleAlgorithm.LogicType.CrossDayCheapestLimited);
+            
+            rawToday,
+            rawTomorrow,
+            comfortHoursDefault: 3,
+            turnOffPercentile: 0.9,
+            turnOffMaxConsec: 2,
+            activationLimit: 4,
+            maxComfortGapHours: 28,
+            _testConfig,
+            nowOverride: today,
+            ScheduleAlgorithm.LogicType.CrossDayCheapestLimited);
 
         // Assert
         Assert.NotNull(resultPerDay.schedulePayload);
@@ -344,10 +371,30 @@ public class ScheduleAlgorithmTests
 
         // Act - Test with different turnOffMaxConsec values
         var result2 = ScheduleAlgorithm.Generate(
-            rawToday, null, 3, 0.5, 2, 4, _testConfig, today, ScheduleAlgorithm.LogicType.PerDayOriginal);
+            
+            rawToday,
+            null,
+            comfortHoursDefault: 3,
+            turnOffPercentile: 0.5,
+            turnOffMaxConsec: 2,
+            activationLimit: 4,
+            maxComfortGapHours: 28,
+            _testConfig,
+            nowOverride: today,
+            ScheduleAlgorithm.LogicType.PerDayOriginal);
         
         var result4 = ScheduleAlgorithm.Generate(
-            rawToday, null, 3, 0.5, 4, 4, _testConfig, today, ScheduleAlgorithm.LogicType.PerDayOriginal);
+            
+            rawToday,
+            null,
+            comfortHoursDefault: 3,
+            turnOffPercentile: 0.5,
+            turnOffMaxConsec: 4,
+            activationLimit: 4,
+            maxComfortGapHours: 28,
+            _testConfig,
+            nowOverride: today,
+            ScheduleAlgorithm.LogicType.PerDayOriginal);
 
         // Assert - Both should generate schedules
         Assert.NotNull(result2.schedulePayload);
@@ -395,6 +442,7 @@ public class ScheduleAlgorithmTests
             turnOffPercentile: 0.9,
             turnOffMaxConsec: 2,
             activationLimit: 4,
+            maxComfortGapHours: 28,
             _testConfig,
             nowOverride: today,
             ScheduleAlgorithm.LogicType.PerDayOriginal);
@@ -444,6 +492,7 @@ public class ScheduleAlgorithmTests
             turnOffPercentile: 0.9,
             turnOffMaxConsec: 2,
             activationLimit: 4,
+            maxComfortGapHours: 28,
             _testConfig,
             nowOverride: today,
             ScheduleAlgorithm.LogicType.PerDayOriginal);
@@ -480,6 +529,7 @@ public class ScheduleAlgorithmTests
             turnOffPercentile: 0.9,
             turnOffMaxConsec: 2,
             activationLimit: 4,
+            maxComfortGapHours: 28,
             _testConfig,
             nowOverride: today,
             ScheduleAlgorithm.LogicType.PerDayOriginal);
