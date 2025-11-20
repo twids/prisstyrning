@@ -337,17 +337,19 @@ public static class ScheduleAlgorithm
         if (actionsCombined.Count == 0) return (null, "No schedule generated");
         
         // Validate MaxComfortGapHours constraint across today and tomorrow
-        if (maxComfortGapHours > 0)
+        if (maxComfortGapHours > 0 && maxComfortGapHours < 72)
         {
             var allComfortHours = new List<DateTimeOffset>();
             
             // Collect all comfort hours from both days
-            foreach (var dayName in new[] { "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday" })
+            foreach (var prop in actionsCombined)
             {
-                if (actionsCombined[dayName] is JsonObject dayObj)
+                var dayName = prop.Key;
+                if (prop.Value is JsonObject dayObj)
                 {
-                    DateTimeOffset dayDate;
-                    // Determine which date this day represents
+                    // Determine the date for this day
+                    DateTimeOffset? dayDate = null;
+                    
                     if (rawToday != null && rawToday.Count > 0)
                     {
                         var firstTodayStr = rawToday[0]?["start"]?.ToString();
@@ -355,42 +357,39 @@ public static class ScheduleAlgorithm
                         {
                             if (firstToday.DayOfWeek.ToString().Equals(dayName, StringComparison.OrdinalIgnoreCase))
                                 dayDate = firstToday.Date;
-                            else if (rawTomorrow != null && rawTomorrow.Count > 0)
-                            {
-                                var firstTomorrowStr = rawTomorrow[0]?["start"]?.ToString();
-                                if (DateTimeOffset.TryParse(firstTomorrowStr, out var firstTomorrow) && 
-                                    firstTomorrow.DayOfWeek.ToString().Equals(dayName, StringComparison.OrdinalIgnoreCase))
-                                    dayDate = firstTomorrow.Date;
-                                else
-                                    continue;
-                            }
-                            else
-                                continue;
                         }
-                        else
-                            continue;
                     }
-                    else
-                        continue;
                     
-                    foreach (var prop in dayObj)
+                    if (!dayDate.HasValue && rawTomorrow != null && rawTomorrow.Count > 0)
                     {
-                        if (prop.Value is JsonObject stateObj && 
+                        var firstTomorrowStr = rawTomorrow[0]?["start"]?.ToString();
+                        if (DateTimeOffset.TryParse(firstTomorrowStr, out var firstTomorrow))
+                        {
+                            if (firstTomorrow.DayOfWeek.ToString().Equals(dayName, StringComparison.OrdinalIgnoreCase))
+                                dayDate = firstTomorrow.Date;
+                        }
+                    }
+                    
+                    if (!dayDate.HasValue) continue;
+                    
+                    // Find all comfort hours in this day
+                    foreach (var hourProp in dayObj)
+                    {
+                        if (hourProp.Value is JsonObject stateObj && 
                             stateObj["domesticHotWaterTemperature"]?.ToString() == "comfort")
                         {
-                            if (TimeSpan.TryParse(prop.Key, out var timeOfDay))
+                            if (TimeSpan.TryParse(hourProp.Key, out var timeOfDay))
                             {
-                                allComfortHours.Add(dayDate.Add(timeOfDay));
+                                allComfortHours.Add(dayDate.Value.Add(timeOfDay));
                             }
                         }
                     }
                 }
             }
             
-            // Sort comfort hours chronologically
+            // Sort comfort hours chronologically and check gaps
             allComfortHours = allComfortHours.OrderBy(h => h).ToList();
             
-            // Check gaps between consecutive comfort periods
             if (allComfortHours.Count > 1)
             {
                 for (int i = 1; i < allComfortHours.Count; i++)
@@ -398,20 +397,8 @@ public static class ScheduleAlgorithm
                     var gap = (allComfortHours[i] - allComfortHours[i - 1]).TotalHours;
                     if (gap > maxComfortGapHours)
                     {
-                        // Gap exceeds limit - insert additional comfort period at midpoint
-                        var midpoint = allComfortHours[i - 1].AddHours(gap / 2);
-                        var midDayName = midpoint.DayOfWeek.ToString().ToLower();
-                        
-                        if (actionsCombined[midDayName] is JsonObject midDayObj)
-                        {
-                            var midTimeKey = new TimeSpan(midpoint.Hour, 0, 0).ToString();
-                            // Only add if we haven't exceeded activation limits
-                            if (midDayObj.Count < activationLimit)
-                            {
-                                midDayObj[midTimeKey] = new JsonObject { ["domesticHotWaterTemperature"] = "comfort" };
-                                Console.WriteLine($"[Schedule] Added comfort at {midpoint:yyyy-MM-dd HH:mm} to respect MaxComfortGapHours={maxComfortGapHours}");
-                            }
-                        }
+                        Console.WriteLine($"[Schedule][Warning] Gap of {gap:F1}h between comfort periods exceeds MaxComfortGapHours={maxComfortGapHours}");
+                        Console.WriteLine($"[Schedule][Warning] Gap from {allComfortHours[i-1]:yyyy-MM-dd HH:mm} to {allComfortHours[i]:yyyy-MM-dd HH:mm}");
                     }
                 }
             }

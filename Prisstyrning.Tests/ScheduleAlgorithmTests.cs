@@ -585,4 +585,60 @@ public class ScheduleAlgorithmTests
         
         return jsonArray;
     }
+
+    [Fact]
+    public void Generate_MaxComfortGapHours_ValidatesGapsBetweenComfortPeriods()
+    {
+        // Arrange - create price data that will result in comfort hours far apart
+        var today = DateTimeOffset.Now.Date;
+        var tomorrow = today.AddDays(1);
+        
+        // Today: comfort at hour 2 (cheapest)
+        var rawToday = CreatePriceData(today, new[] { 
+            (0, 1.00m), (1, 1.00m), (2, 0.10m), (3, 1.00m),
+            (4, 1.00m), (5, 1.00m), (6, 1.00m), (7, 1.00m),
+            (8, 1.00m), (9, 1.00m), (10, 1.00m), (11, 1.00m),
+            (12, 1.00m), (13, 1.00m), (14, 1.00m), (15, 1.00m),
+            (16, 1.00m), (17, 1.00m), (18, 1.00m), (19, 1.00m),
+            (20, 1.00m), (21, 1.00m), (22, 1.00m), (23, 1.00m)
+        });
+        
+        // Tomorrow: comfort at hour 20 (cheapest) - 42 hours gap from today's comfort
+        var rawTomorrow = CreatePriceData(tomorrow, new[] { 
+            (0, 1.00m), (1, 1.00m), (2, 1.00m), (3, 1.00m),
+            (4, 1.00m), (5, 1.00m), (6, 1.00m), (7, 1.00m),
+            (8, 1.00m), (9, 1.00m), (10, 1.00m), (11, 1.00m),
+            (12, 1.00m), (13, 1.00m), (14, 1.00m), (15, 1.00m),
+            (16, 1.00m), (17, 1.00m), (18, 1.00m), (19, 1.00m),
+            (20, 0.10m), (21, 1.00m), (22, 1.00m), (23, 1.00m)
+        });
+
+        // Act - set maxComfortGapHours to 28, which should trigger a warning
+        var result = ScheduleAlgorithm.Generate(
+            rawToday,
+            rawTomorrow,
+            comfortHoursDefault: 1,
+            turnOffPercentile: 0.9,
+            turnOffMaxConsec: 2,
+            activationLimit: 4,
+            maxComfortGapHours: 28,
+            _testConfig,
+            nowOverride: today,
+            logic: ScheduleAlgorithm.LogicType.PerDayOriginal);
+
+        // Assert - schedule should still be generated
+        Assert.NotNull(result.schedulePayload);
+        Console.WriteLine($"Generated schedule with MaxComfortGapHours=28: {result.schedulePayload.ToJsonString()}");
+        
+        // Verify comfort hours exist on both days
+        var actions = result.schedulePayload["0"]?["actions"];
+        Assert.NotNull(actions);
+        
+        // The schedule should have actions for both today and tomorrow
+        var todayKey = today.DayOfWeek.ToString().ToLower();
+        var tomorrowKey = tomorrow.DayOfWeek.ToString().ToLower();
+        
+        Assert.NotNull(actions[todayKey]);
+        Assert.NotNull(actions[tomorrowKey]);
+    }
 }

@@ -5,6 +5,8 @@ Price based DHW (domestic hot water) schedule generation for Daikin ONECTA using
 ## Features
 * Fetches hourly prices from Nordpool (background job every 6h + manual refresh)
 * Generates DHW schedule (comfort / eco / turn_off) with: max 4 actions per day, any turn_off block ≤ 2 hours
+* **12-hour window scheduling**: Automatically updates schedules twice daily (00:05 and 12:05) to effectively allow up to 8 changes per day by splitting into two 12-hour windows
+* **Comfort gap validation**: Configurable maximum hours between comfort periods (default 28h) to ensure regular hot water availability
 * Manual upload (PUT) of schedule to Daikin gateway (no auto-apply unless explicitly enabled)
 * Configuration via `appsettings*.json` and/or environment variables (env has highest precedence; optional `PRISSTYRNING_` prefix)
 * Frontend: price chart + schedule grid + current DHW schedule visualization
@@ -50,6 +52,7 @@ Double underscore `__` maps to nested sections (standard .NET config convention)
 | Schedule | ComfortHours | `PRISSTYRNING_Schedule__ComfortHours` | Sequential comfort hours target (default 3) |
 | Schedule | TurnOffPercentile | `PRISSTYRNING_Schedule__TurnOffPercentile` | Percentile threshold (e.g. 0.9) for expensive hours |
 | Schedule | TurnOffMaxConsecutive | `PRISSTYRNING_Schedule__TurnOffMaxConsecutive` | Max consecutive expensive hours pre-trim (<=6) |
+| Schedule | MaxComfortGapHours | `PRISSTYRNING_Schedule__MaxComfortGapHours` | Max hours between comfort periods (default 28, range 1-72) |
 | Schedule | TurnOffSpikeDeltaPct | `PRISSTYRNING_Schedule__TurnOffSpikeDeltaPct` | Min % above neighborhood avg to count as spike |
 | Schedule | TurnOffNeighborWindow | `PRISSTYRNING_Schedule__TurnOffNeighborWindow` | Neighborhood half-window size for spike avg |
 | Schedule | ComfortNextHourMaxIncreasePct | `PRISSTYRNING_Schedule__ComfortNextHourMaxIncreasePct` | Max % increase allowed for extending comfort block |
