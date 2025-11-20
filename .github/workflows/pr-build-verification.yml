@@ -39,6 +39,11 @@ jobs:
       - name: Run unit tests (including schema creation tests)
         run: dotnet test --configuration Release --no-build --verbosity normal --logger "console;verbosity=detailed"
       
+      # This step specifically verifies schema tests ran and passed.
+      # We re-run with a filter (not just parse previous output) to ensure:
+      # 1. Schema tests are discoverable and executable
+      # 2. Test count meets minimum threshold (catches discovery issues)
+      # 3. All schema tests pass (independent validation)
       - name: Verify schema creation tests ran
         env:
           MIN_SCHEMA_TESTS: 15  # Current: 17 tests (13 methods + 4 Theory variations). Minimum ensures test discovery works.
@@ -72,9 +77,9 @@ jobs:
             exit 1
           fi
           
-          # Extract test counts with defaults (portable approach using awk)
-          TOTAL_TESTS=$(grep "Total tests:" /tmp/schema_test_results.txt | awk '{for(i=1;i<=NF;i++){if($i~/^[0-9]+$/){print $i; exit}}}')
-          PASSED_TESTS=$(grep "Passed:" /tmp/schema_test_results.txt | awk '{for(i=1;i<=NF;i++){if($i~/^[0-9]+$/){print $i; exit}}}')
+          # Extract test counts with defaults (portable approach using awk with specific field)
+          TOTAL_TESTS=$(grep "Total tests:" /tmp/schema_test_results.txt | awk '/Total tests:/ {print $3}')
+          PASSED_TESTS=$(grep "Passed:" /tmp/schema_test_results.txt | awk '/Passed:/ {print $2}')
           
           # Set defaults if extraction failed
           TOTAL_TESTS=${TOTAL_TESTS:-0}
@@ -83,6 +88,11 @@ jobs:
           echo "📊 Schema creation test results:"
           echo "   Total tests: $TOTAL_TESTS"
           echo "   Passed: $PASSED_TESTS"
+          
+          # Sanity check: passed tests should not exceed total tests
+          if [ "$PASSED_TESTS" -gt "$TOTAL_TESTS" ] && [ "$TOTAL_TESTS" -gt 0 ]; then
+            echo "⚠️  WARNING: Passed tests ($PASSED_TESTS) > Total tests ($TOTAL_TESTS) - check parsing"
+          fi
           
           # Verify minimum test count (ensures test discovery is working)
           if [ "$TOTAL_TESTS" -lt "$MIN_SCHEMA_TESTS" ]; then
@@ -97,7 +107,7 @@ jobs:
             exit 1
           fi
           
-          if [ "$TOTAL_TESTS" != "$PASSED_TESTS" ]; then
+          if [ "$TOTAL_TESTS" -ne "$PASSED_TESTS" ]; then
             echo "❌ Not all schema creation tests passed ($PASSED_TESTS/$TOTAL_TESTS)"
             exit 1
           fi
