@@ -13,6 +13,14 @@ namespace Prisstyrning.Tests;
 public class SchemaCreationTests
 {
     private readonly IConfiguration _testConfig;
+    
+    // Shared constants for test data
+    private const decimal BasePrice = 0.1m;
+    private const decimal HourlyIncrement = 0.05m;
+    private static readonly HashSet<string> ValidWeekdays = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"
+    };
 
     public SchemaCreationTests()
     {
@@ -83,14 +91,9 @@ public class SchemaCreationTests
         Assert.NotNull(actions);
         
         // Verify all keys are valid weekday names
-        var validWeekdays = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"
-        };
-        
         foreach (var prop in actions!)
         {
-            Assert.True(validWeekdays.Contains(prop.Key.ToLower()),
+            Assert.True(ValidWeekdays.Contains(prop.Key.ToLower()),
                 $"Action period '{prop.Key}' should be a valid weekday name");
         }
     }
@@ -121,15 +124,19 @@ public class SchemaCreationTests
             var dayActions = dayProp.Value as JsonObject;
             Assert.NotNull(dayActions);
             
-            // Each timestamp should be parseable as TimeSpan
+            // Each timestamp should be parseable as TimeSpan with robust error handling
             foreach (var timeProp in dayActions!)
             {
-                Assert.True(TimeSpan.TryParse(timeProp.Key, out var timeSpan),
+                var parseSuccess = TimeSpan.TryParse(timeProp.Key, out var timeSpan);
+                Assert.True(parseSuccess,
                     $"Timestamp '{timeProp.Key}' should be a valid TimeSpan format");
                 
                 // Verify timestamp is within 0-24 hours range
-                Assert.True(timeSpan >= TimeSpan.Zero && timeSpan < TimeSpan.FromHours(24),
-                    $"Timestamp '{timeProp.Key}' should be within 0-24 hour range");
+                if (parseSuccess)
+                {
+                    Assert.True(timeSpan >= TimeSpan.Zero && timeSpan < TimeSpan.FromHours(24),
+                        $"Timestamp '{timeProp.Key}' should be within 0-24 hour range");
+                }
             }
         }
     }
@@ -483,7 +490,7 @@ public class SchemaCreationTests
         // Arrange
         var today = DateTimeOffset.Now.Date;
         var rawToday = CreatePriceData(today, Enumerable.Range(0, 24)
-            .Select(h => (h, (decimal)(0.1 + h * 0.05)))
+            .Select(h => (h, BasePrice + (decimal)h * HourlyIncrement))
             .ToArray());
 
         // Act - with activation limit of 4
@@ -576,7 +583,9 @@ public class SchemaCreationTests
 
         // Assert
         Assert.NotNull(result.schedulePayload);
-        Assert.Contains("cross-day", result.message);
+        // Verify the message indicates cross-day logic was used (checking for substring)
+        Assert.True(result.message.Contains("cross-day", StringComparison.OrdinalIgnoreCase),
+            "Message should indicate cross-day logic was applied");
         
         // Verify schema structure
         var schema = result.schedulePayload as JsonObject;
@@ -592,10 +601,10 @@ public class SchemaCreationTests
         var today = DateTimeOffset.Now.Date;
         var tomorrow = today.AddDays(1);
         var rawToday = CreatePriceData(today, Enumerable.Range(0, 12)
-            .Select(h => (h, (decimal)(0.1 + h * 0.05)))
+            .Select(h => (h, BasePrice + (decimal)h * HourlyIncrement))
             .ToArray());
         var rawTomorrow = CreatePriceData(tomorrow, Enumerable.Range(0, 12)
-            .Select(h => (h, (decimal)(0.1 + h * 0.05)))
+            .Select(h => (h, BasePrice + (decimal)h * HourlyIncrement))
             .ToArray());
 
         // Act
@@ -683,8 +692,10 @@ public class SchemaCreationTests
     [Fact]
     public void Schema_WithBothDays_HasCorrectWeekdayNames()
     {
-        // Arrange
-        var today = new DateTimeOffset(2025, 1, 6, 0, 0, 0, TimeSpan.Zero); // Monday
+        // Arrange - Use relative date to get Monday of current week
+        var now = DateTimeOffset.Now.Date;
+        var daysToMonday = ((int)now.DayOfWeek - (int)DayOfWeek.Monday + 7) % 7;
+        var today = now.AddDays(-daysToMonday); // Monday
         var tomorrow = today.AddDays(1); // Tuesday
         
         var rawToday = CreatePriceData(today, new[] {
@@ -738,7 +749,18 @@ public class SchemaCreationTests
             var dayActions = dayProp.Value as JsonObject;
             if (dayActions != null && dayActions.Count > 1)
             {
-                var times = dayActions.Select(kv => TimeSpan.Parse(kv.Key)).ToList();
+                var times = new List<TimeSpan>();
+                foreach (var kv in dayActions)
+                {
+                    if (TimeSpan.TryParse(kv.Key, out var ts))
+                    {
+                        times.Add(ts);
+                    }
+                    else
+                    {
+                        Assert.Fail($"Failed to parse timestamp '{kv.Key}' as TimeSpan");
+                    }
+                }
                 var sortedTimes = times.OrderBy(t => t).ToList();
                 
                 Assert.True(times.SequenceEqual(sortedTimes),
