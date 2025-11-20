@@ -40,11 +40,19 @@ jobs:
         run: dotnet test --configuration Release --no-build --verbosity normal --logger "console;verbosity=detailed"
       
       - name: Verify schema creation tests ran
+        env:
+          MIN_SCHEMA_TESTS: 15
         run: |
           echo "🔍 Verifying schema creation tests were executed..."
           
           # Run tests again with filter to ensure schema tests exist and pass
-          dotnet test Prisstyrning.Tests/Prisstyrning.Tests.csproj \
+          TEST_PROJECT=$(find . -name "*.Tests.csproj" -type f | head -1)
+          if [ -z "$TEST_PROJECT" ]; then
+            echo "❌ ERROR: Test project not found"
+            exit 1
+          fi
+          
+          dotnet test "$TEST_PROJECT" \
             --configuration Release \
             --no-build \
             --filter "FullyQualifiedName~ScheduleAlgorithmTests" \
@@ -60,18 +68,17 @@ jobs:
             exit 1
           fi
           
-          # Extract test counts
-          TOTAL_TESTS=$(grep "Total tests:" /tmp/schema_test_results.txt | grep -oP '\d+' | head -1)
-          PASSED_TESTS=$(grep "Passed:" /tmp/schema_test_results.txt | grep -oP '\d+' | head -1)
+          # Extract test counts with defaults
+          TOTAL_TESTS=$(grep "Total tests:" /tmp/schema_test_results.txt | grep -oP '\d+' | head -1 || echo "0")
+          PASSED_TESTS=$(grep "Passed:" /tmp/schema_test_results.txt | grep -oP '\d+' | head -1 || echo "0")
           
           echo "📊 Schema creation test results:"
           echo "   Total tests: $TOTAL_TESTS"
           echo "   Passed: $PASSED_TESTS"
           
           # Verify minimum test count (ensures test discovery is working)
-          MIN_EXPECTED_TESTS=15
-          if [ "$TOTAL_TESTS" -lt "$MIN_EXPECTED_TESTS" ]; then
-            echo "❌ ERROR: Expected at least $MIN_EXPECTED_TESTS schema tests, but only found $TOTAL_TESTS"
+          if [ "$TOTAL_TESTS" -lt "$MIN_SCHEMA_TESTS" ]; then
+            echo "❌ ERROR: Expected at least $MIN_SCHEMA_TESTS schema tests, but only found $TOTAL_TESTS"
             echo "   This may indicate test discovery issues or missing tests."
             exit 1
           fi
