@@ -641,4 +641,66 @@ public class ScheduleAlgorithmTests
         Assert.NotNull(actions[todayKey]);
         Assert.NotNull(actions[tomorrowKey]);
     }
+
+    [Fact]
+    public void Generate_FiltersPastHours_ToRespectDaikinLimit()
+    {
+        // Arrange - create a scenario at 10:00 where we have actions before and after current time
+        var now = new DateTimeOffset(2025, 1, 15, 10, 0, 0, TimeSpan.Zero); // 10:00 on a Wednesday
+        var today = now.Date;
+        
+        // Create price data where we'll have comfort hours at 2, 8, 16 
+        // At 10:00, hours 2 and 8 are past, only 16 remains
+        var rawToday = CreatePriceData(today, new[] { 
+            (0, 1.00m), (1, 1.00m), (2, 0.10m), (3, 1.00m),
+            (4, 1.00m), (5, 1.00m), (6, 1.00m), (7, 1.00m),
+            (8, 0.15m), (9, 1.00m), (10, 1.00m), (11, 1.00m),
+            (12, 1.00m), (13, 1.00m), (14, 1.00m), (15, 1.00m),
+            (16, 0.20m), (17, 1.00m), (18, 1.50m), (19, 1.50m),
+            (20, 1.50m), (21, 1.00m), (22, 1.00m), (23, 1.00m)
+        });
+
+        // Act - Generate schedule at 10:00
+        var result = ScheduleAlgorithm.Generate(
+            rawToday,
+            null,
+            comfortHoursDefault: 3,
+            turnOffPercentile: 0.9,
+            turnOffMaxConsec: 2,
+            activationLimit: 4,
+            maxComfortGapHours: 28,
+            _testConfig,
+            nowOverride: now,
+            logic: ScheduleAlgorithm.LogicType.PerDayOriginal);
+
+        // Assert
+        Assert.NotNull(result.schedulePayload);
+        
+        var actions = result.schedulePayload["0"]?["actions"];
+        Assert.NotNull(actions);
+        
+        var wednesdayActions = actions["wednesday"] as JsonObject;
+        
+        // Either wednesday has actions (filtered for future only) or it was removed entirely
+        if (wednesdayActions != null)
+        {
+            // Verify that only hours >= 10 are included
+            foreach (var prop in wednesdayActions)
+            {
+                Assert.True(TimeSpan.TryParse(prop.Key, out var timeOfDay));
+                Assert.True(timeOfDay.Hours >= 10, $"Hour {timeOfDay.Hours} should be >= 10 (current hour)");
+            }
+            
+            // Verify we don't exceed 4 changes
+            Assert.True(wednesdayActions.Count <= 4, $"Should have at most 4 changes, but has {wednesdayActions.Count}");
+            
+            Console.WriteLine($"Past hours filtered successfully. Remaining actions: {wednesdayActions.Count}");
+        }
+        else
+        {
+            Console.WriteLine("Wednesday actions removed entirely (all were in the past)");
+        }
+        
+        Console.WriteLine($"Schedule: {result.schedulePayload.ToJsonString()}");
+    }
 }

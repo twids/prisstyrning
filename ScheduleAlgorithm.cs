@@ -404,6 +404,83 @@ public static class ScheduleAlgorithm
             }
         }
         
+        // Filter out past hours from today's schedule to ensure we never send more than 4 changes to Daikin
+        // This is critical because Daikin only allows 4 changes per day
+        var currentHour = now.Hour;
+        var todayDayName = now.Date.DayOfWeek.ToString().ToLower();
+        
+        if (actionsCombined[todayDayName] is JsonObject todayActions)
+        {
+            var futureActions = new JsonObject();
+            int changeCount = 0;
+            
+            foreach (var prop in todayActions)
+            {
+                if (TimeSpan.TryParse(prop.Key, out var timeOfDay))
+                {
+                    // Only include hours that are in the future or current hour
+                    if (timeOfDay.Hours >= currentHour)
+                    {
+                        futureActions[prop.Key] = prop.Value?.DeepClone();
+                        changeCount++;
+                    }
+                }
+            }
+            
+            // If we have more than 4 changes, keep only the first 4
+            if (changeCount > activationLimit)
+            {
+                var sortedKeys = futureActions.Select(p => p.Key)
+                    .Where(k => TimeSpan.TryParse(k, out _))
+                    .OrderBy(k => TimeSpan.Parse(k))
+                    .Take(activationLimit)
+                    .ToList();
+                
+                var limitedActions = new JsonObject();
+                foreach (var key in sortedKeys)
+                {
+                    limitedActions[key] = futureActions[key]?.DeepClone();
+                }
+                
+                actionsCombined[todayDayName] = limitedActions;
+                Console.WriteLine($"[Schedule] Limited today's actions from {changeCount} to {activationLimit} to respect Daikin's 4-change limit");
+            }
+            else if (futureActions.Count > 0)
+            {
+                actionsCombined[todayDayName] = futureActions;
+                Console.WriteLine($"[Schedule] Filtered out past hours, keeping {futureActions.Count} future actions for today");
+            }
+            else
+            {
+                // No future actions for today, remove the day entirely
+                actionsCombined.Remove(todayDayName);
+                Console.WriteLine($"[Schedule] No future actions remaining for today, removed from schedule");
+            }
+        }
+        
+        // Ensure tomorrow's schedule also doesn't exceed 4 changes
+        var tomorrowDayName = now.Date.AddDays(1).DayOfWeek.ToString().ToLower();
+        if (actionsCombined[tomorrowDayName] is JsonObject tomorrowActions)
+        {
+            if (tomorrowActions.Count > activationLimit)
+            {
+                var sortedKeys = tomorrowActions.Select(p => p.Key)
+                    .Where(k => TimeSpan.TryParse(k, out _))
+                    .OrderBy(k => TimeSpan.Parse(k))
+                    .Take(activationLimit)
+                    .ToList();
+                
+                var limitedActions = new JsonObject();
+                foreach (var key in sortedKeys)
+                {
+                    limitedActions[key] = tomorrowActions[key]?.DeepClone();
+                }
+                
+                actionsCombined[tomorrowDayName] = limitedActions;
+                Console.WriteLine($"[Schedule] Limited tomorrow's actions from {tomorrowActions.Count} to {activationLimit} to respect Daikin's 4-change limit");
+            }
+        }
+        
         string message;
         if (todayHas && tomorrowHas) message = "Schedule generated (today + tomorrow)";
         else if (todayHas) message = "Schedule generated (today)";
