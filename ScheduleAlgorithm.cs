@@ -409,41 +409,41 @@ public static class ScheduleAlgorithm
         var currentHour = now.Hour;
         var todayDayName = now.Date.DayOfWeek.ToString().ToLower();
         
+        // Helper method to limit schedule actions to activationLimit
+        JsonObject LimitScheduleActions(JsonObject actions, int limit, string dayLabel)
+        {
+            var sortedEntries = actions
+                .Select(p => new { Key = p.Key, Value = p.Value, Time = TimeSpan.TryParse(p.Key, out var t) ? t : (TimeSpan?)null })
+                .Where(x => x.Time.HasValue)
+                .OrderBy(x => x.Time!.Value)
+                .Take(limit)
+                .ToList();
+            
+            var limitedActions = new JsonObject();
+            foreach (var entry in sortedEntries)
+            {
+                limitedActions[entry.Key] = entry.Value?.DeepClone();
+            }
+            
+            Console.WriteLine($"[Schedule] Limited {dayLabel} actions from {actions.Count} to {limitedActions.Count}");
+            return limitedActions;
+        }
+        
         if (actionsCombined[todayDayName] is JsonObject todayActions)
         {
             var futureActions = new JsonObject();
-            int changeCount = 0;
             
             foreach (var prop in todayActions)
             {
-                if (TimeSpan.TryParse(prop.Key, out var timeOfDay))
+                if (TimeSpan.TryParse(prop.Key, out var timeOfDay) && timeOfDay.Hours >= currentHour)
                 {
-                    // Only include hours that are in the future or current hour
-                    if (timeOfDay.Hours >= currentHour)
-                    {
-                        futureActions[prop.Key] = prop.Value?.DeepClone();
-                        changeCount++;
-                    }
+                    futureActions[prop.Key] = prop.Value?.DeepClone();
                 }
             }
             
-            // If we have more than 4 changes, keep only the first 4
-            if (changeCount > activationLimit)
+            if (futureActions.Count > activationLimit)
             {
-                var sortedKeys = futureActions.Select(p => p.Key)
-                    .Where(k => TimeSpan.TryParse(k, out _))
-                    .OrderBy(k => TimeSpan.Parse(k))
-                    .Take(activationLimit)
-                    .ToList();
-                
-                var limitedActions = new JsonObject();
-                foreach (var key in sortedKeys)
-                {
-                    limitedActions[key] = futureActions[key]?.DeepClone();
-                }
-                
-                actionsCombined[todayDayName] = limitedActions;
-                Console.WriteLine($"[Schedule] Limited today's actions from {changeCount} to {activationLimit} to respect Daikin's 4-change limit");
+                actionsCombined[todayDayName] = LimitScheduleActions(futureActions, activationLimit, "today's");
             }
             else if (futureActions.Count > 0)
             {
@@ -460,25 +460,9 @@ public static class ScheduleAlgorithm
         
         // Ensure tomorrow's schedule also doesn't exceed 4 changes
         var tomorrowDayName = now.Date.AddDays(1).DayOfWeek.ToString().ToLower();
-        if (actionsCombined[tomorrowDayName] is JsonObject tomorrowActions)
+        if (actionsCombined[tomorrowDayName] is JsonObject tomorrowActions && tomorrowActions.Count > activationLimit)
         {
-            if (tomorrowActions.Count > activationLimit)
-            {
-                var sortedKeys = tomorrowActions.Select(p => p.Key)
-                    .Where(k => TimeSpan.TryParse(k, out _))
-                    .OrderBy(k => TimeSpan.Parse(k))
-                    .Take(activationLimit)
-                    .ToList();
-                
-                var limitedActions = new JsonObject();
-                foreach (var key in sortedKeys)
-                {
-                    limitedActions[key] = tomorrowActions[key]?.DeepClone();
-                }
-                
-                actionsCombined[tomorrowDayName] = limitedActions;
-                Console.WriteLine($"[Schedule] Limited tomorrow's actions from {tomorrowActions.Count} to {activationLimit} to respect Daikin's 4-change limit");
-            }
+            actionsCombined[tomorrowDayName] = LimitScheduleActions(tomorrowActions, activationLimit, "tomorrow's");
         }
         
         string message;
