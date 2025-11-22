@@ -59,7 +59,7 @@ internal static class BatchRunner
     string? dynamicSchedulePayload = null;
         var (schedulePayload, scheduleMessage) = ScheduleAlgorithm.Generate(rawToday, rawTomorrow,
             settings.ComfortHours, settings.TurnOffPercentile, settings.TurnOffMaxConsecutive, activationLimit,
-            config, null, ScheduleAlgorithm.LogicType.PerDayOriginal);
+            settings.MaxComfortGapHours, config, null, ScheduleAlgorithm.LogicType.PerDayOriginal);
         if (schedulePayload != null)
         {
             dynamicSchedulePayload = schedulePayload.ToJsonString(new JsonSerializerOptions { WriteIndented = true });

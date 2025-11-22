@@ -61,6 +61,7 @@ public static class ScheduleAlgorithm
         double turnOffPercentile,
         int turnOffMaxConsec,
         int activationLimit,
+        int maxComfortGapHours,
         IConfiguration config,
         DateTimeOffset? nowOverride = null,
         LogicType logic = LogicType.PerDayOriginal)
@@ -334,6 +335,136 @@ public static class ScheduleAlgorithm
         }
 
         if (actionsCombined.Count == 0) return (null, "No schedule generated");
+        
+        // Validate MaxComfortGapHours constraint across today and tomorrow
+        if (maxComfortGapHours > 0 && maxComfortGapHours < 72)
+        {
+            var allComfortHours = new List<DateTimeOffset>();
+            
+            // Collect all comfort hours from both days
+            foreach (var prop in actionsCombined)
+            {
+                var dayName = prop.Key;
+                if (prop.Value is JsonObject dayObj)
+                {
+                    // Determine the date for this day
+                    DateTimeOffset? dayDate = null;
+                    
+                    if (rawToday != null && rawToday.Count > 0)
+                    {
+                        var firstTodayStr = rawToday[0]?["start"]?.ToString();
+                        if (DateTimeOffset.TryParse(firstTodayStr, out var firstToday))
+                        {
+                            if (firstToday.DayOfWeek.ToString().Equals(dayName, StringComparison.OrdinalIgnoreCase))
+                                dayDate = firstToday.Date;
+                        }
+                    }
+                    
+                    if (!dayDate.HasValue && rawTomorrow != null && rawTomorrow.Count > 0)
+                    {
+                        var firstTomorrowStr = rawTomorrow[0]?["start"]?.ToString();
+                        if (DateTimeOffset.TryParse(firstTomorrowStr, out var firstTomorrow))
+                        {
+                            if (firstTomorrow.DayOfWeek.ToString().Equals(dayName, StringComparison.OrdinalIgnoreCase))
+                                dayDate = firstTomorrow.Date;
+                        }
+                    }
+                    
+                    if (!dayDate.HasValue) continue;
+                    
+                    // Find all comfort hours in this day
+                    foreach (var hourProp in dayObj)
+                    {
+                        if (hourProp.Value is JsonObject stateObj && 
+                            stateObj["domesticHotWaterTemperature"]?.ToString() == "comfort")
+                        {
+                            if (TimeSpan.TryParse(hourProp.Key, out var timeOfDay))
+                            {
+                                allComfortHours.Add(dayDate.Value.Add(timeOfDay));
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Sort comfort hours chronologically and check gaps
+            allComfortHours = allComfortHours.OrderBy(h => h).ToList();
+            
+            if (allComfortHours.Count > 1)
+            {
+                for (int i = 1; i < allComfortHours.Count; i++)
+                {
+                    var gap = (allComfortHours[i] - allComfortHours[i - 1]).TotalHours;
+                    if (gap > maxComfortGapHours)
+                    {
+                        Console.WriteLine($"[Schedule][Warning] Gap of {gap:F1}h between comfort periods exceeds MaxComfortGapHours={maxComfortGapHours}");
+                        Console.WriteLine($"[Schedule][Warning] Gap from {allComfortHours[i-1]:yyyy-MM-dd HH:mm} to {allComfortHours[i]:yyyy-MM-dd HH:mm}");
+                    }
+                }
+            }
+        }
+        
+        // Filter out past hours from today's schedule to ensure we never send more than 4 changes to Daikin
+        // This is critical because Daikin only allows 4 changes per day
+        var currentHour = now.Hour;
+        var todayDayName = now.Date.DayOfWeek.ToString().ToLower();
+        
+        // Helper method to limit schedule actions to activationLimit
+        JsonObject LimitScheduleActions(JsonObject actions, int limit, string dayLabel)
+        {
+            var sortedEntries = actions
+                .Select(p => new { Key = p.Key, Value = p.Value, Time = TimeSpan.TryParse(p.Key, out var t) ? t : (TimeSpan?)null })
+                .Where(x => x.Time.HasValue)
+                .OrderBy(x => x.Time!.Value)
+                .Take(limit)
+                .ToList();
+            
+            var limitedActions = new JsonObject();
+            foreach (var entry in sortedEntries)
+            {
+                limitedActions[entry.Key] = entry.Value?.DeepClone();
+            }
+            
+            Console.WriteLine($"[Schedule] Limited {dayLabel} actions from {actions.Count} to {limitedActions.Count}");
+            return limitedActions;
+        }
+        
+        if (actionsCombined[todayDayName] is JsonObject todayActions)
+        {
+            var futureActions = new JsonObject();
+            
+            foreach (var prop in todayActions)
+            {
+                if (TimeSpan.TryParse(prop.Key, out var timeOfDay) && timeOfDay.Hours >= currentHour)
+                {
+                    futureActions[prop.Key] = prop.Value?.DeepClone();
+                }
+            }
+            
+            if (futureActions.Count > activationLimit)
+            {
+                actionsCombined[todayDayName] = LimitScheduleActions(futureActions, activationLimit, "today's");
+            }
+            else if (futureActions.Count > 0)
+            {
+                actionsCombined[todayDayName] = futureActions;
+                Console.WriteLine($"[Schedule] Filtered out past hours, keeping {futureActions.Count} future actions for today");
+            }
+            else
+            {
+                // No future actions for today, remove the day entirely
+                actionsCombined.Remove(todayDayName);
+                Console.WriteLine($"[Schedule] No future actions remaining for today, removed from schedule");
+            }
+        }
+        
+        // Ensure tomorrow's schedule also doesn't exceed 4 changes
+        var tomorrowDayName = now.Date.AddDays(1).DayOfWeek.ToString().ToLower();
+        if (actionsCombined[tomorrowDayName] is JsonObject tomorrowActions && tomorrowActions.Count > activationLimit)
+        {
+            actionsCombined[tomorrowDayName] = LimitScheduleActions(tomorrowActions, activationLimit, "tomorrow's");
+        }
+        
         string message;
         if (todayHas && tomorrowHas) message = "Schedule generated (today + tomorrow)";
         else if (todayHas) message = "Schedule generated (today)";
