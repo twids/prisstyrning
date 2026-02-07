@@ -20,11 +20,26 @@ internal static class BatchRunner
         var settings = UserSettingsService.LoadScheduleSettings(config, userId);
         int activationLimit = int.TryParse(config["Schedule:MaxActivationsPerDay"], out var mpd) ? Math.Clamp(mpd, 1, 24) : 4;
         var (generated, schedulePayload, message) = await RunBatchInternalAsync(config, settings, activationLimit, applySchedule, persist, userId);
-        if (generated && schedulePayload is JsonObject payload && !string.IsNullOrWhiteSpace(userId) && persist)
+        
+        // Enhanced logging for history persistence
+        if (!persist)
+        {
+            Console.WriteLine($"[BatchRunner] History NOT saved: persist=false (userId={userId ?? "null"})");
+        }
+        else if (string.IsNullOrWhiteSpace(userId))
+        {
+            Console.WriteLine($"[BatchRunner] History NOT saved: userId is null or empty");
+        }
+        else if (!generated || schedulePayload == null)
+        {
+            Console.WriteLine($"[BatchRunner] History NOT saved: schedule generation failed (userId={userId})");
+        }
+        else if (generated && schedulePayload is JsonObject payload)
         {
             // Fire and forget async save - only when persist is true
             _ = SaveHistoryAsync(userId, payload, config);
         }
+        
         return (generated, schedulePayload, message);
     }
 

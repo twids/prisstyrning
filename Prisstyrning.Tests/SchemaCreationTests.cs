@@ -50,7 +50,7 @@ public class SchemaCreationTests
 
         // Act
         var result = ScheduleAlgorithm.Generate(
-            rawToday, null, 3, 0.9, 2, 4, _testConfig,
+            rawToday, null, 3, 0.9, 2, 4, 28, _testConfig,
             nowOverride: today, ScheduleAlgorithm.LogicType.PerDayOriginal);
 
         // Assert
@@ -82,7 +82,7 @@ public class SchemaCreationTests
 
         // Act
         var result = ScheduleAlgorithm.Generate(
-            rawToday, rawTomorrow, 2, 0.9, 2, 4, _testConfig,
+            rawToday, rawTomorrow, 2, 0.9, 2, 4, 28, _testConfig,
             nowOverride: today, ScheduleAlgorithm.LogicType.PerDayOriginal);
 
         // Assert
@@ -110,7 +110,7 @@ public class SchemaCreationTests
 
         // Act
         var result = ScheduleAlgorithm.Generate(
-            rawToday, null, 3, 0.9, 2, 4, _testConfig,
+            rawToday, null, 3, 0.9, 2, 4, 28, _testConfig,
             nowOverride: today, ScheduleAlgorithm.LogicType.PerDayOriginal);
 
         // Assert
@@ -153,7 +153,7 @@ public class SchemaCreationTests
 
         // Act
         var result = ScheduleAlgorithm.Generate(
-            rawToday, null, 2, 0.8, 2, 4, _testConfig,
+            rawToday, null, 2, 0.8, 2, 4, 28, _testConfig,
             nowOverride: today, ScheduleAlgorithm.LogicType.PerDayOriginal);
 
         // Assert
@@ -196,7 +196,7 @@ public class SchemaCreationTests
 
         // Act
         var result = ScheduleAlgorithm.Generate(
-            rawToday, null, 2, 0.9, 2, 4, _testConfig,
+            rawToday, null, 2, 0.9, 2, 4, 28, _testConfig,
             nowOverride: today, ScheduleAlgorithm.LogicType.PerDayOriginal);
 
         // Assert
@@ -222,11 +222,11 @@ public class SchemaCreationTests
 
         // Act - generate twice with same input
         var result1 = ScheduleAlgorithm.Generate(
-            rawToday, null, 2, 0.9, 2, 4, _testConfig,
+            rawToday, null, 2, 0.9, 2, 4, 28, _testConfig,
             nowOverride: today, ScheduleAlgorithm.LogicType.PerDayOriginal);
         
         var result2 = ScheduleAlgorithm.Generate(
-            rawToday, null, 2, 0.9, 2, 4, _testConfig,
+            rawToday, null, 2, 0.9, 2, 4, 28, _testConfig,
             nowOverride: today, ScheduleAlgorithm.LogicType.PerDayOriginal);
 
         // Assert - should produce identical JSON
@@ -252,7 +252,7 @@ public class SchemaCreationTests
             (0, 0.30m), (1, 0.25m), (2, 0.20m)
         });
         var result = ScheduleAlgorithm.Generate(
-            rawToday, null, 2, 0.9, 2, 4, _testConfig,
+            rawToday, null, 2, 0.9, 2, 4, 28, _testConfig,
             nowOverride: today, ScheduleAlgorithm.LogicType.PerDayOriginal);
         
         Assert.NotNull(result.schedulePayload);
@@ -289,7 +289,7 @@ public class SchemaCreationTests
             (0, 0.30m), (1, 0.25m), (2, 0.20m)
         });
         var result = ScheduleAlgorithm.Generate(
-            rawToday, null, 2, 0.9, 2, 4, _testConfig,
+            rawToday, null, 2, 0.9, 2, 4, 28, _testConfig,
             nowOverride: today, ScheduleAlgorithm.LogicType.PerDayOriginal);
         
         Assert.NotNull(result.schedulePayload);
@@ -326,7 +326,7 @@ public class SchemaCreationTests
             (0, 0.30m), (1, 0.25m), (2, 0.20m)
         });
         var result = ScheduleAlgorithm.Generate(
-            rawToday, null, 2, 0.9, 2, 4, _testConfig,
+            rawToday, null, 2, 0.9, 2, 4, 28, _testConfig,
             nowOverride: today, ScheduleAlgorithm.LogicType.PerDayOriginal);
         
         Assert.NotNull(result.schedulePayload);
@@ -364,7 +364,7 @@ public class SchemaCreationTests
             (4, 0.40m), (5, 0.50m)
         });
         var result = ScheduleAlgorithm.Generate(
-            rawToday, null, 3, 0.9, 2, 4, _testConfig,
+            rawToday, null, 3, 0.9, 2, 4, 28, _testConfig,
             nowOverride: today, ScheduleAlgorithm.LogicType.PerDayOriginal);
         
         Assert.NotNull(result.schedulePayload);
@@ -403,7 +403,7 @@ public class SchemaCreationTests
             (0, 0.35m), (1, 0.30m), (2, 0.25m)
         });
         var result = ScheduleAlgorithm.Generate(
-            rawToday, rawTomorrow, 2, 0.9, 2, 4, _testConfig,
+            rawToday, rawTomorrow, 2, 0.9, 2, 4, 28, _testConfig,
             nowOverride: today, ScheduleAlgorithm.LogicType.PerDayOriginal);
         
         Assert.NotNull(result.schedulePayload);
@@ -495,7 +495,7 @@ public class SchemaCreationTests
 
         // Act - with activation limit of 4
         var result = ScheduleAlgorithm.Generate(
-            rawToday, null, 3, 0.8, 2, 4, _testConfig,
+            rawToday, null, 3, 0.8, 2, 4, 28, _testConfig,
             nowOverride: today, ScheduleAlgorithm.LogicType.PerDayOriginal);
 
         // Assert
@@ -578,7 +578,7 @@ public class SchemaCreationTests
 
         // Act
         var result = ScheduleAlgorithm.Generate(
-            rawToday, rawTomorrow, 3, 0.9, 2, 4, _testConfig,
+            rawToday, rawTomorrow, 3, 0.9, 2, 4, 28, _testConfig,
             nowOverride: today, ScheduleAlgorithm.LogicType.CrossDayCheapestLimited);
 
         // Assert
@@ -609,7 +609,7 @@ public class SchemaCreationTests
 
         // Act
         var result = ScheduleAlgorithm.Generate(
-            rawToday, rawTomorrow, 3, 0.9, 2, 3, _testConfig,
+            rawToday, rawTomorrow, 3, 0.9, 2, 3, 28, _testConfig,
             nowOverride: today, ScheduleAlgorithm.LogicType.CrossDayCheapestLimited);
 
         // Assert
@@ -649,7 +649,7 @@ public class SchemaCreationTests
 
         // Act
         var result = ScheduleAlgorithm.Generate(
-            rawToday, null, 3, 0.9, 2, 4, _testConfig,
+            rawToday, null, 3, 0.9, 2, 4, 28, _testConfig,
             nowOverride: today, ScheduleAlgorithm.LogicType.PerDayOriginal);
 
         // Assert - comprehensive validation
@@ -707,7 +707,7 @@ public class SchemaCreationTests
 
         // Act
         var result = ScheduleAlgorithm.Generate(
-            rawToday, rawTomorrow, 2, 0.9, 2, 4, _testConfig,
+            rawToday, rawTomorrow, 2, 0.9, 2, 4, 28, _testConfig,
             nowOverride: today, ScheduleAlgorithm.LogicType.PerDayOriginal);
 
         // Assert
@@ -735,7 +735,7 @@ public class SchemaCreationTests
 
         // Act
         var result = ScheduleAlgorithm.Generate(
-            rawToday, null, 2, 0.8, 2, 4, _testConfig,
+            rawToday, null, 2, 0.8, 2, 4, 28, _testConfig,
             nowOverride: today, ScheduleAlgorithm.LogicType.PerDayOriginal);
 
         // Assert
@@ -796,3 +796,4 @@ public class SchemaCreationTests
 
     #endregion
 }
+

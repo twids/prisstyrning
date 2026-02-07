@@ -480,7 +480,7 @@ scheduleGroup.MapGet("/preview", async (HttpContext c) => {
     var userId = GetUserId(c);
     
     // Use BatchRunner to generate schedule and handle history persistence
-    var (generated, schedulePayload, message) = await BatchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: false);
+    var (generated, schedulePayload, message) = await BatchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: true);
     var zone = UserSettingsService.GetUserZone(cfg, userId);
     
     return Results.Json(new { schedulePayload, generated, message, zone });

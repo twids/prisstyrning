@@ -6,9 +6,9 @@ internal static class UserSettingsService
 
     public static UserScheduleSettings LoadScheduleSettings(IConfiguration cfg, string? userId)
     {
-        // Defaults from global config
+        // Defaults from global config - use InvariantCulture for parsing
         int comfortHours = int.TryParse(cfg["Schedule:ComfortHours"], out var ch) ? Math.Clamp(ch, 1, 12) : 3;
-        double turnOffPercentile = double.TryParse(cfg["Schedule:TurnOffPercentile"], out var tp) ? Math.Clamp(tp, 0.5, 0.99) : 0.9;
+        double turnOffPercentile = double.TryParse(cfg["Schedule:TurnOffPercentile"], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var tp) ? Math.Clamp(tp, 0.5, 0.99) : 0.9;
         int turnOffMaxConsecutive = int.TryParse(cfg["Schedule:TurnOffMaxConsecutive"], out var mc) ? Math.Clamp(mc, 1, 6) : 2;
         int maxComfortGapHours = int.TryParse(cfg["Schedule:MaxComfortGapHours"], out var mcgh) ? Math.Clamp(mcgh, 1, 72) : 28;
 
@@ -24,7 +24,7 @@ internal static class UserSettingsService
                     if (node != null)
                     {
                         if (int.TryParse(node["ComfortHours"]?.ToString(), out var chUser)) comfortHours = Math.Clamp(chUser, 1, 12);
-                        if (double.TryParse(node["TurnOffPercentile"]?.ToString(), out var tpUser)) turnOffPercentile = Math.Clamp(tpUser, 0.5, 0.99);
+                        if (double.TryParse(node["TurnOffPercentile"]?.ToString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var tpUser)) turnOffPercentile = Math.Clamp(tpUser, 0.5, 0.99);
                         if (int.TryParse(node["TurnOffMaxConsecutive"]?.ToString(), out var mcUser)) turnOffMaxConsecutive = Math.Clamp(mcUser, 1, 6);
                         if (int.TryParse(node["MaxComfortGapHours"]?.ToString(), out var mcghUser)) maxComfortGapHours = Math.Clamp(mcghUser, 1, 72);
                     }
@@ -65,15 +65,15 @@ internal static class UserSettingsService
         return GetUserZoneAsync(cfg, userId).GetAwaiter().GetResult();
     }
 
-    public static async Task<bool> SetUserZoneAsync(string? userId, string zone)
+    public static async Task<bool> SetUserZoneAsync(IConfiguration? cfg, string? userId, string zone)
     {
         if (string.IsNullOrWhiteSpace(userId)) return false;
         if (!IsValidZone(zone)) return false;
         try
         {
-            var dir = StoragePaths.GetUserTokenDir(userId, null); // null config uses default
+            var dir = StoragePaths.GetUserTokenDir(userId, cfg);
             Directory.CreateDirectory(dir);
-            var path = StoragePaths.GetUserJsonPath(null, userId); // null config uses default
+            var path = StoragePaths.GetUserJsonPath(cfg, userId);
             System.Text.Json.Nodes.JsonObject node;
             if (File.Exists(path))
             {
@@ -92,9 +92,9 @@ internal static class UserSettingsService
         }
     }
 
-    public static bool SetUserZone(string? userId, string zone)
+    public static bool SetUserZone(IConfiguration? cfg, string? userId, string zone)
     {
-        return SetUserZoneAsync(userId, zone).GetAwaiter().GetResult();
+        return SetUserZoneAsync(cfg, userId, zone).GetAwaiter().GetResult();
     }
 
     public static bool IsValidZone(string? z)
