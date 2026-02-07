@@ -125,15 +125,15 @@ public static class TestDataFactory
 
     /// <summary>
     /// Creates a user settings object for user.json files.
+    /// Issue #53: Removed turnOffMaxConsecutive - no longer needed with 2-mode system.
     /// </summary>
     public static JsonObject CreateUserSettings(int comfortHours = 3, double turnOffPercentile = 0.9, 
-        int turnOffMaxConsecutive = 2, int maxComfortGapHours = 28, string zone = "SE3")
+        int maxComfortGapHours = 28, string zone = "SE3")
     {
         return new JsonObject
         {
             ["ComfortHours"] = comfortHours,
             ["TurnOffPercentile"] = turnOffPercentile,
-            ["TurnOffMaxConsecutive"] = turnOffMaxConsecutive,
             ["MaxComfortGapHours"] = maxComfortGapHours,
             ["zone"] = zone
         };

@@ -34,7 +34,6 @@ public class ScheduleAlgorithmTests
             rawTomorrow, 
             comfortHoursDefault: 3,
             turnOffPercentile: 0.9,
-            turnOffMaxConsec: 2,
             activationLimit: 4,
             maxComfortGapHours: 28,
             _testConfig);
@@ -57,7 +56,6 @@ public class ScheduleAlgorithmTests
             rawTomorrow, 
             comfortHoursDefault: 3,
             turnOffPercentile: 0.9,
-            turnOffMaxConsec: 2,
             activationLimit: 4,
             maxComfortGapHours: 28,
             _testConfig);
@@ -87,7 +85,6 @@ public class ScheduleAlgorithmTests
             null,
             comfortHoursDefault: 3,
             turnOffPercentile: 0.9,
-            turnOffMaxConsec: 2,
             activationLimit: 4,
             maxComfortGapHours: 28,
             _testConfig,
@@ -122,7 +119,6 @@ public class ScheduleAlgorithmTests
             null,
             comfortHoursDefault: 3,
             turnOffPercentile: 0.9,
-            turnOffMaxConsec: 2,
             activationLimit: 4,
             maxComfortGapHours: 28,
             _testConfig,
@@ -163,7 +159,6 @@ public class ScheduleAlgorithmTests
             rawTomorrow,
             comfortHoursDefault: 3,
             turnOffPercentile: 0.9,
-            turnOffMaxConsec: 2,
             activationLimit: 4,
             maxComfortGapHours: 28,
             _testConfig,
@@ -193,7 +188,6 @@ public class ScheduleAlgorithmTests
             null,
             comfortHoursDefault: 2,
             turnOffPercentile: 0.5, // Lower percentile = more turn-offs
-            turnOffMaxConsec: 2,
             activationLimit: 4,
             maxComfortGapHours: 28,
             _testConfig,
@@ -225,7 +219,6 @@ public class ScheduleAlgorithmTests
             null,
             comfortHoursDefault: 3,
             turnOffPercentile: 0.9,
-            turnOffMaxConsec: 2,
             activationLimit: 4,
             maxComfortGapHours: 28,
             _testConfig,
@@ -253,7 +246,6 @@ public class ScheduleAlgorithmTests
             null,
             comfortHoursDefault: 2,
             turnOffPercentile: 0.9,
-            turnOffMaxConsec: 2,
             activationLimit: 4,
             maxComfortGapHours: 28,
             _testConfig,
@@ -287,7 +279,6 @@ public class ScheduleAlgorithmTests
             null,
             comfortHoursDefault: 3,
             turnOffPercentile: 0.8,
-            turnOffMaxConsec: 1,
             activationLimit: activationLimit,
             maxComfortGapHours: 28,
             _testConfig,
@@ -324,7 +315,6 @@ public class ScheduleAlgorithmTests
             rawTomorrow,
             comfortHoursDefault: 3,
             turnOffPercentile: 0.9,
-            turnOffMaxConsec: 2,
             activationLimit: 4,
             maxComfortGapHours: 28,
             _testConfig,
@@ -337,7 +327,6 @@ public class ScheduleAlgorithmTests
             rawTomorrow,
             comfortHoursDefault: 3,
             turnOffPercentile: 0.9,
-            turnOffMaxConsec: 2,
             activationLimit: 4,
             maxComfortGapHours: 28,
             _testConfig,
@@ -376,7 +365,6 @@ public class ScheduleAlgorithmTests
             null,
             comfortHoursDefault: 3,
             turnOffPercentile: 0.5,
-            turnOffMaxConsec: 2,
             activationLimit: 4,
             maxComfortGapHours: 28,
             _testConfig,
@@ -389,7 +377,6 @@ public class ScheduleAlgorithmTests
             null,
             comfortHoursDefault: 3,
             turnOffPercentile: 0.5,
-            turnOffMaxConsec: 4,
             activationLimit: 4,
             maxComfortGapHours: 28,
             _testConfig,
@@ -440,7 +427,6 @@ public class ScheduleAlgorithmTests
             null,
             comfortHoursDefault: 3,
             turnOffPercentile: 0.9,
-            turnOffMaxConsec: 2,
             activationLimit: 4,
             maxComfortGapHours: 28,
             _testConfig,
@@ -490,7 +476,6 @@ public class ScheduleAlgorithmTests
             null,
             comfortHoursDefault: 3,
             turnOffPercentile: 0.9,
-            turnOffMaxConsec: 2,
             activationLimit: 4,
             maxComfortGapHours: 28,
             _testConfig,
@@ -527,7 +512,6 @@ public class ScheduleAlgorithmTests
             null,
             comfortHoursDefault: 1,
             turnOffPercentile: 0.9,
-            turnOffMaxConsec: 2,
             activationLimit: 4,
             maxComfortGapHours: 28,
             _testConfig,
@@ -619,7 +603,6 @@ public class ScheduleAlgorithmTests
             rawTomorrow,
             comfortHoursDefault: 1,
             turnOffPercentile: 0.9,
-            turnOffMaxConsec: 2,
             activationLimit: 4,
             maxComfortGapHours: 28,
             _testConfig,
@@ -666,7 +649,6 @@ public class ScheduleAlgorithmTests
             null,
             comfortHoursDefault: 3,
             turnOffPercentile: 0.9,
-            turnOffMaxConsec: 2,
             activationLimit: 4,
             maxComfortGapHours: 28,
             _testConfig,
@@ -701,6 +683,75 @@ public class ScheduleAlgorithmTests
             Console.WriteLine("Wednesday actions removed entirely (all were in the past)");
         }
         
+        Console.WriteLine($"Schedule: {result.schedulePayload.ToJsonString()}");
+    }
+
+    [Fact]
+    public void Generate_OnlyUsesComfortAndTurnOffModes_NoEcoMode()
+    {
+        // Arrange - Test that ECO mode is completely removed from schedule generation
+        var today = DateTimeOffset.Now.Date;
+        var tomorrow = today.AddDays(1);
+        
+        var rawToday = CreatePriceData(today, new[] { 
+            (0, 0.50m), (1, 0.40m), (2, 0.30m), (3, 0.45m),
+            (4, 0.35m), (5, 0.60m), (6, 0.80m), (7, 1.20m),
+            (8, 1.50m), (9, 1.30m), (10, 1.10m), (11, 0.90m),
+            (12, 0.85m), (13, 0.75m), (14, 0.70m), (15, 0.65m),
+            (16, 0.95m), (17, 1.40m), (18, 1.80m), (19, 1.60m),
+            (20, 1.20m), (21, 0.90m), (22, 0.70m), (23, 0.50m)
+        });
+        
+        var rawTomorrow = CreatePriceData(tomorrow, new[] { 
+            (0, 0.60m), (1, 0.50m), (2, 0.40m), (3, 0.55m),
+            (4, 0.45m), (5, 0.70m), (6, 0.90m), (7, 1.30m),
+            (8, 1.60m), (9, 1.40m), (10, 1.20m), (11, 1.00m),
+            (12, 0.95m), (13, 0.85m), (14, 0.80m), (15, 0.75m),
+            (16, 1.05m), (17, 1.50m), (18, 1.90m), (19, 1.70m),
+            (20, 1.30m), (21, 1.00m), (22, 0.80m), (23, 0.60m)
+        });
+
+        // Act
+        var result = ScheduleAlgorithm.Generate(
+            rawToday,
+            rawTomorrow,
+            comfortHoursDefault: 3,
+            turnOffPercentile: 0.9,
+            activationLimit: 4,
+            maxComfortGapHours: 28,
+            _testConfig,
+            nowOverride: today,
+            ScheduleAlgorithm.LogicType.PerDayOriginal);
+
+        // Assert
+        Assert.NotNull(result.schedulePayload);
+        
+        var payload = result.schedulePayload;
+        var actions = payload["0"]?["actions"] as JsonObject;
+        Assert.NotNull(actions);
+        
+        // Verify: Only comfort and turn_off modes are used, NO eco mode
+        foreach (var dayProp in actions)
+        {
+            var dayActions = dayProp.Value as JsonObject;
+            Assert.NotNull(dayActions);
+            
+            foreach (var hourProp in dayActions)
+            {
+                var stateObj = hourProp.Value as JsonObject;
+                Assert.NotNull(stateObj);
+                
+                var mode = stateObj["domesticHotWaterTemperature"]?.ToString();
+                Assert.NotNull(mode);
+                
+                // Critical assertion: Only comfort or turn_off allowed
+                Assert.True(
+                    mode == "comfort" || mode == "turn_off",
+                    $"Invalid mode '{mode}' found at {dayProp.Key}:{hourProp.Key}. Only 'comfort' and 'turn_off' are allowed (ECO mode removed per Issue #53)");
+            }
+        }
+        
+        Console.WriteLine("✓ Verified: Schedule uses only comfort/turn_off modes (ECO removed)");
         Console.WriteLine($"Schedule: {result.schedulePayload.ToJsonString()}");
     }
 }

@@ -59,7 +59,6 @@ public static class ScheduleAlgorithm
         JsonArray? rawTomorrow,
         int comfortHoursDefault,
         double turnOffPercentile,
-        int turnOffMaxConsec,
         int activationLimit,
         int maxComfortGapHours,
         IConfiguration config,
@@ -241,60 +240,158 @@ public static class ScheduleAlgorithm
                     turnOffHours.Add(h);
                 }
             }
-            int earliestHour = entries.Min(e => e.start.Hour); int latestHour = entries.Max(e => e.start.Hour);
-            int? comfortStart = null; int? comfortEnd = null; if (cheapestHours.Count > 0) { comfortStart = cheapestHours.Min(); comfortEnd = cheapestHours.Max(); }
+            // Issue #53: ECO mode removed - only use COMFORT and TURN_OFF
+            // Logic: comfort hours get "comfort", spike hours get "turn_off", rest default to "turn_off"
+            
+            int earliestHour = entries.Min(e => e.start.Hour); 
+            int latestHour = entries.Max(e => e.start.Hour);
+            int? comfortStart = null; 
+            int? comfortEnd = null; 
+            if (cheapestHours.Count > 0) 
+            { 
+                comfortStart = cheapestHours.Min(); 
+                comfortEnd = cheapestHours.Max(); 
+            }
+            
+            // Collect turn_off blocks (expensive spikes)
             (int start, int end)? turnOffBlock = null;
             if (turnOffHours.Count > 0)
             {
-                var ordered = turnOffHours.OrderBy(h => h).ToList(); int blockStart = ordered[0]; int prev = ordered[0]; var blocks = new List<(int start, int end)>();
-                for (int i = 1; i < ordered.Count; i++) { var h = ordered[i]; if (h == prev + 1) { prev = h; continue; } blocks.Add((blockStart, prev)); blockStart = h; prev = h; }
-                blocks.Add((blockStart, prev)); if (comfortStart.HasValue && comfortEnd.HasValue) blocks = blocks.Where(b => b.end < comfortStart.Value || b.start > comfortEnd.Value).ToList();
-                blocks = blocks.Select(b => (b.start, end: Math.Min(b.end, b.start + turnOffMaxConsec - 1))).ToList();
-                if (blocks.Count > 0) { decimal Score((int start, int end) b) { decimal sum = 0; int c = 0; for (int h = b.start; h <= b.end; h++) { if (entries.Any(e => e.start.Hour == h)) { sum += entries.First(e => e.start.Hour == h).value; c++; } } return c == 0 ? 0 : sum / c; } turnOffBlock = blocks.OrderByDescending(b => Score(b)).First(); }
-            }
-            bool turnOffBeforeComfort = false; if (turnOffBlock.HasValue && comfortStart.HasValue) turnOffBeforeComfort = turnOffBlock.Value.end < comfortStart.Value;
-            var segments = new List<(int hour, string state)>(); void AddSegment(int hour, string state) { if (!segments.Any(s => s.hour == hour)) segments.Add((hour, state)); else { for (int i = 0; i < segments.Count; i++) { if (segments[i].hour == hour) { segments[i] = (hour, state); break; } } } }
-            AddSegment(earliestHour, "eco"); if (turnOffBlock.HasValue && turnOffBeforeComfort) { AddSegment(turnOffBlock.Value.start, "turn_off"); int reActHour = turnOffBlock.Value.end + 1; if (!comfortStart.HasValue || reActHour < comfortStart.Value) AddSegment(reActHour, "eco"); }
-            if (comfortStart.HasValue) { AddSegment(comfortStart.Value, "comfort"); if (comfortEnd.HasValue && comfortEnd.Value < latestHour) AddSegment(comfortEnd.Value + 1, "eco"); }
-            if (turnOffBlock.HasValue && !turnOffBeforeComfort) { AddSegment(turnOffBlock.Value.start, "turn_off"); int reActHour = turnOffBlock.Value.end + 1; if (reActHour <= latestHour) AddSegment(reActHour, "eco"); }
-            segments = segments.OrderBy(s => s.hour).ToList();
-            for (int i = 0; i < segments.Count; i++)
-            {
-                if (segments[i].state == "turn_off")
-                {
-                    int start = segments[i].hour;
-                    int next = (i + 1 < segments.Count) ? segments[i + 1].hour : latestHour + 1;
-                    if (next - start > 2)
-                    {
-                        int react = start + 2;
-                        if (segments.Count < activationLimit)
-                            segments.Insert(i + 1, (react, "eco"));
-                        else
-                        {
-                            segments.RemoveAt(i); i--; continue;
-                        }
-                    }
+                var ordered = turnOffHours.OrderBy(h => h).ToList(); 
+                int blockStart = ordered[0]; 
+                int prev = ordered[0]; 
+                var blocks = new List<(int start, int end)>();
+                
+                for (int i = 1; i < ordered.Count; i++) 
+                { 
+                    var h = ordered[i]; 
+                    if (h == prev + 1) 
+                    { 
+                        prev = h; 
+                        continue; 
+                    } 
+                    blocks.Add((blockStart, prev)); 
+                    blockStart = h; 
+                    prev = h; 
+                }
+                blocks.Add((blockStart, prev)); 
+                
+                // Filter out blocks that overlap with comfort hours
+                if (comfortStart.HasValue && comfortEnd.HasValue) 
+                    blocks = blocks.Where(b => b.end < comfortStart.Value || b.start > comfortEnd.Value).ToList();
+                
+                // No need to limit turn_off block length with 2-mode system - use all detected spikes
+                
+                // Pick the most expensive block
+                if (blocks.Count > 0) 
+                { 
+                    decimal Score((int start, int end) b) 
+                    { 
+                        decimal sum = 0; 
+                        int c = 0; 
+                        for (int h = b.start; h <= b.end; h++) 
+                        { 
+                            if (entries.Any(e => e.start.Hour == h)) 
+                            { 
+                                sum += entries.First(e => e.start.Hour == h).value; 
+                                c++; 
+                            } 
+                        } 
+                        return c == 0 ? 0 : sum / c; 
+                    } 
+                    turnOffBlock = blocks.OrderByDescending(b => Score(b)).First(); 
                 }
             }
-            if (segments.Count > activationLimit)
-            {
-                int idxPost = -1; if (comfortEnd.HasValue) idxPost = segments.FindIndex(s => s.state == "eco" && s.hour == comfortEnd.Value + 1);
-                if (idxPost > 0 && segments.Count > activationLimit) segments.RemoveAt(idxPost);
+            
+            // Build segments with only comfort/turn_off modes (NO ECO)
+            bool turnOffBeforeComfort = false; 
+            if (turnOffBlock.HasValue && comfortStart.HasValue) 
+                turnOffBeforeComfort = turnOffBlock.Value.end < comfortStart.Value;
+            
+            var segments = new List<(int hour, string state)>(); 
+            void AddSegment(int hour, string state) 
+            { 
+                if (!segments.Any(s => s.hour == hour)) 
+                    segments.Add((hour, state)); 
+                else 
+                { 
+                    for (int i = 0; i < segments.Count; i++) 
+                    { 
+                        if (segments[i].hour == hour) 
+                        { 
+                            segments[i] = (hour, state); 
+                            break; 
+                        } 
+                    } 
+                } 
             }
+            
+            // Start with turn_off as default (energy saving mode)
+            AddSegment(earliestHour, "turn_off");
+            
+            // Add turn_off blocks if they come before comfort
+            if (turnOffBlock.HasValue && turnOffBeforeComfort) 
+            { 
+                AddSegment(turnOffBlock.Value.start, "turn_off");
+                // After turn_off block, remain in turn_off (no eco reactivation)
+                int reActHour = turnOffBlock.Value.end + 1; 
+                if (!comfortStart.HasValue || reActHour < comfortStart.Value) 
+                    AddSegment(reActHour, "turn_off");
+            }
+            
+            // Add comfort block
+            if (comfortStart.HasValue) 
+            { 
+                AddSegment(comfortStart.Value, "comfort"); 
+                // After comfort, return to turn_off (no eco)
+                if (comfortEnd.HasValue && comfortEnd.Value < latestHour) 
+                    AddSegment(comfortEnd.Value + 1, "turn_off"); 
+            }
+            
+            // Add turn_off blocks that come after comfort
+            if (turnOffBlock.HasValue && !turnOffBeforeComfort) 
+            { 
+                AddSegment(turnOffBlock.Value.start, "turn_off"); 
+                // After turn_off, stay off (no eco reactivation)
+                int reActHour = turnOffBlock.Value.end + 1; 
+                if (reActHour <= latestHour) 
+                    AddSegment(reActHour, "turn_off"); 
+            }
+            
+            segments = segments.OrderBy(s => s.hour).ToList();
+            
+            // Remove any turn_off segments that are too long (keep it simple with 2-mode system)
+            // No need for eco reactivation logic anymore
+            
+            // Limit total segments to activationLimit
             if (segments.Count > activationLimit)
             {
-                int idxTO = segments.FindIndex(s => s.state == "turn_off");
+                // Remove turn_off segments that come after comfort to simplify schedule
+                int idxPost = -1; 
+                if (comfortEnd.HasValue) 
+                    idxPost = segments.FindIndex(s => s.state == "turn_off" && s.hour == comfortEnd.Value + 1);
+                
+                if (idxPost > 0 && segments.Count > activationLimit) 
+                    segments.RemoveAt(idxPost);
+            }
+            
+            if (segments.Count > activationLimit)
+            {
+                // Remove turn_off block entirely if we still exceed limit
+                int idxTO = segments.FindIndex(s => s.state == "turn_off" && s.hour > earliestHour);
                 if (idxTO >= 0)
                 {
-                    if (idxTO + 1 < segments.Count && segments[idxTO + 1].state == "eco") segments.RemoveAt(idxTO + 1);
                     segments.RemoveAt(idxTO);
                 }
             }
+            
             if (segments.Count > activationLimit)
             {
+                // Final fallback: remove segments from the end until we're under limit
                 for (int i = segments.Count - 1; i >= 0 && segments.Count > activationLimit; i--)
                 {
-                    if (segments[i].state == "eco" && segments[i].hour != earliestHour) segments.RemoveAt(i);
+                    if (segments[i].state == "turn_off" && segments[i].hour != earliestHour) 
+                        segments.RemoveAt(i);
                 }
             }
             var dayObj = new JsonObject(); foreach (var seg in segments.OrderBy(s => s.hour)) { var key = new TimeSpan(seg.hour, 0, 0).ToString(); dayObj[key] = new JsonObject { ["domesticHotWaterTemperature"] = seg.state }; }

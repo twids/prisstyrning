@@ -2,14 +2,14 @@ using Microsoft.Extensions.Configuration;
 
 internal static class UserSettingsService
 {
-    internal sealed record UserScheduleSettings(int ComfortHours, double TurnOffPercentile, int TurnOffMaxConsecutive, int MaxComfortGapHours);
+    // Issue #53: Removed TurnOffMaxConsecutive - no longer needed with 2-mode system (comfort/turn_off only)
+    internal sealed record UserScheduleSettings(int ComfortHours, double TurnOffPercentile, int MaxComfortGapHours);
 
     public static UserScheduleSettings LoadScheduleSettings(IConfiguration cfg, string? userId)
     {
         // Defaults from global config - use InvariantCulture for parsing
         int comfortHours = int.TryParse(cfg["Schedule:ComfortHours"], out var ch) ? Math.Clamp(ch, 1, 12) : 3;
         double turnOffPercentile = double.TryParse(cfg["Schedule:TurnOffPercentile"], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var tp) ? Math.Clamp(tp, 0.5, 0.99) : 0.9;
-        int turnOffMaxConsecutive = int.TryParse(cfg["Schedule:TurnOffMaxConsecutive"], out var mc) ? Math.Clamp(mc, 1, 6) : 2;
         int maxComfortGapHours = int.TryParse(cfg["Schedule:MaxComfortGapHours"], out var mcgh) ? Math.Clamp(mcgh, 1, 72) : 28;
 
         if (!string.IsNullOrWhiteSpace(userId))
@@ -25,8 +25,8 @@ internal static class UserSettingsService
                     {
                         if (int.TryParse(node["ComfortHours"]?.ToString(), out var chUser)) comfortHours = Math.Clamp(chUser, 1, 12);
                         if (double.TryParse(node["TurnOffPercentile"]?.ToString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var tpUser)) turnOffPercentile = Math.Clamp(tpUser, 0.5, 0.99);
-                        if (int.TryParse(node["TurnOffMaxConsecutive"]?.ToString(), out var mcUser)) turnOffMaxConsecutive = Math.Clamp(mcUser, 1, 6);
                         if (int.TryParse(node["MaxComfortGapHours"]?.ToString(), out var mcghUser)) maxComfortGapHours = Math.Clamp(mcghUser, 1, 72);
+                        // Note: TurnOffMaxConsecutive removed - no longer used
                     }
                 }
             }
@@ -36,7 +36,7 @@ internal static class UserSettingsService
             }
         }
 
-        return new UserScheduleSettings(comfortHours, turnOffPercentile, turnOffMaxConsecutive, maxComfortGapHours);
+        return new UserScheduleSettings(comfortHours, turnOffPercentile, maxComfortGapHours);
     }
     public static async Task<string> GetUserZoneAsync(IConfiguration cfg, string? userId)
     {

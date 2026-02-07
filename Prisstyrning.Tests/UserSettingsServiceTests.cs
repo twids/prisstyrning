@@ -22,7 +22,6 @@ public class UserSettingsServiceTests
         {
             ["Schedule:ComfortHours"] = "4",
             ["Schedule:TurnOffPercentile"] = "0.85",
-            ["Schedule:TurnOffMaxConsecutive"] = "3",
             ["Schedule:MaxComfortGapHours"] = "24"
         });
         var userId = "user-with-no-settings";
@@ -33,7 +32,6 @@ public class UserSettingsServiceTests
         // Assert
         Assert.Equal(4, settings.ComfortHours);
         Assert.Equal(0.85, settings.TurnOffPercentile);
-        Assert.Equal(3, settings.TurnOffMaxConsecutive);
         Assert.Equal(24, settings.MaxComfortGapHours);
     }
 
@@ -50,7 +48,7 @@ public class UserSettingsServiceTests
         
         // Create user.json with custom settings
         fs.CreateUserSettings(userId, comfortHours: 5, turnOffPercentile: 0.95, 
-            turnOffMaxConsecutive: 1, maxComfortGapHours: 36);
+            maxComfortGapHours: 36);
 
         // Act
         var settings = UserSettingsService.LoadScheduleSettings(config, userId);
@@ -58,7 +56,6 @@ public class UserSettingsServiceTests
         // Assert
         Assert.Equal(5, settings.ComfortHours);
         Assert.Equal(0.95, settings.TurnOffPercentile);
-        Assert.Equal(1, settings.TurnOffMaxConsecutive);
         Assert.Equal(36, settings.MaxComfortGapHours);
     }
 
@@ -74,7 +71,6 @@ public class UserSettingsServiceTests
         {
             ["Schedule:ComfortHours"] = "999", // Too high, should clamp to 12
             ["Schedule:TurnOffPercentile"] = "1.5", // Too high, should clamp to 0.99
-            ["Schedule:TurnOffMaxConsecutive"] = "0", // Too low, should clamp to 1
             ["Schedule:MaxComfortGapHours"] = "-10" // Negative, should clamp to 1
         });
 
@@ -84,7 +80,6 @@ public class UserSettingsServiceTests
         // Assert
         Assert.Equal(12, settings.ComfortHours); // Clamped from 999
         Assert.Equal(0.99, settings.TurnOffPercentile); // Clamped from 1.5
-        Assert.Equal(1, settings.TurnOffMaxConsecutive); // Clamped from 0
         Assert.Equal(1, settings.MaxComfortGapHours); // Clamped from -10
     }
 
@@ -221,7 +216,6 @@ public class UserSettingsServiceTests
         // Assert - Should return defaults from config
         Assert.Equal(3, settings.ComfortHours); // Default from test config
         Assert.Equal(0.9, settings.TurnOffPercentile);
-        Assert.Equal(2, settings.TurnOffMaxConsecutive);
         Assert.Equal(28, settings.MaxComfortGapHours);
     }
 
@@ -245,7 +239,6 @@ public class UserSettingsServiceTests
         // Assert
         Assert.Equal(6, settings.ComfortHours); // User override
         Assert.Equal(0.9, settings.TurnOffPercentile); // Global default
-        Assert.Equal(2, settings.TurnOffMaxConsecutive); // Global default
         Assert.Equal(28, settings.MaxComfortGapHours); // Global default
     }
 

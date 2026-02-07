@@ -81,7 +81,6 @@ public class EndpointIntegrationTests
         // Should return defaults since no user.json exists
         Assert.Equal(3, settings.ComfortHours);
         Assert.Equal(0.9, settings.TurnOffPercentile);
-        Assert.Equal(2, settings.TurnOffMaxConsecutive);
         Assert.Equal(28, settings.MaxComfortGapHours);
     }
 
@@ -98,7 +97,6 @@ public class EndpointIntegrationTests
         {
             ["ComfortHours"] = 5,
             ["TurnOffPercentile"] = 0.85,
-            ["TurnOffMaxConsecutive"] = 3,
             ["MaxComfortGapHours"] = 36
         };
         
@@ -110,7 +108,6 @@ public class EndpointIntegrationTests
         
         Assert.Equal(5, loaded.ComfortHours);
         Assert.Equal(0.85, loaded.TurnOffPercentile);
-        Assert.Equal(3, loaded.TurnOffMaxConsecutive);
         Assert.Equal(36, loaded.MaxComfortGapHours);
     }
 

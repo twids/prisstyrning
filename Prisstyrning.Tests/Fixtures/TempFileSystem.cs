@@ -34,9 +34,9 @@ public class TempFileSystem : IDisposable
             ["Storage:Directory"] = BaseDir,
             ["Schedule:ComfortHours"] = "3",
             ["Schedule:TurnOffPercentile"] = "0.9",
-            ["Schedule:TurnOffMaxConsecutive"] = "2",
             ["Schedule:MaxComfortGapHours"] = "28",
             ["Schedule:MaxActivationsPerDay"] = "4",
+            ["Schedule:HistoryRetentionDays"] = "30",
             ["Price:Nordpool:DefaultZone"] = "SE3",
             ["Price:Nordpool:Currency"] = "SEK",
         };
@@ -56,9 +56,10 @@ public class TempFileSystem : IDisposable
 
     /// <summary>
     /// Creates a user.json file for a specific user with the given settings.
+    /// Issue #53: Removed turnOffMaxConsecutive - no longer needed with 2-mode system.
     /// </summary>
     public void CreateUserSettings(string userId, int? comfortHours = null, double? turnOffPercentile = null, 
-        int? turnOffMaxConsecutive = null, int? maxComfortGapHours = null, string? zone = null)
+        int? maxComfortGapHours = null, string? zone = null)
     {
         var userDir = Path.Combine(TokensDir, userId);
         Directory.CreateDirectory(userDir);
@@ -67,7 +68,6 @@ public class TempFileSystem : IDisposable
         var userSettings = new System.Text.Json.Nodes.JsonObject();
         if (comfortHours.HasValue) userSettings["ComfortHours"] = comfortHours.Value;
         if (turnOffPercentile.HasValue) userSettings["TurnOffPercentile"] = turnOffPercentile.Value;
-        if (turnOffMaxConsecutive.HasValue) userSettings["TurnOffMaxConsecutive"] = turnOffMaxConsecutive.Value;
         if (maxComfortGapHours.HasValue) userSettings["MaxComfortGapHours"] = maxComfortGapHours.Value;
         if (zone != null) userSettings["zone"] = zone;
 
