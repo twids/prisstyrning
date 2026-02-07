@@ -100,28 +100,39 @@ This plan addresses backend testing gaps, fixes the schedule history bug, and re
 
 ---
 
-### 4. **Phase 4: Backend Refactoring & Code Quality**
-   - **Objective:** Improve backend code quality, structured logging, and configuration management
+### 4. **Phase 4: Backend Refactoring & Code Quality + Issue #53 (ECO Mode Removal)**
+   - **Objective:** Improve backend code quality, structured logging, configuration management, AND remove ECO mode from DHW scheduling (GitHub issue #53)
    - **Files/Functions to Modify/Create:**
      - [Program.cs](Program.cs) - Replace Console.WriteLine with ILogger
      - [BatchRunner.cs](BatchRunner.cs) - Add structured logging
      - [DaikinApiClient.cs](DaikinApiClient.cs) - Use HttpClientFactory
      - [NordpoolClient.cs](NordpoolClient.cs) - Use HttpClientFactory
-     - [appsettings.json](appsettings.json) - Add retention period configuration
+     - [ScheduleAlgorithm.cs](ScheduleAlgorithm.cs) - Remove ECO mode, use only COMFORT and TURN_OFF
+     - [appsettings.json](appsettings.json) - Add retention period configuration, remove eco-related settings
      - Create Options classes for Daikin, Schedule, Storage configuration
+     - [UserSettingsService.cs](UserSettingsService.cs) - Update max consecutive hours logic for 2 modes
+     - Update all tests to reflect 2-mode system
    - **Tests to Write:**
      - Options validation tests for new configuration classes
      - Logging integration tests (verify logs emitted correctly)
+     - ScheduleAlgorithm tests verifying only comfort/turn_off modes generated
+     - Validation tests for 2-mode max consecutive hours
    - **Steps:**
-     1. Create strongly-typed Options classes (DaikinOptions, ScheduleOptions, StorageOptions)
-     2. Inject IOptions<T> into services instead of IConfiguration
-     3. Replace all Console.WriteLine with ILogger calls (use LogLevel.Information, LogLevel.Error)
-     4. Refactor DaikinApiClient to accept IHttpClientFactory
-     5. Refactor NordpoolClient to accept IHttpClientFactory
-     6. Add configuration for history retention period (make 7-day default configurable)
-     7. Run tests - ensure refactoring didn't break functionality
-     8. Update ROADMAP.md to mark technical debt items as resolved
-     9. Verify application runs with structured logging: `dotnet run --configuration Release`
+     1. **Remove ECO mode from ScheduleAlgorithm** (issue #53):
+        - Change all "eco" references to either comfort or turn_off based on price logic
+        - Update schedule generation to only use 2 modes
+        - Simplify max consecutive hour logic (no more eco tracking)
+     2. Create strongly-typed Options classes (DaikinOptions, ScheduleOptions, StorageOptions)
+     3. Inject IOptions<T> into services instead of IConfiguration
+     4. Replace all Console.WriteLine with ILogger calls (use LogLevel.Information, LogLevel.Error)
+     5. Refactor DaikinApiClient to accept IHttpClientFactory
+     6. Refactor NordpoolClient to accept IHttpClientFactory
+     7. Add configuration for history retention period (make 7-day default configurable, increase to 30)
+     8. Update all existing tests to work with 2-mode system
+     9. Run tests - ensure refactoring didn't break functionality
+     10. Update ROADMAP.md to mark technical debt items as resolved
+     11. Update GitHub issue #53 with implementation notes
+     12. Verify application runs with structured logging: `dotnet run --configuration Release`
 
 ---
 

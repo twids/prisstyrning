@@ -10,10 +10,10 @@ public class HomeAssistantClient
     private readonly HttpClient _client;
     private readonly string _baseUrl;
 
-    public HomeAssistantClient(string baseUrl, string token)
+    public HomeAssistantClient(string baseUrl, string token, HttpClient? httpClient = null)
     {
         _baseUrl = baseUrl.TrimEnd('/');
-        _client = new HttpClient();
+        _client = httpClient ?? new HttpClient();
         _client.DefaultRequestHeaders.Add("Authorization", $"Bearer {token}");
         _client.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0");
         _client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
