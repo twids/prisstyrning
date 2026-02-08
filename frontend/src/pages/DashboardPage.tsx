@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Stack, Paper, Typography, Button, Alert, Box, Snackbar, Alert as MuiAlert, TextField } from '@mui/material';
+import { Stack, Paper, Typography, Button, Alert, Box, Snackbar, Alert as MuiAlert } from '@mui/material';
 import AuthStatusChip from '../components/AuthStatusChip';
 import PriceChart from '../components/PriceChart';
 import ScheduleGrid from '../components/ScheduleGrid';
@@ -24,7 +24,6 @@ export default function DashboardPage() {
   }>({ open: false, message: '', severity: 'info' });
 
   const [applyDialog, setApplyDialog] = useState(false);
-  const [deviceIds, setDeviceIds] = useState({ gateway: '', embedded: '' });
 
   // New hooks
   const applySchedule = useApplySchedule();
@@ -54,19 +53,9 @@ export default function DashboardPage() {
   const confirmApplySchedule = async () => {
     setApplyDialog(false);
 
-    if (!deviceIds.gateway || !deviceIds.embedded) {
-      setSnackbar({
-        open: true,
-        message: 'Gateway Device ID and Embedded ID are required',
-        severity: 'error',
-      });
-      return;
-    }
-
     try {
+      // Device IDs will be auto-detected by the backend
       await applySchedule.mutateAsync({
-        gatewayDeviceId: deviceIds.gateway,
-        embeddedId: deviceIds.embedded,
         schedulePayload: schedulePreview.data!.schedulePayload!,
       });
 
@@ -86,7 +75,8 @@ export default function DashboardPage() {
 
   const handleRetrieveCurrentSchedule = async () => {
     try {
-      await currentSchedule.mutateAsync(deviceIds.embedded || undefined);
+      // embeddedId will be auto-detected by the backend
+      await currentSchedule.mutateAsync(undefined);
       setSnackbar({
         open: true,
         message: 'Current schedule retrieved',
@@ -178,25 +168,11 @@ export default function DashboardPage() {
           Apply Schedule to Daikin
         </Typography>
 
-        <Stack spacing={2}>
-          <TextField
-            label="Gateway Device ID"
-            value={deviceIds.gateway}
-            onChange={(e) => setDeviceIds({ ...deviceIds, gateway: e.target.value })}
-            placeholder="Enter gateway device ID"
-            fullWidth
-            disabled={!isAuthorized}
-          />
-          
-          <TextField
-            label="Embedded ID"
-            value={deviceIds.embedded}
-            onChange={(e) => setDeviceIds({ ...deviceIds, embedded: e.target.value })}
-            placeholder="Enter embedded ID"
-            fullWidth
-            disabled={!isAuthorized}
-          />
+        <Alert severity="info" sx={{ mb: 2 }}>
+          Device IDs will be automatically detected from your Daikin account.
+        </Alert>
 
+        <Stack spacing={2}>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
             <Button
               variant="contained"
