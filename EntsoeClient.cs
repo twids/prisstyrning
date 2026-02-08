@@ -5,14 +5,15 @@ using System.Globalization;
 
 internal class EntsoeClient
 {
-    private readonly HttpClient _http = new HttpClient();
+    private readonly HttpClient _http;
     private readonly string _apiKey;
     private readonly string _area;
 
-    public EntsoeClient(string apiKey, string area)
+    public EntsoeClient(string apiKey, string area, HttpClient? httpClient = null)
     {
         _apiKey = apiKey;
         _area = area;
+        _http = httpClient ?? new HttpClient();
     }
 
     // Fetches day-ahead prices for a given date (UTC)

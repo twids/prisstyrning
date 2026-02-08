@@ -4,13 +4,15 @@ Price based DHW (domestic hot water) schedule generation for Daikin ONECTA using
 
 ## Features
 * Fetches hourly prices from Nordpool (background job every 6h + manual refresh)
-* Generates DHW schedule (comfort / eco / turn_off) with: max 4 actions per day, any turn_off block ≤ 2 hours
+* Generates DHW schedule (comfort / turn_off) with: max 4 actions per day, any turn_off block ≤ 2 hours
+* **2-mode system**: Simplified from 3-mode (removed ECO) to eliminate unwanted heating on OFF→ECO transitions (see `MIGRATION.md`)
 * **12-hour window scheduling**: Automatically updates schedules twice daily (00:05 and 12:05) to effectively allow up to 8 changes per day by splitting into two 12-hour windows
 * **Comfort gap validation**: Configurable maximum hours between comfort periods (default 28h) to ensure regular hot water availability
 * Manual upload (PUT) of schedule to Daikin gateway (no auto-apply unless explicitly enabled)
 * Configuration via `appsettings*.json` and/or environment variables (env has highest precedence; optional `PRISSTYRNING_` prefix)
-* Frontend: price chart + schedule grid + current DHW schedule visualization
+* **Modern frontend**: React 18 + TypeScript + Material UI with dark theme, real-time updates, and responsive design
 * Multi-arch container build (linux/amd64 & linux/arm64) via GitHub Actions
+* **Testing**: 125+ passing backend tests covering persistence, jobs, API endpoints, and OAuth integration
 * See `ROADMAP.md` for planned improvements / technical debt
 
 ## Configuration
@@ -51,7 +53,6 @@ Double underscore `__` maps to nested sections (standard .NET config convention)
 | Daikin:Http | BodySnippetLength | `PRISSTYRNING_Daikin__Http__BodySnippetLength` | Max chars of logged body snippet |
 | Schedule | ComfortHours | `PRISSTYRNING_Schedule__ComfortHours` | Sequential comfort hours target (default 3) |
 | Schedule | TurnOffPercentile | `PRISSTYRNING_Schedule__TurnOffPercentile` | Percentile threshold (e.g. 0.9) for expensive hours |
-| Schedule | TurnOffMaxConsecutive | `PRISSTYRNING_Schedule__TurnOffMaxConsecutive` | Max consecutive expensive hours pre-trim (<=6) |
 | Schedule | MaxComfortGapHours | `PRISSTYRNING_Schedule__MaxComfortGapHours` | Max hours between comfort periods (default 28, range 1-72) |
 | Schedule | TurnOffSpikeDeltaPct | `PRISSTYRNING_Schedule__TurnOffSpikeDeltaPct` | Min % above neighborhood avg to count as spike |
 | Schedule | TurnOffNeighborWindow | `PRISSTYRNING_Schedule__TurnOffNeighborWindow` | Neighborhood half-window size for spike avg |
@@ -94,7 +95,6 @@ services:
       PRISSTYRNING_Daikin__ApplySchedule: "false" # keep false for transparency
       PRISSTYRNING_Schedule__ComfortHours: "3"
       PRISSTYRNING_Schedule__TurnOffPercentile: "0.9"
-      PRISSTYRNING_Schedule__TurnOffMaxConsecutive: "2"
       PRISSTYRNING_Storage__Directory: /data
       PRISSTYRNING_PORT: "5000"
     volumes:
@@ -119,21 +119,63 @@ The GitHub Actions pipeline enables `linux/amd64` and `linux/arm64` with QEMU em
 
 ## Build Verification
 All pull requests are automatically verified with GitHub Actions (`.github/workflows/pr-build-verification.yml`):
-* **Restore**: Ensures NuGet packages can be restored
-* **Build**: Compiles the project in Release configuration
-* **Artifact Check**: Verifies the build produces expected output (`Prisstyrning.dll`)
+* **Backend**: Restores NuGet packages, builds in Release configuration, runs 125+ tests
+* **Frontend**: Installs npm dependencies, builds React app with TypeScript and Vite
+* **Artifact Check**: Verifies build produces expected output (`Prisstyrning.dll` and `wwwroot/` assets)
 
 Pull requests cannot be merged until the build verification passes. This ensures code quality and prevents broken builds from entering the main branch.
 
 ## OAuth tokens
 After completing OAuth, tokens are persisted to `tokens/daikin.json` (if the volume is mounted). You may also inject `Daikin:AccessToken` / `Daikin:RefreshToken` directly for testing.
 
-## Development hints
-* **Local build verification**: Run `dotnet restore && dotnet build --configuration Release` to verify your changes locally before submitting a PR
-* Local Nordpool snapshots stored as `data/nordpool/<ZONE>/prices-*.json`
-* Frontend served from `wwwroot` (static + minimal JS)
-* Schedule preview endpoint: `/api/schedule/preview`
-* Current DHW schedule endpoint: `/api/daikin/gateway/schedule?embeddedId=2`
+## Development
+
+### Build Instructions
+
+**Backend:**
+```bash
+dotnet restore
+dotnet build --configuration Release
+dotnet test --configuration Release
+```
+
+**Frontend:**
+```bash
+cd frontend
+npm install
+npm run dev  # Development server on http://localhost:5173
+npm run build  # Production build to ../wwwroot
+```
+
+**Run Application:**
+```bash
+# Terminal 1: Backend (serves API + static frontend from wwwroot)
+dotnet run --configuration Release
+
+# Terminal 2 (optional): Frontend dev server with HMR
+cd frontend && npm run dev
+```
+
+### API Endpoints
+* Schedule preview: `/api/schedule/preview`
+* Current DHW schedule: `/api/daikin/gateway/schedule?embeddedId=2`
+* User settings: `/api/user/settings`
+* Schedule history: `/api/user/schedule-history`
+* Price timeseries: `/api/prices/timeseries`
+* Status: `/api/status`
+
+### Data Storage
+* Nordpool snapshots: `data/nordpool/<ZONE>/prices-*.json`
+* Schedule history: `data/schedule_history/<userId>/`
+* OAuth tokens: `data/tokens/<userId>/daikin.json`
+
+### Testing
+* Backend tests: `dotnet test --verbosity normal` (125+ tests)
+* Frontend: React components with TypeScript strict mode
+* See `Prisstyrning.Tests/README.md` for testing strategy
+
+### Migration from v1.x
+See `MIGRATION.md` for detailed upgrade instructions, including ECO mode removal and configuration changes.
 
 ## License
 No license specified yet (all rights reserved by default). Add a LICENSE file before broader distribution.

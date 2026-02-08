@@ -58,8 +58,8 @@ internal static class DaikinOAuthService
         return url;
     }
 
-    public static async Task<bool> HandleCallbackAsync(IConfiguration cfg, string code, string state) => await HandleCallbackAsync(cfg, code, state, userId: null);
-    public static async Task<bool> HandleCallbackAsync(IConfiguration cfg, string code, string state, string? userId)
+    public static async Task<bool> HandleCallbackAsync(IConfiguration cfg, string code, string state, HttpClient? httpClient = null) => await HandleCallbackAsync(cfg, code, state, userId: null, httpClient);
+    public static async Task<bool> HandleCallbackAsync(IConfiguration cfg, string code, string state, string? userId, HttpClient? httpClient = null)
     {
         string? verifier;
         lock(_lock)
@@ -80,13 +80,14 @@ internal static class DaikinOAuthService
         };
         if(!string.IsNullOrWhiteSpace(clientSecret))
             form["client_secret"] = clientSecret;
-        using var http = new HttpClient();
+        var http = httpClient ?? new HttpClient();
         Console.WriteLine($"[DaikinOAuth] Exchanging code for tokens at {tokenEndpoint}");
         var resp = await http.PostAsync(tokenEndpoint, new FormUrlEncodedContent(form));
         if(!resp.IsSuccessStatusCode)
         {
             var body = await resp.Content.ReadAsStringAsync();
             Console.WriteLine($"[DaikinOAuth][Error] Token exchange failed {(int)resp.StatusCode} {resp.StatusCode}");
+            if (httpClient == null) http.Dispose();
             return false;
         }
         var json = await resp.Content.ReadAsStringAsync();
@@ -98,6 +99,7 @@ internal static class DaikinOAuthService
         var expiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn - 30);
         SaveTokens(cfg, new TokenFile(access, refresh, expiresAt), userId);
         Console.WriteLine($"[DaikinOAuth] Token exchange OK expiresAt={expiresAt:O} refresh={(refresh?.Length>8?refresh[..8]+"...":"(none)")}");
+        if (httpClient == null) http.Dispose();
         return true;
     }
 
@@ -110,14 +112,14 @@ internal static class DaikinOAuthService
         return (null, tf.expires_at_utc);
     }
 
-    public static async Task<string?> RefreshIfNeededAsync(IConfiguration cfg) => await RefreshIfNeededAsync(cfg, null);
-    public static async Task<string?> RefreshIfNeededAsync(IConfiguration cfg, string? userId) => await RefreshIfNeededAsync(cfg, userId, TimeSpan.FromMinutes(1));
+    public static async Task<string?> RefreshIfNeededAsync(IConfiguration cfg, HttpClient? httpClient = null) => await RefreshIfNeededAsync(cfg, null, httpClient);
+    public static async Task<string?> RefreshIfNeededAsync(IConfiguration cfg, string? userId, HttpClient? httpClient = null) => await RefreshIfNeededAsync(cfg, userId, TimeSpan.FromMinutes(1), httpClient);
 
     /// <summary>
     /// Refresh the access token if it will expire within the provided window.
     /// Default window in existing calls is 1 minute; callers can request a larger proactive window.
     /// </summary>
-    public static async Task<string?> RefreshIfNeededAsync(IConfiguration cfg, string? userId, TimeSpan window)
+    public static async Task<string?> RefreshIfNeededAsync(IConfiguration cfg, string? userId, TimeSpan window, HttpClient? httpClient = null)
     {
         var existing = LoadTokens(cfg, userId);
         if (existing == null) return null;
@@ -131,25 +133,33 @@ internal static class DaikinOAuthService
             ["client_id"] = clientId
         };
         if(!string.IsNullOrWhiteSpace(clientSecret)) form["client_secret"] = clientSecret;
-        using var http = new HttpClient();
-        Console.WriteLine($"[DaikinOAuth] Refreshing token at {tokenEndpoint} (window={window})");
-        var resp = await http.PostAsync(tokenEndpoint, new FormUrlEncodedContent(form));
-        if(!resp.IsSuccessStatusCode)
+        
+        var http = httpClient ?? new HttpClient();
+        try
         {
-            var body = await resp.Content.ReadAsStringAsync();
-            Console.WriteLine($"[DaikinOAuth][Error] refresh failed {(int)resp.StatusCode} {resp.StatusCode}");
-            return null;
+            Console.WriteLine($"[DaikinOAuth] Refreshing token at {tokenEndpoint} (window={window})");
+            var resp = await http.PostAsync(tokenEndpoint, new FormUrlEncodedContent(form));
+            if(!resp.IsSuccessStatusCode)
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                Console.WriteLine($"[DaikinOAuth][Error] refresh failed {(int)resp.StatusCode} {resp.StatusCode}");
+                return null;
+            }
+            var json = await resp.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var access = root.GetProperty("access_token").GetString()!;
+            var refresh = root.TryGetProperty("refresh_token", out var rEl)? rEl.GetString() ?? existing.refresh_token : existing.refresh_token;
+            var expiresIn = root.TryGetProperty("expires_in", out var ei) ? ei.GetInt32() : 3600;
+            var expiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn - 30);
+            SaveTokens(cfg, new TokenFile(access, refresh!, expiresAt), userId);
+            Console.WriteLine($"[DaikinOAuth] Refresh OK newExpiry={expiresAt:O}");
+            return access;
         }
-        var json = await resp.Content.ReadAsStringAsync();
-        using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
-        var access = root.GetProperty("access_token").GetString()!;
-        var refresh = root.TryGetProperty("refresh_token", out var rEl)? rEl.GetString() ?? existing.refresh_token : existing.refresh_token;
-        var expiresIn = root.TryGetProperty("expires_in", out var ei) ? ei.GetInt32() : 3600;
-        var expiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn - 30);
-        SaveTokens(cfg, new TokenFile(access, refresh!, expiresAt), userId);
-        Console.WriteLine($"[DaikinOAuth] Refresh OK newExpiry={expiresAt:O}");
-        return access;
+        finally
+        {
+            if (httpClient == null) http.Dispose();
+        }
     }
 
     public static object Status(IConfiguration cfg) => Status(cfg, null);
@@ -164,29 +174,37 @@ internal static class DaikinOAuthService
         };
     }
 
-    public static async Task<bool> RevokeAsync(IConfiguration cfg) => await RevokeAsync(cfg, null);
-    public static async Task<bool> RevokeAsync(IConfiguration cfg, string? userId)
+    public static async Task<bool> RevokeAsync(IConfiguration cfg, HttpClient? httpClient = null) => await RevokeAsync(cfg, null, httpClient);
+    public static async Task<bool> RevokeAsync(IConfiguration cfg, string? userId, HttpClient? httpClient = null)
     {
         var t = LoadTokens(cfg, userId);
         if (t == null) return false;
         var clientId = cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
         var clientSecret = cfg["Daikin:ClientSecret"];
         var revokeEndpoint = cfg["Daikin:RevokeEndpoint"] ?? DefaultRevokeEndpoint;
-        using var http = new HttpClient();
-        var okAccess = await RevokeToken(http, revokeEndpoint, clientId, clientSecret, t.access_token, "access_token");
-        var okRefresh = await RevokeToken(http, revokeEndpoint, clientId, clientSecret, t.refresh_token, "refresh_token");
-        if(okAccess || okRefresh)
+        
+        var http = httpClient ?? new HttpClient();
+        try
         {
-            try 
-            { 
-                File.Delete(TokenFilePath(cfg, userId)); 
-            } 
-            catch (Exception ex)
+            var okAccess = await RevokeToken(http, revokeEndpoint, clientId, clientSecret, t.access_token, "access_token");
+            var okRefresh = await RevokeToken(http, revokeEndpoint, clientId, clientSecret, t.refresh_token, "refresh_token");
+            if(okAccess || okRefresh)
             {
-                Console.WriteLine($"[DaikinOAuth] Failed to delete token file: {ex.Message}");
+                try 
+                { 
+                    File.Delete(TokenFilePath(cfg, userId)); 
+                } 
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[DaikinOAuth] Failed to delete token file: {ex.Message}");
+                }
             }
+            return okAccess && okRefresh;
         }
-        return okAccess && okRefresh; // true only if both succeeded
+        finally
+        {
+            if (httpClient == null) http.Dispose();
+        } // true only if both succeeded
     }
 
     private static async Task<bool> RevokeToken(HttpClient http, string endpoint, string clientId, string? secret, string token, string hint)
@@ -202,29 +220,37 @@ internal static class DaikinOAuthService
         return resp.IsSuccessStatusCode;
     }
 
-    public static async Task<object?> IntrospectAsync(IConfiguration cfg, bool refresh=false) => await IntrospectAsync(cfg, null, refresh);
-    public static async Task<object?> IntrospectAsync(IConfiguration cfg, string? userId, bool refresh=false)
+    public static async Task<object?> IntrospectAsync(IConfiguration cfg, bool refresh=false, HttpClient? httpClient = null) => await IntrospectAsync(cfg, null, refresh, httpClient);
+    public static async Task<object?> IntrospectAsync(IConfiguration cfg, string? userId, bool refresh=false, HttpClient? httpClient = null)
     {
         var t = LoadTokens(cfg, userId); if(t==null) return null;
         var clientId = cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
         var clientSecret = cfg["Daikin:ClientSecret"] ?? throw new InvalidOperationException("ClientSecret krävs för introspection");
         var introspectEndpoint = cfg["Daikin:IntrospectEndpoint"] ?? DefaultIntrospectEndpoint;
         var token = refresh ? t.refresh_token : t.access_token;
-        using var http = new HttpClient();
-        var bytes = Encoding.ASCII.GetBytes(clientId+":"+clientSecret);
-        http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", Convert.ToBase64String(bytes));
-        var form = new Dictionary<string,string>{{"token", token}};
-        var resp = await http.PostAsync(introspectEndpoint, new FormUrlEncodedContent(form));
-        var body = await resp.Content.ReadAsStringAsync();
-        Console.WriteLine($"[DaikinOAuth] Introspect {(refresh?"refresh":"access")} => {(int)resp.StatusCode}");
-        try 
-        { 
-            return JsonSerializer.Deserialize<JsonElement>(body); 
-        } 
-        catch 
-        { 
-            // Don't log potentially sensitive OAuth response body
-            return new { error = "Failed to parse introspect response", statusCode = (int)resp.StatusCode }; 
+        
+        var http = httpClient ?? new HttpClient();
+        try
+        {
+            var bytes = Encoding.ASCII.GetBytes(clientId+":"+clientSecret);
+            http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", Convert.ToBase64String(bytes));
+            var form = new Dictionary<string,string>{{"token", token}};
+            var resp = await http.PostAsync(introspectEndpoint, new FormUrlEncodedContent(form));
+            var body = await resp.Content.ReadAsStringAsync();
+            Console.WriteLine($"[DaikinOAuth] Introspect {(refresh?"refresh":"access")} => {(int)resp.StatusCode}");
+            try 
+            { 
+                return JsonSerializer.Deserialize<JsonElement>(body); 
+            } 
+            catch 
+            { 
+                // Don't log potentially sensitive OAuth response body
+                return new { error = "Failed to parse introspect response", statusCode = (int)resp.StatusCode }; 
+            }
+        }
+        finally
+        {
+            if (httpClient == null) http.Dispose();
         }
     }
 

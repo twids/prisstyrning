@@ -4,17 +4,18 @@ using System.Globalization;
 
 internal class NordpoolClient
 {
-    private readonly HttpClient _http = new HttpClient(new HttpClientHandler{ AutomaticDecompression = System.Net.DecompressionMethods.All });
+    private readonly HttpClient _http;
     private readonly string _currency;
     private readonly string? _pageId; // configurable page id (default 10)
     private readonly bool _allowFallback;
     private readonly string? _apiKey;
-    public NordpoolClient(string? currency = null, string? pageId = null, bool allowFallback = true, string? apiKey = null)
+    public NordpoolClient(string? currency = null, string? pageId = null, bool allowFallback = true, string? apiKey = null, HttpClient? httpClient = null)
     {
         _currency = string.IsNullOrWhiteSpace(currency) ? "SEK" : currency!;
         _pageId = string.IsNullOrWhiteSpace(pageId) ? null : pageId.Trim();
         _allowFallback = allowFallback;
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey.Trim();
+        _http = httpClient ?? new HttpClient(new HttpClientHandler{ AutomaticDecompression = System.Net.DecompressionMethods.All });
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0 (+https://example.local)");
         _http.DefaultRequestHeaders.Accept.ParseAdd("application/json, */*;q=0.8");
         _http.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en-US,en;q=0.8");

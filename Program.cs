@@ -107,22 +107,21 @@ app.MapGet("/api/user/settings", async (HttpContext ctx) =>
     var cfg = (IConfiguration)builder.Configuration;
     var userId = GetUserId(ctx) ?? "default";
     var path = StoragePaths.GetUserJsonPath(cfg, userId);
-    if (!File.Exists(path)) return Results.Json(new { ComfortHours = 3, TurnOffPercentile = 0.9, TurnOffMaxConsecutive = 2, AutoApplySchedule = false, MaxComfortGapHours = 28 });
+    if (!File.Exists(path)) return Results.Json(new { ComfortHours = 3, TurnOffPercentile = 0.9, AutoApplySchedule = false, MaxComfortGapHours = 28 });
     try
     {
         var json = await File.ReadAllTextAsync(path);
         var node = JsonNode.Parse(json) as JsonObject;
         int comfortHours = int.TryParse(node?["ComfortHours"]?.ToString(), out var ch) ? ch : 3;
         double turnOffPercentile = double.TryParse(node?["TurnOffPercentile"]?.ToString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var tp) ? tp : 0.9;
-        int turnOffMaxConsecutive = int.TryParse(node?["TurnOffMaxConsecutive"]?.ToString(), out var tmc) ? tmc : 2;
         bool autoApplySchedule = bool.TryParse(node?["AutoApplySchedule"]?.ToString(), out var aas) ? aas : false;
         int maxComfortGapHours = int.TryParse(node?["MaxComfortGapHours"]?.ToString(), out var mcgh) ? mcgh : 28;
-        return Results.Json(new { ComfortHours = comfortHours, TurnOffPercentile = turnOffPercentile, TurnOffMaxConsecutive = turnOffMaxConsecutive, AutoApplySchedule = autoApplySchedule, MaxComfortGapHours = maxComfortGapHours });
+        return Results.Json(new { ComfortHours = comfortHours, TurnOffPercentile = turnOffPercentile, AutoApplySchedule = autoApplySchedule, MaxComfortGapHours = maxComfortGapHours });
     }
     catch (Exception ex)
     {
         Console.WriteLine($"[UserSettings] read error: {ex.Message}");
-        return Results.Json(new { ComfortHours = 3, TurnOffPercentile = 0.9, TurnOffMaxConsecutive = 2, AutoApplySchedule = false, MaxComfortGapHours = 28 });
+        return Results.Json(new { ComfortHours = 3, TurnOffPercentile = 0.9, AutoApplySchedule = false, MaxComfortGapHours = 28 });
     }
 });
 
@@ -142,16 +141,12 @@ app.MapPost("/api/user/settings", async (HttpContext ctx) =>
     else node = new JsonObject();
     string? rawCh = body["ComfortHours"]?.ToString();
     string? rawTp = body["TurnOffPercentile"]?.ToString();
-    string? rawTmc = body["TurnOffMaxConsecutive"]?.ToString();
     string? rawAas = body["AutoApplySchedule"]?.ToString();
     string? rawMcgh = body["MaxComfortGapHours"]?.ToString();
     var errors = new List<string>();
     int comfortHours = 3;
     if (!string.IsNullOrWhiteSpace(rawCh))
     { if (!int.TryParse(rawCh, out comfortHours) || comfortHours < 1 || comfortHours > 12) { errors.Add("ComfortHours must be an integer between 1 and 12"); comfortHours = 3; } }
-    int turnOffMaxConsecutive = 2;
-    if (!string.IsNullOrWhiteSpace(rawTmc))
-    { if (!int.TryParse(rawTmc, out turnOffMaxConsecutive) || turnOffMaxConsecutive < 1 || turnOffMaxConsecutive > 6) { errors.Add("TurnOffMaxConsecutive must be an integer between 1 and 6"); turnOffMaxConsecutive = 2; } }
     double turnOffPercentile = 0.9;
     if (!string.IsNullOrWhiteSpace(rawTp))
     { if (!double.TryParse(rawTp, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out turnOffPercentile) || turnOffPercentile < 0.5 || turnOffPercentile > 0.99) { errors.Add("TurnOffPercentile must be a number between 0.5 and 0.99"); turnOffPercentile = 0.9; } }
@@ -164,7 +159,6 @@ app.MapPost("/api/user/settings", async (HttpContext ctx) =>
     if (errors.Count > 0) return Results.BadRequest(new { error = "Validation failed", errors });
     node["ComfortHours"] = comfortHours;
     node["TurnOffPercentile"] = turnOffPercentile;
-    node["TurnOffMaxConsecutive"] = turnOffMaxConsecutive;
     node["AutoApplySchedule"] = autoApplySchedule;
     node["MaxComfortGapHours"] = maxComfortGapHours;
     Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -480,7 +474,7 @@ scheduleGroup.MapGet("/preview", async (HttpContext c) => {
     var userId = GetUserId(c);
     
     // Use BatchRunner to generate schedule and handle history persistence
-    var (generated, schedulePayload, message) = await BatchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: false);
+    var (generated, schedulePayload, message) = await BatchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: true);
     var zone = UserSettingsService.GetUserZone(cfg, userId);
     
     return Results.Json(new { schedulePayload, generated, message, zone });
@@ -817,6 +811,35 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IConfiguration cfg, HttpCont
     catch (Exception ex)
     {
         return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
+// SPA fallback: serve index.html for client-side routes (excluding /api and /auth)
+app.MapFallback(async (HttpContext ctx) =>
+{
+    var path = ctx.Request.Path.Value ?? "";
+    
+    // Don't intercept API or auth endpoints
+    if (path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase) || 
+        path.StartsWith("/auth/", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith("/hangfire", StringComparison.OrdinalIgnoreCase))
+    {
+        ctx.Response.StatusCode = 404;
+        await ctx.Response.WriteAsync("Not Found");
+        return;
+    }
+    
+    // Serve index.html for SPA routes like /settings, /history, etc.
+    var indexPath = Path.Combine(app.Environment.WebRootPath ?? "wwwroot", "index.html");
+    if (File.Exists(indexPath))
+    {
+        ctx.Response.ContentType = "text/html";
+        await ctx.Response.SendFileAsync(indexPath);
+    }
+    else
+    {
+        ctx.Response.StatusCode = 404;
+        await ctx.Response.WriteAsync("Frontend not built. Run: cd frontend && npm run build");
     }
 });
 
