@@ -110,7 +110,7 @@ export default function DashboardPage() {
           <AuthStatusChip />
         </Stack>
         
-        <Stack direction="row" spacing={2}>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
           {!isAuthorized ? (
             <Button variant="contained" onClick={startAuth}>
               Start OAuth Flow
@@ -197,7 +197,7 @@ export default function DashboardPage() {
             disabled={!isAuthorized}
           />
 
-          <Stack direction="row" spacing={2}>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
             <Button
               variant="contained"
               onClick={handleApplySchedule}

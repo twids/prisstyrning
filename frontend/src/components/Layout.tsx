@@ -1,12 +1,14 @@
-import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { AppBar, Toolbar, Typography, Button, Container, Box } from '@mui/material';
-import HomeIcon from '@mui/icons-material/Home';
+import { ReactNode } from 'react';
+import { AppBar, Toolbar, Typography, Container, Button, Box } from '@mui/material';
+import { Link as RouterLink } from 'react-router-dom';
 import SettingsIcon from '@mui/icons-material/Settings';
+import DashboardIcon from '@mui/icons-material/Dashboard';
 
-export default function Layout() {
-  const navigate = useNavigate();
-  const location = useLocation();
+interface LayoutProps {
+  children: ReactNode;
+}
 
+export default function Layout({ children }: LayoutProps) {
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
       <AppBar position="static">
@@ -16,24 +18,24 @@ export default function Layout() {
           </Typography>
           <Button
             color="inherit"
-            startIcon={<HomeIcon />}
-            onClick={() => navigate('/')}
-            disabled={location.pathname === '/'}
+            component={RouterLink}
+            to="/"
+            startIcon={<DashboardIcon />}
           >
             Dashboard
           </Button>
           <Button
             color="inherit"
+            component={RouterLink}
+            to="/settings"
             startIcon={<SettingsIcon />}
-            onClick={() => navigate('/settings')}
-            disabled={location.pathname === '/settings'}
           >
             Settings
           </Button>
         </Toolbar>
       </AppBar>
-      <Container component="main" sx={{ mt: 4, mb: 4, flexGrow: 1 }}>
-        <Outlet />
+      <Container component="main" sx={{ flex: 1, py: 4 }}>
+        {children}
       </Container>
     </Box>
   );
