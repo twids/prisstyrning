@@ -24,7 +24,8 @@ public class EndpointIntegrationTests
         PriceMemory.Set(today, tomorrow);
         
         // Test the underlying BatchRunner logic (endpoint calls this)
-        var result = await BatchRunner.GenerateSchedulePreview(cfg);
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
+        var result = await batchRunner.GenerateSchedulePreview(cfg);
         
         Assert.NotNull(result);
         
@@ -57,7 +58,8 @@ public class EndpointIntegrationTests
         PriceMemory.Set(today, tomorrow);
         
         // Test apply logic (would fail without real Daikin API)
-        var (generated, payload, message) = await BatchRunner.RunBatchAsync(
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
+        var (generated, payload, message) = await batchRunner.RunBatchAsync(
             cfg, 
             userId: "test-user", 
             applySchedule: true, 
@@ -124,7 +126,8 @@ public class EndpointIntegrationTests
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
         PriceMemory.Set(today, tomorrow);
         
-        await BatchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: true);
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
+        await batchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: true);
         
         // Wait for async save
         await Task.Delay(1000);
@@ -191,7 +194,8 @@ public class EndpointIntegrationTests
         
         // Note: Without real OAuth server, this will fail
         // Test verifies the method signature and error handling
-        var success = await DaikinOAuthService.HandleCallbackAsync(
+        var oauthService = MockServiceFactory.CreateMockDaikinOAuthService();
+        var success = await oauthService.HandleCallbackAsync(
             cfg, 
             code: "invalid-code", 
             state: "test-state", 
@@ -228,7 +232,8 @@ public class EndpointIntegrationTests
         });
         
         // Test refresh logic (will fail without real OAuth server)
-        var refreshedToken = await DaikinOAuthService.RefreshIfNeededAsync(cfg, userId);
+        var oauthService = MockServiceFactory.CreateMockDaikinOAuthService();
+        var refreshedToken = await oauthService.RefreshIfNeededAsync(cfg, userId);
         
         // Should return null if refresh fails (no crash)
         Assert.True(refreshedToken == null || !string.IsNullOrEmpty(refreshedToken));
