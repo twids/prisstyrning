@@ -20,5 +20,21 @@ export default defineConfig({
     outDir: '../wwwroot',
     emptyOutDir: true,
     sourcemap: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Split MUI components into separate chunks
+          'mui-core': ['@mui/material', '@mui/icons-material'],
+          'mui-charts': ['@mui/x-charts'],
+          // Split React and related libraries
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          // Split React Query
+          'query': ['@tanstack/react-query'],
+          // Split date utilities
+          'date-utils': ['date-fns'],
+        },
+      },
+    },
+    chunkSizeWarningLimit: 600, // Raise limit to 600 KB (from default 500 KB)
   },
 })
