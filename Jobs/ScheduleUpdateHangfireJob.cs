@@ -10,10 +10,12 @@ namespace Prisstyrning.Jobs;
 public class ScheduleUpdateHangfireJob
 {
     private readonly IConfiguration _cfg;
+    private readonly BatchRunner _batchRunner;
 
-    public ScheduleUpdateHangfireJob(IConfiguration cfg)
+    public ScheduleUpdateHangfireJob(IConfiguration cfg, BatchRunner batchRunner)
     {
         _cfg = cfg;
+        _batchRunner = batchRunner;
     }
 
     [DisableConcurrentExecution(120)] // Prevent overlapping executions with 120s timeout
@@ -64,7 +66,7 @@ public class ScheduleUpdateHangfireJob
                 Console.WriteLine($"[ScheduleUpdateHangfireJob] Processing user {userId}");
                 try
                 {
-                    var (generated, schedulePayload, message) = await BatchRunner.RunBatchAsync(_cfg, userId, applySchedule: true, persist: true);
+                    var (generated, schedulePayload, message) = await _batchRunner.RunBatchAsync(_cfg, userId, applySchedule: true, persist: true);
                     Console.WriteLine($"[ScheduleUpdateHangfireJob] user={userId} generated={generated} message={message}");
                     processedCount++;
                 }

@@ -9,10 +9,12 @@ namespace Prisstyrning.Jobs;
 public class DailyPriceHangfireJob
 {
     private readonly IConfiguration _cfg;
+    private readonly BatchRunner _batchRunner;
 
-    public DailyPriceHangfireJob(IConfiguration cfg)
+    public DailyPriceHangfireJob(IConfiguration cfg, BatchRunner batchRunner)
     {
         _cfg = cfg;
+        _batchRunner = batchRunner;
     }
 
     [DisableConcurrentExecution(600)] // Prevent overlapping executions with 10min timeout
@@ -24,7 +26,7 @@ public class DailyPriceHangfireJob
             if (now.Hour == 14 && now.Minute < 10) // första 10 min efter 14
             {
                 Console.WriteLine($"[DailyPriceHangfireJob] Executing daily batch at {now:yyyy-MM-dd HH:mm}");
-                await BatchRunner.RunBatchAsync(_cfg, null, applySchedule: false, persist: true);
+                await _batchRunner.RunBatchAsync(_cfg, null, applySchedule: false, persist: true);
             }
         }
         catch (Exception ex)

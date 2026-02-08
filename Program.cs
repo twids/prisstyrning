@@ -39,6 +39,39 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+// Configure HttpClientFactory with named clients
+builder.Services.AddHttpClient("Nordpool", client =>
+{
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0 (+https://example.local)");
+    client.DefaultRequestHeaders.Accept.ParseAdd("application/json, */*;q=0.8");
+    client.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en-US,en;q=0.8");
+    try { client.DefaultRequestHeaders.Referrer = new Uri("https://www.nordpoolgroup.com/en/market-data/"); } catch { }
+    if (!client.DefaultRequestHeaders.Contains("Origin"))
+        client.DefaultRequestHeaders.Add("Origin", "https://www.nordpoolgroup.com");
+})
+.ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AutomaticDecompression = System.Net.DecompressionMethods.All
+});
+
+builder.Services.AddHttpClient("Daikin", client =>
+{
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0");
+});
+
+builder.Services.AddHttpClient("HomeAssistant", client =>
+{
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0");
+});
+
+builder.Services.AddHttpClient("Entsoe", client =>
+{
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0");
+});
+
+// Register application services
+builder.Services.AddSingleton<BatchRunner>();
+
 // Configure Hangfire with in-memory storage
 builder.Services.AddHangfire(config => config
     .UseInMemoryStorage());
@@ -469,17 +502,17 @@ daikinAuthGroup.MapGet("/introspect", async (IConfiguration cfg, HttpContext c, 
 
 // Schedule preview/apply
 var scheduleGroup = app.MapGroup("/api/schedule").WithTags("Schedule");
-scheduleGroup.MapGet("/preview", async (HttpContext c) => {
+scheduleGroup.MapGet("/preview", async (BatchRunner batchRunner, HttpContext c) => {
     var cfg = (IConfiguration)builder.Configuration;
     var userId = GetUserId(c);
     
     // Use BatchRunner to generate schedule and handle history persistence
-    var (generated, schedulePayload, message) = await BatchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: true);
+    var (generated, schedulePayload, message) = await batchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: true);
     var zone = UserSettingsService.GetUserZone(cfg, userId);
     
     return Results.Json(new { schedulePayload, generated, message, zone });
 });
-scheduleGroup.MapPost("/apply", async (HttpContext ctx) => await HandleApplyScheduleAsync(ctx, builder.Configuration));
+scheduleGroup.MapPost("/apply", async (BatchRunner batchRunner, HttpContext ctx) => await HandleApplyScheduleAsync(batchRunner, ctx, builder.Configuration));
 
 // Move this method to top-level scope (outside of any endpoint/lambda)
 
@@ -487,10 +520,10 @@ scheduleGroup.MapPost("/apply", async (HttpContext ctx) => await HandleApplySche
 var daikinGroup = app.MapGroup("/api/daikin").WithTags("Daikin");
 // Simple proxy for sites (needed by frontend Sites button) – user-scoped
 // Extracted method for /apply endpoint logic
-async Task<IResult> HandleApplyScheduleAsync(HttpContext ctx, IConfiguration configuration)
+async Task<IResult> HandleApplyScheduleAsync(BatchRunner batchRunner, HttpContext ctx, IConfiguration configuration)
 {
     var userId = GetUserId(ctx);
-    var result = await BatchRunner.RunBatchAsync(configuration, userId, applySchedule: false, persist: true);
+    var result = await batchRunner.RunBatchAsync(configuration, userId, applySchedule: false, persist: true);
     return Results.Json(new { generated = result.generated, schedulePayload = result.schedulePayload, message = result.message });
 }
 daikinGroup.MapGet("/sites", async (IConfiguration cfg, HttpContext c) =>

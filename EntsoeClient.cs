@@ -9,11 +9,11 @@ internal class EntsoeClient
     private readonly string _apiKey;
     private readonly string _area;
 
-    public EntsoeClient(string apiKey, string area, HttpClient? httpClient = null)
+    public EntsoeClient(HttpClient httpClient, string apiKey, string area)
     {
+        _http = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _apiKey = apiKey;
         _area = area;
-        _http = httpClient ?? new HttpClient();
     }
 
     // Fetches day-ahead prices for a given date (UTC)
