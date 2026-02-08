@@ -814,6 +814,35 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IConfiguration cfg, HttpCont
     }
 });
 
+// SPA fallback: serve index.html for client-side routes (excluding /api and /auth)
+app.MapFallback(async (HttpContext ctx) =>
+{
+    var path = ctx.Request.Path.Value ?? "";
+    
+    // Don't intercept API or auth endpoints
+    if (path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase) || 
+        path.StartsWith("/auth/", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith("/hangfire", StringComparison.OrdinalIgnoreCase))
+    {
+        ctx.Response.StatusCode = 404;
+        await ctx.Response.WriteAsync("Not Found");
+        return;
+    }
+    
+    // Serve index.html for SPA routes like /settings, /history, etc.
+    var indexPath = Path.Combine(app.Environment.WebRootPath ?? "wwwroot", "index.html");
+    if (File.Exists(indexPath))
+    {
+        ctx.Response.ContentType = "text/html";
+        await ctx.Response.SendFileAsync(indexPath);
+    }
+    else
+    {
+        ctx.Response.StatusCode = 404;
+        await ctx.Response.WriteAsync("Frontend not built. Run: cd frontend && npm run build");
+    }
+});
+
 await app.RunAsync();
 
 // Hangfire dashboard authorization filter with password protection
