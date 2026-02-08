@@ -30,3 +30,4 @@ appsettings.Local.json
 data/prices-*.json
 tokens/daikin.json
 cookies.txt
+frontend/node_modules/**
