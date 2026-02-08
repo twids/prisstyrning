@@ -163,7 +163,7 @@ export default function SettingsPage() {
                   setFormData({ ...formData, comfortHours: value as number })
                 }
                 min={1}
-                max={10}
+                max={12}
                 step={1}
                 marks
                 valueLabelDisplay="auto"
@@ -183,12 +183,12 @@ export default function SettingsPage() {
                   setFormData({ ...formData, turnOffPercentile: value as number })
                 }
                 min={0.5}
-                max={1.0}
-                step={0.05}
+                max={0.99}
+                step={0.01}
                 marks={[
                   { value: 0.5, label: '50%' },
                   { value: 0.75, label: '75%' },
-                  { value: 1.0, label: '100%' },
+                  { value: 0.99, label: '99%' },
                 ]}
                 valueLabelDisplay="auto"
                 valueLabelFormat={(value) => `${(value * 100).toFixed(0)}%`}
@@ -208,8 +208,8 @@ export default function SettingsPage() {
                   maxComfortGapHours: parseInt(e.target.value) || 1,
                 })
               }
-              inputProps={{ min: 0, max: 5, step: 1 }}
-              helperText="Maximum gap between consecutive comfort hours (0 = disabled)"
+              inputProps={{ min: 1, max: 72, step: 1 }}
+              helperText="Maximum gap between consecutive comfort hours (1-72)"
             />
 
             <FormControl fullWidth>

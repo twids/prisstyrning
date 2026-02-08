@@ -57,7 +57,7 @@ public class NordpoolPriceJobTests
         var oldTomorrow = TestDataFactory.CreatePriceData(date);
         PriceMemory.Set(oldToday, oldTomorrow);
         
-        var (beforeToday, beforeTomorrow, beforeUpdate) = PriceMemory.GetReadOnly();
+        var (beforeToday, _, _) = PriceMemory.GetReadOnly();
         Assert.NotNull(beforeToday);
         
         var job = new NordpoolPriceHangfireJob(cfg);
@@ -70,7 +70,7 @@ public class NordpoolPriceJobTests
         catch (HttpRequestException)
         {
             // If network fails, memory should remain unchanged
-            var (afterToday, afterTomorrow, afterUpdate) = PriceMemory.GetReadOnly();
+            var (afterToday, _, _) = PriceMemory.GetReadOnly();
             Assert.NotNull(afterToday);
         }
         

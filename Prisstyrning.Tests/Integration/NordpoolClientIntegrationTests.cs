@@ -90,7 +90,7 @@ public class NordpoolClientIntegrationTests
         var httpClient = new HttpClient(mockHandler);
         var client = new NordpoolClient(currency: "SEK", httpClient: httpClient);
         
-        var (prices, attempts) = await client.GetDailyPricesDetailedAsync(
+        var (_, attempts) = await client.GetDailyPricesDetailedAsync(
             new DateTime(2026, 2, 7), "SE3");
         
         Assert.NotNull(attempts);

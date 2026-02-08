@@ -254,7 +254,14 @@ internal static class BatchRunner
     {
         try 
         {
-            await ScheduleHistoryPersistence.SaveAsync(userId, payload, DateTimeOffset.UtcNow, 7, StoragePaths.GetBaseDir(config));
+            // Read retention days from configuration with fallback to 7
+            int retentionDays = int.TryParse(config["Schedule:HistoryRetentionDays"], out var configuredRetention) 
+                && configuredRetention > 0 
+                && configuredRetention <= 365 
+                ? configuredRetention 
+                : 7;
+            
+            await ScheduleHistoryPersistence.SaveAsync(userId, payload, DateTimeOffset.UtcNow, retentionDays, StoragePaths.GetBaseDir(config));
             Console.WriteLine($"[BatchRunner] Saved schedule history for user {userId}");
         }
         catch (Exception ex)

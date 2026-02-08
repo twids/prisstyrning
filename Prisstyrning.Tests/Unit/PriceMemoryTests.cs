@@ -36,13 +36,13 @@ public class PriceMemoryTests
         PriceMemory.Set(today, tomorrow);
         
         // Get first copy
-        var (copy1Today, copy1Tomorrow, _) = PriceMemory.Get();
+        var (copy1Today, _, _) = PriceMemory.Get();
         
         // Modify the copy
         copy1Today!.Add(new JsonObject { ["test"] = "modified" });
         
         // Get second copy - should not be affected by modification
-        var (copy2Today, copy2Tomorrow, _) = PriceMemory.Get();
+        var (copy2Today, _, _) = PriceMemory.Get();
         
         Assert.NotNull(copy2Today);
         Assert.Equal(24, copy2Today.Count); // Still original count, not 25
