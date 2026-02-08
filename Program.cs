@@ -505,8 +505,8 @@ scheduleGroup.MapGet("/preview", async (HttpContext c, UserSettingsRepository se
     var cfg = (IConfiguration)builder.Configuration;
     var userId = GetUserId(c);
     
-    // Use BatchRunner to generate schedule and handle history persistence
-    var (generated, schedulePayload, message) = await batchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: true, scopeFactory);
+    // Preview should NOT persist to history - only apply should persist
+    var (generated, schedulePayload, message) = await batchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: false, scopeFactory);
     var zone = await settingsRepo.GetUserZoneAsync(userId);
     
     return Results.Json(new { schedulePayload, generated, message, zone });
