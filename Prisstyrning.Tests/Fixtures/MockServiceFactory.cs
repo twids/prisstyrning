@@ -27,22 +27,24 @@ public static class MockServiceFactory
         var handler = new MockHttpMessageHandler();
         
         // Mock elprisetjustnu.se API (used by NordpoolClient)
-        // Returns 24 hours of price data in the expected format
-        var priceArray = new System.Text.Json.Nodes.JsonArray();
+        // Expected format: array of objects with "time_start" and "SEK_per_kWh"
+        var priceArray = new List<object>();
+        var baseDate = new DateTime(2026, 2, 7); // Match test data date
+        
         for (int h = 0; h < 24; h++)
         {
-            var hourPrice = new System.Text.Json.Nodes.JsonObject
+            priceArray.Add(new
             {
-                ["start"] = DateTime.Today.AddHours(h).ToString("o"),
-                ["value"] = 0.5m + (h * 0.02m) // Prices from 0.50 to 0.96 SEK/kWh
-            };
-            priceArray.Add(hourPrice);
+                time_start = baseDate.AddHours(h).ToString("o"),
+                SEK_per_kWh = 0.5m + (h * 0.02m), // Prices from 0.50 to 0.96 SEK/kWh
+                EUR_per_kWh = 0.045m + (h * 0.002m)
+            });
         }
         
-        // Match any elprisetjustnu.se price endpoint
-        handler.AddRoute("www.elprisetjustnu.se/api/v1/prices",
+        // Match any elprisetjustnu.se price endpoint (uses Contains matching)
+        handler.AddRoute("elprisetjustnu.se",
             HttpStatusCode.OK,
-            priceArray.ToJsonString());
+            JsonSerializer.Serialize(priceArray));
         
         return handler;
     }
