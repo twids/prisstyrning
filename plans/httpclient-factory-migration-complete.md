@@ -55,14 +55,14 @@ Successfully migrated Prisstyrning from direct HttpClient instantiation to IHttp
 5. ✅ All 4 Hangfire background jobs updated for dependency injection
 6. ✅ All 13+ API endpoints updated to inject IHttpClientFactory
 7. ✅ Test infrastructure established with MockServiceFactory
-8. ✅ **100% of test suite passing (125/129 tests, 4 skipped)**
+8. ✅ **At merge time: 100% of test suite passing (125/129 tests, 4 skipped)**
 
-**Test Results:**
+**Test Results (final/merge state):**
 - ✅ All 125 non-skipped tests passing (100%)
 - ✅ 4 tests skipped (filesystem/environment dependent tests)
 - ✅ 0 test failures
 
-All integration tests now pass after fixing MockServiceFactory to return elprisetjustnu.se API format.
+At the Phase 7 completion checkpoint, 11 integration tests were still failing (88% passing), as documented in the Phase 7 completion notes. Those integration test failures were subsequently fixed in commit 7172790 by updating MockServiceFactory to return the elprisetjustnu.se API format, and all integration tests now pass at merge time.
 
 **Production Impact:**
 - ✅ No breaking changes to external APIs

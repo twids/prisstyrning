@@ -7,7 +7,7 @@ namespace Prisstyrning.Jobs;
 /// <summary>
 /// Hangfire job that fetches Nordpool electricity prices for all configured zones
 /// </summary>
-public class NordpoolPriceHangfireJob
+internal class NordpoolPriceHangfireJob
 {
     private readonly IConfiguration _cfg;
     private readonly IHttpClientFactory _httpClientFactory;

@@ -228,10 +228,10 @@ public class BatchRunnerIntegrationTests
         PriceMemory.Set(today, tomorrow);
         
         var batchRunner = MockServiceFactory.CreateMockBatchRunner();
-        var (gen1, payload1, msg1) = await batchRunner.RunBatchAsync(
+        var (gen1, payload1, _) = await batchRunner.RunBatchAsync(
             cfg, userId: user1, applySchedule: false, persist: false);
         
-        var (gen2, payload2, msg2) = await batchRunner.RunBatchAsync(
+        var (gen2, payload2, _) = await batchRunner.RunBatchAsync(
             cfg, userId: user2, applySchedule: false, persist: false);
         
         Assert.True(gen1);

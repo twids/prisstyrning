@@ -61,7 +61,6 @@ public class MockHttpMessageHandler : HttpMessageHandler
         }
         
         var url = request.RequestUri?.ToString() ?? "";
-        Console.WriteLine($"[MockHttpHandler] Request: {request.Method} {url}");
         
         // Find matching route
         foreach (var route in _routes)
@@ -69,7 +68,6 @@ public class MockHttpMessageHandler : HttpMessageHandler
             if (url.Contains(route.Key, StringComparison.OrdinalIgnoreCase))
             {
                 var (status, body) = route.Value;
-                Console.WriteLine($"[MockHttpHandler] Matched route: {route.Key} -> {status}");
                 return await Task.FromResult(new HttpResponseMessage
                 {
                     StatusCode = status,
@@ -80,7 +78,6 @@ public class MockHttpMessageHandler : HttpMessageHandler
         }
         
         // No route matched - return 404 with diagnostic message
-        Console.WriteLine($"[MockHttpHandler] No route matched! Available routes: {string.Join(", ", _routes.Keys)}");
         return await Task.FromResult(new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.NotFound,
