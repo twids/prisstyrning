@@ -269,7 +269,6 @@ public class EndpointIntegrationTests
     public async Task POST_PricesZone_ValidatesZone()
     {
         using var fs = new TempFileSystem();
-        var userId = "zone-validation-user";
         var cfg = fs.GetTestConfig();
         
         // Test valid zone
