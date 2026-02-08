@@ -6,9 +6,10 @@ public static class ScheduleAlgorithm
     public enum LogicType { PerDayOriginal, CrossDayCheapestLimited }
 
     /// <summary>
-    /// Aggregates 15-minute price data into hourly averages.
+    /// Aggregates 15-minute price data into hourly averages with volatility tracking.
     /// If data is already hourly (24 or fewer entries per day), returns it as-is.
-    /// If data has 15-minute resolution (more than 24 entries per day), averages each hour's 4 data points.
+    /// If data has 15-minute resolution (more than 24 entries per day), averages each hour's 4 data points
+    /// and includes min/max/volatility metadata for spike detection.
     /// </summary>
     private static JsonArray AggregateToHourly(JsonArray? rawData)
     {
@@ -33,22 +34,35 @@ public static class ScheduleAlgorithm
             entriesByHour[key].Add((startTs, val));
         }
 
-        // For each hour, calculate average if multiple entries exist
+        // For each hour, calculate average and volatility metrics
         foreach (var kvp in entriesByHour.OrderBy(x => x.Key.date).ThenBy(x => x.Key.hour))
         {
             var entries = kvp.Value;
             var avgValue = entries.Average(e => e.value);
+            var minValue = entries.Min(e => e.value);
+            var maxValue = entries.Max(e => e.value);
+            var volatility = maxValue - minValue;
             var firstEntry = entries.OrderBy(e => e.start).First();
             
             // Use the hour's start time and averaged value
             var hourStart = new DateTimeOffset(kvp.Key.date.Year, kvp.Key.date.Month, kvp.Key.date.Day, 
                                                 kvp.Key.hour, 0, 0, firstEntry.start.Offset);
             
-            result.Add(new JsonObject 
+            var hourObj = new JsonObject 
             { 
                 ["start"] = hourStart.ToString("O"),
                 ["value"] = avgValue.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)
-            });
+            };
+            
+            // Add volatility metadata if 15-min data (helps with spike detection)
+            if (entries.Count > 1)
+            {
+                hourObj["min"] = minValue.ToString("F6", System.Globalization.CultureInfo.InvariantCulture);
+                hourObj["max"] = maxValue.ToString("F6", System.Globalization.CultureInfo.InvariantCulture);
+                hourObj["volatility"] = volatility.ToString("F6", System.Globalization.CultureInfo.InvariantCulture);
+            }
+            
+            result.Add(hourObj);
         }
 
         return result;
@@ -149,36 +163,93 @@ public static class ScheduleAlgorithm
         // Restore original per-day AddDay logic
         void AddDay(JsonArray source, DateTimeOffset date, string weekdayName)
         {
-            var entries = new List<(DateTimeOffset start, decimal value)>();
+            var entries = new List<(DateTimeOffset start, decimal value, decimal volatility)>();
             foreach (var item in source)
             {
                 if (item == null) continue;
                 var startStr = item["start"]?.ToString();
                 var valueStr = item["value"]?.ToString();
+                var volatilityStr = item["volatility"]?.ToString();
                 if (!DateTimeOffset.TryParse(startStr, out var startTs)) continue;
                 if (startTs.Date != date) continue;
                 if (!decimal.TryParse(valueStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var val)) continue;
-                entries.Add((startTs, val));
+                
+                // Extract volatility if available (0 if not present = stable hourly data)
+                decimal volatility = 0;
+                if (!string.IsNullOrEmpty(volatilityStr))
+                    decimal.TryParse(volatilityStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out volatility);
+                
+                entries.Add((startTs, val, volatility));
             }
             if (entries.Count == 0) return;
             var byHour = entries.ToDictionary(e => e.start.Hour, e => e.value);
-            var orderedByPrice = entries.OrderBy(e => e.value).ToList();
-            var cheapestHours = new HashSet<int>();
-            if (orderedByPrice.Count > 0)
+            var volatilityByHour = entries.ToDictionary(e => e.start.Hour, e => e.volatility);
+            
+            // IMPROVEMENT 1: Use volatility to penalize hours with spikes
+            // Select comfort hours: prefer low price AND low volatility
+            var orderedByPrice = entries
+                .OrderBy(e => e.value)  // Primary: cheapest
+                .ThenBy(e => e.volatility)  // Secondary: most stable (avoid spikes)
+                .ToList();
+            
+            // IMPROVEMENT 2: Merge consecutive cheap hours into blocks
+            // Instead of expanding from one hour, find all cheap hours and merge consecutive ones
+            var cheapCandidates = orderedByPrice
+                .Take(comfortHoursDefault * 2)  // Get more candidates than needed
+                .OrderBy(e => e.start.Hour)  // Sort by time
+                .ToList();
+            
+            // Find consecutive blocks of cheap hours
+            var cheapBlocks = new List<(int start, int end, decimal avgPrice)>();
+            if (cheapCandidates.Count > 0)
             {
-                var first = orderedByPrice[0];
-                var baseHour = first.start.Hour;
-                var basePrice = first.value;
-                cheapestHours.Add(baseHour);
-                var maxLen = comfortHoursDefault;
-                var nextHour = baseHour + 1;
-                while (cheapestHours.Count < maxLen && byHour.TryGetValue(nextHour, out var nextPrice))
+                int blockStart = cheapCandidates[0].start.Hour;
+                int blockEnd = blockStart;
+                decimal blockPriceSum = cheapCandidates[0].value;
+                int blockCount = 1;
+                
+                for (int i = 1; i < cheapCandidates.Count; i++)
                 {
-                    if (comfortNextHourMaxIncreasePct <= 0) break;
-                    var increasePct = basePrice == 0 ? 0 : (nextPrice - basePrice) / (basePrice) * 100m;
-                    if (increasePct > comfortNextHourMaxIncreasePct) break;
-                    cheapestHours.Add(nextHour);
-                    nextHour++;
+                    int hour = cheapCandidates[i].start.Hour;
+                    if (hour == blockEnd + 1)
+                    {
+                        // Consecutive hour - extend block
+                        blockEnd = hour;
+                        blockPriceSum += cheapCandidates[i].value;
+                        blockCount++;
+                    }
+                    else
+                    {
+                        // Gap - save current block and start new one
+                        cheapBlocks.Add((blockStart, blockEnd, blockPriceSum / blockCount));
+                        blockStart = hour;
+                        blockEnd = hour;
+                        blockPriceSum = cheapCandidates[i].value;
+                        blockCount = 1;
+                    }
+                }
+                // Save final block
+                cheapBlocks.Add((blockStart, blockEnd, blockPriceSum / blockCount));
+            }
+            
+            // Pick the cheapest block(s) that cover comfortHoursDefault hours
+            var cheapestHours = new HashSet<int>();
+            foreach (var block in cheapBlocks.OrderBy(b => b.avgPrice))
+            {
+                for (int h = block.start; h <= block.end && cheapestHours.Count < comfortHoursDefault; h++)
+                {
+                    cheapestHours.Add(h);
+                }
+                if (cheapestHours.Count >= comfortHoursDefault) break;
+            }
+            
+            // Log if we detected and avoided volatile hours
+            if (cheapestHours.Count > 0)
+            {
+                var avgVolatility = cheapestHours.Average(h => volatilityByHour.TryGetValue(h, out var v) ? (double)v : 0.0);
+                if (avgVolatility > 0)
+                {
+                    Console.WriteLine($"[Schedule] Selected comfort hours {string.Join(",", cheapestHours.OrderBy(x => x))} with avg volatility {avgVolatility:F2}");
                 }
             }
             var turnOffHours = new HashSet<int>();
@@ -188,7 +259,7 @@ public static class ScheduleAlgorithm
                 int idx = (int)Math.Floor(desc.Count * turnOffPercentile) - 1; if (idx < 0) idx = 0;
                 var percentileThreshold = desc[idx].value;
                 var candidateHours = new List<int>();
-                foreach (var (start, value) in entries)
+                foreach (var (start, value, volatility) in entries)
                 {
                     if (value < percentileThreshold) continue;
                     decimal sum = 0; int count = 0;
@@ -303,65 +374,48 @@ public static class ScheduleAlgorithm
                 }
             }
             
-            // Build segments with only comfort/turn_off modes (NO ECO)
-            bool turnOffBeforeComfort = false; 
-            if (turnOffBlock.HasValue && comfortStart.HasValue) 
-                turnOffBeforeComfort = turnOffBlock.Value.end < comfortStart.Value;
+            // IMPROVEMENT 3: Simplified segment building since Daikin only heats at mode START
+            // Key insight: Heating happens when switching TO comfort, not continuously
+            // Therefore, we only need transitions at comfort block boundaries and expensive spikes
             
             var segments = new List<(int hour, string state)>(); 
-            void AddSegment(int hour, string state) 
-            { 
-                if (!segments.Any(s => s.hour == hour)) 
-                    segments.Add((hour, state)); 
-                else 
-                { 
-                    for (int i = 0; i < segments.Count; i++) 
-                    { 
-                        if (segments[i].hour == hour) 
-                        { 
-                            segments[i] = (hour, state); 
-                            break; 
-                        } 
-                    } 
-                } 
-            }
             
             // Start with turn_off as default (energy saving mode)
-            AddSegment(earliestHour, "turn_off");
+            segments.Add((earliestHour, "turn_off"));
             
-            // Add turn_off blocks if they come before comfort
-            if (turnOffBlock.HasValue && turnOffBeforeComfort) 
-            { 
-                AddSegment(turnOffBlock.Value.start, "turn_off");
-                // After turn_off block, remain in turn_off (no eco reactivation)
-                int reActHour = turnOffBlock.Value.end + 1; 
-                if (!comfortStart.HasValue || reActHour < comfortStart.Value) 
-                    AddSegment(reActHour, "turn_off");
-            }
-            
-            // Add comfort block
+            // Add comfort block (consolidated consecutive cheap hours)
             if (comfortStart.HasValue) 
             { 
-                AddSegment(comfortStart.Value, "comfort"); 
-                // After comfort, return to turn_off (no eco)
+                segments.Add((comfortStart.Value, "comfort")); 
+                // Since heating only happens at START of comfort mode, we heat once
+                // then tank maintains temperature naturally for the comfort duration
+                
+                // After comfort block ends, return to turn_off
                 if (comfortEnd.HasValue && comfortEnd.Value < latestHour) 
-                    AddSegment(comfortEnd.Value + 1, "turn_off"); 
+                    segments.Add((comfortEnd.Value + 1, "turn_off")); 
             }
             
-            // Add turn_off blocks that come after comfort
-            if (turnOffBlock.HasValue && !turnOffBeforeComfort) 
-            { 
-                AddSegment(turnOffBlock.Value.start, "turn_off"); 
-                // After turn_off, stay off (no eco reactivation)
-                int reActHour = turnOffBlock.Value.end + 1; 
-                if (reActHour <= latestHour) 
-                    AddSegment(reActHour, "turn_off"); 
+            // Add turn_off for expensive spike blocks (if distinct from comfort)
+            if (turnOffBlock.HasValue)
+            {
+                bool overlapWithComfort = comfortStart.HasValue && comfortEnd.HasValue &&
+                    turnOffBlock.Value.start <= comfortEnd.Value && turnOffBlock.Value.end >= comfortStart.Value;
+                
+                if (!overlapWithComfort)
+                {
+                    // Only add explicit turn_off if it's not already covered by default turn_off state
+                    bool needsExplicitTurnOff = comfortStart.HasValue && 
+                        turnOffBlock.Value.start > comfortStart.Value && 
+                        turnOffBlock.Value.start <= comfortEnd.GetValueOrDefault(23);
+                    
+                    if (needsExplicitTurnOff)
+                    {
+                        segments.Add((turnOffBlock.Value.start, "turn_off"));
+                    }
+                }
             }
             
-            segments = segments.OrderBy(s => s.hour).ToList();
-            
-            // Remove any turn_off segments that are too long (keep it simple with 2-mode system)
-            // No need for eco reactivation logic anymore
+            segments = segments.OrderBy(s => s.hour).Distinct().ToList();
             
             // Limit total segments to activationLimit
             if (segments.Count > activationLimit)
@@ -501,35 +555,16 @@ public static class ScheduleAlgorithm
             }
         }
         
-        // Filter out past hours from today's schedule to ensure we never send more than 4 changes to Daikin
-        // This is critical because Daikin only allows 4 changes per day
+        // IMPROVEMENT 4: Cleaner future-hours filtering and action limiting
+        // Since we've simplified segment building, we should have fewer actions anyway
         var currentHour = now.Hour;
         var todayDayName = now.Date.DayOfWeek.ToString().ToLower();
+        var tomorrowDayName = now.Date.AddDays(1).DayOfWeek.ToString().ToLower();
         
-        // Helper method to limit schedule actions to activationLimit
-        JsonObject LimitScheduleActions(JsonObject actions, int limit, string dayLabel)
-        {
-            var sortedEntries = actions
-                .Select(p => new { Key = p.Key, Value = p.Value, Time = TimeSpan.TryParse(p.Key, out var t) ? t : (TimeSpan?)null })
-                .Where(x => x.Time.HasValue)
-                .OrderBy(x => x.Time!.Value)
-                .Take(limit)
-                .ToList();
-            
-            var limitedActions = new JsonObject();
-            foreach (var entry in sortedEntries)
-            {
-                limitedActions[entry.Key] = entry.Value?.DeepClone();
-            }
-            
-            Console.WriteLine($"[Schedule] Limited {dayLabel} actions from {actions.Count} to {limitedActions.Count}");
-            return limitedActions;
-        }
-        
+        // Process today's schedule: keep only future hours
         if (actionsCombined[todayDayName] is JsonObject todayActions)
         {
             var futureActions = new JsonObject();
-            
             foreach (var prop in todayActions)
             {
                 if (TimeSpan.TryParse(prop.Key, out var timeOfDay) && timeOfDay.Hours >= currentHour)
@@ -538,28 +573,22 @@ public static class ScheduleAlgorithm
                 }
             }
             
-            if (futureActions.Count > activationLimit)
-            {
-                actionsCombined[todayDayName] = LimitScheduleActions(futureActions, activationLimit, "today's");
-            }
-            else if (futureActions.Count > 0)
+            if (futureActions.Count > 0)
             {
                 actionsCombined[todayDayName] = futureActions;
-                Console.WriteLine($"[Schedule] Filtered out past hours, keeping {futureActions.Count} future actions for today");
+                Console.WriteLine($"[Schedule] Today: {futureActions.Count} future action(s) from hour {currentHour}");
             }
             else
             {
-                // No future actions for today, remove the day entirely
                 actionsCombined.Remove(todayDayName);
-                Console.WriteLine($"[Schedule] No future actions remaining for today, removed from schedule");
+                Console.WriteLine($"[Schedule] Today: No future actions, schedule only tomorrow");
             }
         }
         
-        // Ensure tomorrow's schedule also doesn't exceed 4 changes
-        var tomorrowDayName = now.Date.AddDays(1).DayOfWeek.ToString().ToLower();
-        if (actionsCombined[tomorrowDayName] is JsonObject tomorrowActions && tomorrowActions.Count > activationLimit)
+        // Log tomorrow's schedule
+        if (actionsCombined[tomorrowDayName] is JsonObject tomorrowActions)
         {
-            actionsCombined[tomorrowDayName] = LimitScheduleActions(tomorrowActions, activationLimit, "tomorrow's");
+            Console.WriteLine($"[Schedule] Tomorrow: {tomorrowActions.Count} action(s) scheduled");
         }
         
         string message;

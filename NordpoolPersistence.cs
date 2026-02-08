@@ -11,7 +11,22 @@ internal static class NordpoolPersistence
             var cfg = new ConfigurationBuilder().AddJsonFile("appsettings.json", optional: true).Build();
             var dir = Path.Combine(StoragePaths.GetNordpoolDir(cfg), zone);
             Directory.CreateDirectory(dir);
-            var file = Path.Combine(dir, $"prices-{DateTimeOffset.UtcNow:yyyyMMdd}-{zone}.json");
+            
+            // Extract date from price data (check both "start" and "timestamp" fields for compatibility)
+            var dateToUse = DateTimeOffset.UtcNow.Date;
+            if (today != null && today.Count > 0)
+            {
+                var firstEntry = today[0];
+                var startStr = firstEntry?["start"]?.ToString();
+                var timestampStr = firstEntry?["timestamp"]?.ToString();
+                
+                if (DateTimeOffset.TryParse(startStr, out var startDate))
+                    dateToUse = startDate.Date;
+                else if (DateTimeOffset.TryParse(timestampStr, out var timestampDate))
+                    dateToUse = timestampDate.Date;
+            }
+            
+            var file = Path.Combine(dir, $"prices-{dateToUse:yyyyMMdd}-{zone}.json");
             if (File.Exists(file))
             {
                 // Filen finns redan, ingen ny skrivning behövs
@@ -22,8 +37,8 @@ internal static class NordpoolPersistence
             {
                 ["zone"] = zone,
                 ["savedAt"] = DateTimeOffset.UtcNow.ToString("o"),
-                ["today"] = today.DeepClone() as JsonArray ?? new JsonArray(),
-                ["tomorrow"] = tomorrow.DeepClone() as JsonArray ?? new JsonArray()
+                ["today"] = today?.DeepClone() as JsonArray ?? new JsonArray(),
+                ["tomorrow"] = tomorrow?.DeepClone() as JsonArray ?? new JsonArray()
             };
             var json = snapshot.ToJsonString(new JsonSerializerOptions{ WriteIndented = true });
             await File.WriteAllTextAsync(file, json);
