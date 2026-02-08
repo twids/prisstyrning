@@ -7,7 +7,7 @@ namespace Prisstyrning.Jobs;
 /// <summary>
 /// Hangfire job that generates and applies schedules for users with auto-apply enabled
 /// </summary>
-public class ScheduleUpdateHangfireJob
+internal class ScheduleUpdateHangfireJob
 {
     private readonly IConfiguration _cfg;
     private readonly BatchRunner _batchRunner;
@@ -66,7 +66,7 @@ public class ScheduleUpdateHangfireJob
                 Console.WriteLine($"[ScheduleUpdateHangfireJob] Processing user {userId}");
                 try
                 {
-                    var (generated, schedulePayload, message) = await _batchRunner.RunBatchAsync(_cfg, userId, applySchedule: true, persist: true);
+                    var (generated, _, message) = await _batchRunner.RunBatchAsync(_cfg, userId, applySchedule: true, persist: true);
                     Console.WriteLine($"[ScheduleUpdateHangfireJob] user={userId} generated={generated} message={message}");
                     processedCount++;
                 }

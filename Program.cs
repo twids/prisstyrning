@@ -42,12 +42,9 @@ builder.Services.AddSwaggerGen();
 // Configure HttpClientFactory with named clients
 builder.Services.AddHttpClient("Nordpool", client =>
 {
-    client.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0 (+https://example.local)");
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0");
     client.DefaultRequestHeaders.Accept.ParseAdd("application/json, */*;q=0.8");
     client.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en-US,en;q=0.8");
-    try { client.DefaultRequestHeaders.Referrer = new Uri("https://www.nordpoolgroup.com/en/market-data/"); } catch { }
-    if (!client.DefaultRequestHeaders.Contains("Origin"))
-        client.DefaultRequestHeaders.Add("Origin", "https://www.nordpoolgroup.com");
 })
 .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
 {

@@ -6,7 +6,7 @@ internal enum HourState { None, Comfort, Eco, TurnOff }
 internal record ClassifiedHour(int Hour, decimal Price, HourState State);
 internal record GeneratedSegments(List<(int hour,string state)> Segments);
 
-public class BatchRunner
+internal class BatchRunner
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly DaikinOAuthService _daikinOAuthService;

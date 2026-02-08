@@ -28,14 +28,16 @@ Phase 7 fixes all test compilation errors resulting from the IHttpClientFactory 
 
 **Review Status:** APPROVED with noted limitations
 
-**Test Results:**
+**Test Results (Phase 7 completion snapshot):**
 - **Compilation:** ✅ 0 errors (both main and test projects)
-- **Test Execution:** ⚠️ 114 of 129 tests passing (88% success rate)
+- **Test Execution:** ⚠️ 114 of 129 tests passing (88% success rate at this checkpoint)
   - Failed: 11 (integration tests using MockServiceFactory)
   - Passed: 114
   - Skipped: 4 (filesystem-dependent tests)
 
-**Known Limitations:**
+**Note:** This document represents the test status at Phase 7 completion. The 11 failing tests were subsequently fixed in commit 7172790 by updating MockServiceFactory to return the correct elprisetjustnu.se API format. See `httpclient-factory-migration-complete.md` for final merge-time test results (125/125 passing, 100%).
+
+**Known Limitations (at Phase 7 checkpoint):**
 11 integration tests fail due to mock HTTP handler configuration issues. These tests expect real Nordpool API responses but the mock handler routing needs refinement. The failures are:
 - BatchRunnerIntegrationTests: 9 tests (all using MockServiceFactory.CreateMockBatchRunner)
 - EndpointIntegrationTests: 2 tests  

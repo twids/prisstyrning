@@ -6,7 +6,7 @@ namespace Prisstyrning.Jobs;
 /// <summary>
 /// Hangfire job that checks if it's 14:00 and runs batch operations
 /// </summary>
-public class DailyPriceHangfireJob
+internal class DailyPriceHangfireJob
 {
     private readonly IConfiguration _cfg;
     private readonly BatchRunner _batchRunner;

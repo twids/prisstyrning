@@ -4,7 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.Http;
 
-public class DaikinOAuthService
+internal class DaikinOAuthService
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private static readonly object _lock = new();
