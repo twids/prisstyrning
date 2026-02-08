@@ -10,10 +10,12 @@ namespace Prisstyrning.Jobs;
 public class NordpoolPriceHangfireJob
 {
     private readonly IConfiguration _cfg;
+    private readonly IHttpClientFactory _httpClientFactory;
 
-    public NordpoolPriceHangfireJob(IConfiguration cfg)
+    public NordpoolPriceHangfireJob(IConfiguration cfg, IHttpClientFactory httpClientFactory)
     {
         _cfg = cfg;
+        _httpClientFactory = httpClientFactory;
     }
 
     [DisableConcurrentExecution(60)] // Prevent overlapping executions with 60s timeout
@@ -49,7 +51,7 @@ public class NordpoolPriceHangfireJob
         catch { }
 
         Console.WriteLine($"[NordpoolPriceHangfireJob] fetching zones={string.Join(',', zones)} currency={currency}");
-        var client = new NordpoolClient(currency, page);
+        var client = new NordpoolClient(_httpClientFactory.CreateClient("Nordpool"), currency, page);
         
         foreach (var zone in zones)
         {

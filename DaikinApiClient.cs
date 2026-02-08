@@ -16,10 +16,10 @@ public class DaikinApiClient
     private static string? _devicesCacheJson;
     private static DateTimeOffset _devicesCacheFetched;
 
-    public DaikinApiClient(string accessToken, bool log = false, bool logBody = false, int? snippetLen = null, string? baseApiOverride = null, HttpClient? httpClient = null)
+    public DaikinApiClient(HttpClient httpClient, string accessToken, bool log = false, bool logBody = false, int? snippetLen = null, string? baseApiOverride = null)
     {
+        _client = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _accessToken = accessToken;
-        _client = httpClient ?? new HttpClient();
         _client.DefaultRequestHeaders.Add("Authorization", $"Bearer {_accessToken}");
     // Force logging for every request regardless of supplied flag.
     _log = true;

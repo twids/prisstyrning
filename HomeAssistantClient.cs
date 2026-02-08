@@ -10,12 +10,11 @@ public class HomeAssistantClient
     private readonly HttpClient _client;
     private readonly string _baseUrl;
 
-    public HomeAssistantClient(string baseUrl, string token, HttpClient? httpClient = null)
+    public HomeAssistantClient(HttpClient httpClient, string baseUrl, string token)
     {
+        _client = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _baseUrl = baseUrl.TrimEnd('/');
-        _client = httpClient ?? new HttpClient();
         _client.DefaultRequestHeaders.Add("Authorization", $"Bearer {token}");
-        _client.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0");
         _client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         var masked = token.Length > 12 ? token.Substring(0,8) + "..." + token[^4..] : "(kort)";
         Console.WriteLine($"[HA] Token length={token.Length} preview={masked}");

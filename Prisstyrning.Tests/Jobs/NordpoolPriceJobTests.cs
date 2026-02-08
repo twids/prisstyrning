@@ -29,7 +29,8 @@ public class NordpoolPriceJobTests
         await File.WriteAllTextAsync(Path.Combine(user1Dir, "zone.txt"), "SE2");
         await File.WriteAllTextAsync(Path.Combine(user2Dir, "zone.txt"), "NO5");
         
-        var job = new NordpoolPriceHangfireJob(cfg);
+        var mockHttpFactory = MockServiceFactory.CreateMockHttpClientFactory();
+        var job = new NordpoolPriceHangfireJob(cfg, mockHttpFactory);
         
         // Note: Will attempt to fetch real data and may fail
         // The test verifies the job completes without crashing
@@ -60,7 +61,8 @@ public class NordpoolPriceJobTests
         var (beforeToday, _, _) = PriceMemory.GetReadOnly();
         Assert.NotNull(beforeToday);
         
-        var job = new NordpoolPriceHangfireJob(cfg);
+        var mockHttpFactory = MockServiceFactory.CreateMockHttpClientFactory();
+        var job = new NordpoolPriceHangfireJob(cfg, mockHttpFactory);
         
         // Execute job (will attempt real fetch, may fail)
         try
@@ -84,7 +86,8 @@ public class NordpoolPriceJobTests
         using var fs = new TempFileSystem();
         var cfg = fs.GetTestConfig();
         
-        var job = new NordpoolPriceHangfireJob(cfg);
+        var mockHttpFactory = MockServiceFactory.CreateMockHttpClientFactory();
+        var job = new NordpoolPriceHangfireJob(cfg, mockHttpFactory);
         
         // Attempt to execute job
         try
