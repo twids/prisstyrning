@@ -9,10 +9,12 @@ internal record GeneratedSegments(List<(int hour,string state)> Segments);
 public class BatchRunner
 {
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly DaikinOAuthService _daikinOAuthService;
 
-    public BatchRunner(IHttpClientFactory httpClientFactory)
+    public BatchRunner(IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuthService)
     {
         _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
+        _daikinOAuthService = daikinOAuthService ?? throw new ArgumentNullException(nameof(daikinOAuthService));
     }
 
     public async Task<object> GenerateSchedulePreview(IConfiguration config)
@@ -58,7 +60,7 @@ public class BatchRunner
         if (string.IsNullOrWhiteSpace(accessToken))
         {
             var (tkn, _) = DaikinOAuthService.TryGetValidAccessToken(config, userId);
-            if (tkn == null) tkn = await DaikinOAuthService.RefreshIfNeededAsync(config, userId);
+            if (tkn == null) tkn = await _daikinOAuthService.RefreshIfNeededAsync(config, userId);
             accessToken = tkn ?? string.Empty;
         }
         var zone = config["Price:Nordpool:DefaultZone"] ?? "SE3";
@@ -229,7 +231,7 @@ public class BatchRunner
         if (!scheduleApplied)
         {
             // Try refresh if possible
-            var refreshed = await DaikinOAuthService.RefreshIfNeededAsync(config, userId);
+            var refreshed = await _daikinOAuthService.RefreshIfNeededAsync(config, userId);
             if (!string.IsNullOrEmpty(refreshed) && refreshed != accessToken)
             {
                 applyAttempts++;

@@ -71,6 +71,7 @@ builder.Services.AddHttpClient("Entsoe", client =>
 
 // Register application services
 builder.Services.AddSingleton<BatchRunner>();
+builder.Services.AddSingleton<DaikinOAuthService>();
 
 // Configure Hangfire with in-memory storage
 builder.Services.AddHangfire(config => config
@@ -406,12 +407,12 @@ pricesGroup.MapGet("/timeseries", (HttpContext ctx) =>
 var daikinAuthGroup = app.MapGroup("/auth/daikin").WithTags("Daikin Auth");
 daikinAuthGroup.MapGet("/start", (IConfiguration cfg, HttpContext c) => { try { var url = DaikinOAuthService.GetAuthorizationUrl(cfg, c); return Results.Json(new { url }); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); } });
 daikinAuthGroup.MapGet("/start-min", (IConfiguration cfg, HttpContext c) => { try { var url = DaikinOAuthService.GetMinimalAuthorizationUrl(cfg, c); return Results.Json(new { url }); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); } });
-daikinAuthGroup.MapGet("/callback", async (IConfiguration cfg, HttpContext c, string? code, string? state) =>
+daikinAuthGroup.MapGet("/callback", async (DaikinOAuthService daikinOAuthService, IConfiguration cfg, HttpContext c, string? code, string? state) =>
 {
     var userId = GetUserId(c);
     if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state))
         return Results.BadRequest(new { error = "Missing code/state" });
-    var ok = await DaikinOAuthService.HandleCallbackAsync(cfg, code, state, userId);
+    var ok = await daikinOAuthService.HandleCallbackAsync(cfg, code, state, userId);
     // Secure redirect handling to avoid open redirect vulnerabilities.
     var configured = cfg["Daikin:PostAuthRedirect"];
     string finalBase;
@@ -475,7 +476,7 @@ daikinAuthGroup.MapGet("/callback", async (IConfiguration cfg, HttpContext c, st
     Console.WriteLine($"[DaikinOAuth][Callback] Redirecting userId={userId} success={ok} to={dest}");
     return Results.Redirect(dest, false);
 });
-daikinAuthGroup.MapGet("/status", async (IConfiguration cfg, HttpContext c) => {
+daikinAuthGroup.MapGet("/status", async (DaikinOAuthService daikinOAuthService, IConfiguration cfg, HttpContext c) => {
     var userId = GetUserId(c);
     var raw = DaikinOAuthService.Status(cfg, userId); // anonymous object { authorized, expiresAtUtc, ... }
     try
@@ -488,17 +489,17 @@ daikinAuthGroup.MapGet("/status", async (IConfiguration cfg, HttpContext c) => {
         var expiresAt = expProp?.GetValue(raw) as DateTimeOffset?;
         if (authorized == true && expiresAt != null && expiresAt < DateTimeOffset.UtcNow.AddMinutes(5))
         {
-            await DaikinOAuthService.RefreshIfNeededAsync(cfg, userId, TimeSpan.FromMinutes(5));
+            await daikinOAuthService.RefreshIfNeededAsync(cfg, userId, TimeSpan.FromMinutes(5));
             raw = DaikinOAuthService.Status(cfg, userId);
         }
     }
     catch { }
     return Results.Json(raw);
 });
-daikinAuthGroup.MapPost("/refresh", async (IConfiguration cfg, HttpContext c) => { var userId = GetUserId(c); var token = await DaikinOAuthService.RefreshIfNeededAsync(cfg, userId); return token == null ? Results.BadRequest(new { error = "Refresh failed or not authorized" }) : Results.Ok(new { refreshed = true }); });
+daikinAuthGroup.MapPost("/refresh", async (DaikinOAuthService daikinOAuthService, IConfiguration cfg, HttpContext c) => { var userId = GetUserId(c); var token = await daikinOAuthService.RefreshIfNeededAsync(cfg, userId); return token == null ? Results.BadRequest(new { error = "Refresh failed or not authorized" }) : Results.Ok(new { refreshed = true }); });
 daikinAuthGroup.MapGet("/debug", (IConfiguration cfg, HttpContext c) => { var userId = GetUserId(c); return Results.Json(new { status = DaikinOAuthService.Status(cfg, userId), userId, now = DateTimeOffset.UtcNow }); });
-daikinAuthGroup.MapPost("/revoke", async (IConfiguration cfg, HttpContext c) => { var userId = GetUserId(c); var ok = await DaikinOAuthService.RevokeAsync(cfg, userId); return ok ? Results.Ok(new { revoked = true }) : Results.BadRequest(new { error = "Revoke failed" }); });
-daikinAuthGroup.MapGet("/introspect", async (IConfiguration cfg, HttpContext c, bool refresh) => { var userId = GetUserId(c); var result = await DaikinOAuthService.IntrospectAsync(cfg, userId, refresh); return result == null ? Results.BadRequest(new { error = "Not authorized" }) : Results.Json(result); });
+daikinAuthGroup.MapPost("/revoke", async (DaikinOAuthService daikinOAuthService, IConfiguration cfg, HttpContext c) => { var userId = GetUserId(c); var ok = await daikinOAuthService.RevokeAsync(cfg, userId); return ok ? Results.Ok(new { revoked = true }) : Results.BadRequest(new { error = "Revoke failed" }); });
+daikinAuthGroup.MapGet("/introspect", async (DaikinOAuthService daikinOAuthService, IConfiguration cfg, HttpContext c, bool refresh) => { var userId = GetUserId(c); var result = await daikinOAuthService.IntrospectAsync(cfg, userId, refresh); return result == null ? Results.BadRequest(new { error = "Not authorized" }) : Results.Json(result); });
 
 // Schedule preview/apply
 var scheduleGroup = app.MapGroup("/api/schedule").WithTags("Schedule");
@@ -526,11 +527,11 @@ async Task<IResult> HandleApplyScheduleAsync(BatchRunner batchRunner, HttpContex
     var result = await batchRunner.RunBatchAsync(configuration, userId, applySchedule: false, persist: true);
     return Results.Json(new { generated = result.generated, schedulePayload = result.schedulePayload, message = result.message });
 }
-daikinGroup.MapGet("/sites", async (IConfiguration cfg, HttpContext c) =>
+daikinGroup.MapGet("/sites", async (DaikinOAuthService daikinOAuthService, IConfiguration cfg, HttpContext c) =>
 {
     var userId = GetUserId(c);
     var (token, _) = DaikinOAuthService.TryGetValidAccessToken(cfg, userId);
-    token ??= await DaikinOAuthService.RefreshIfNeededAsync(cfg, userId);
+    token ??= await daikinOAuthService.RefreshIfNeededAsync(cfg, userId);
     if (token == null) return Results.BadRequest(new { error = "Not authorized" });
     try
     {
@@ -548,14 +549,14 @@ daikinGroup.MapGet("/sites", async (IConfiguration cfg, HttpContext c) =>
     }
 });
 // Simplified current schedule via gateway-devices
-daikinGroup.MapGet("/gateway/schedule", async (IConfiguration cfg, HttpContext ctx) =>
+daikinGroup.MapGet("/gateway/schedule", async (DaikinOAuthService daikinOAuthService, IConfiguration cfg, HttpContext ctx) =>
 {
     var deviceId = ctx.Request.Query["deviceId"].FirstOrDefault();
     var embeddedIdQuery = ctx.Request.Query["embeddedId"].FirstOrDefault();
     Console.WriteLine($"[GatewaySchedule] start deviceId={deviceId} embeddedIdQuery={embeddedIdQuery}");
     var userId = GetUserId(ctx);
     var (token, _) = DaikinOAuthService.TryGetValidAccessToken(cfg, userId);
-    token ??= await DaikinOAuthService.RefreshIfNeededAsync(cfg, userId);
+    token ??= await daikinOAuthService.RefreshIfNeededAsync(cfg, userId);
     if (token == null) return Results.Json(new { status="unauthorized", error="Not authorized" });
     try
     {
@@ -694,11 +695,11 @@ daikinGroup.MapGet("/gateway/schedule", async (IConfiguration cfg, HttpContext c
         return Results.Json(new { status="error", error=ex.Message });
     }
 });
-daikinGroup.MapGet("/devices", async (IConfiguration cfg, HttpContext c, string? siteId) =>
+daikinGroup.MapGet("/devices", async (DaikinOAuthService daikinOAuthService, IConfiguration cfg, HttpContext c, string? siteId) =>
 {
     var userId = GetUserId(c);
     var (token, _) = DaikinOAuthService.TryGetValidAccessToken(cfg, userId);
-    token ??= await DaikinOAuthService.RefreshIfNeededAsync(cfg, userId);
+    token ??= await daikinOAuthService.RefreshIfNeededAsync(cfg, userId);
     if (token == null) return Results.BadRequest(new { error = "Not authorized" });
     try
     {
@@ -720,11 +721,11 @@ daikinGroup.MapGet("/devices", async (IConfiguration cfg, HttpContext c, string?
     catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
 // Simplified gateway devices proxy: return raw array from Daikin
-daikinGroup.MapGet("/gateway", async (IConfiguration cfg, HttpContext c) =>
+daikinGroup.MapGet("/gateway", async (DaikinOAuthService daikinOAuthService, IConfiguration cfg, HttpContext c) =>
 {
     var userId = GetUserId(c);
     var (token, _) = DaikinOAuthService.TryGetValidAccessToken(cfg, userId);
-    token ??= await DaikinOAuthService.RefreshIfNeededAsync(cfg, userId);
+    token ??= await daikinOAuthService.RefreshIfNeededAsync(cfg, userId);
     if (token == null) return Results.BadRequest(new { error = "Not authorized" });
     try
     {
@@ -744,11 +745,11 @@ daikinGroup.MapGet("/gateway", async (IConfiguration cfg, HttpContext c) =>
 
 
 // PUT (upload) a schedule payload to a gateway device management point + optionally activate a scheduleId (mode auto-detect if omitted or 'auto')
-daikinGroup.MapPost("/gateway/schedule/put", async (IConfiguration cfg, HttpContext ctx) =>
+daikinGroup.MapPost("/gateway/schedule/put", async (DaikinOAuthService daikinOAuthService, IConfiguration cfg, HttpContext ctx) =>
 {
     var userId = GetUserId(ctx);
     var (token, _) = DaikinOAuthService.TryGetValidAccessToken(cfg, userId);
-    token ??= await DaikinOAuthService.RefreshIfNeededAsync(cfg, userId);
+    token ??= await daikinOAuthService.RefreshIfNeededAsync(cfg, userId);
     if (token == null) return Results.BadRequest(new { error = "Not authorized" });
     try
     {
