@@ -32,7 +32,8 @@ public class ScheduleUpdateJobTests
         NordpoolPersistence.Save("SE3", today, tomorrow, fs.NordpoolDir);
         PriceMemory.Set(today, tomorrow);
         
-        var job = new ScheduleUpdateHangfireJob(cfg);
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
+        var job = new ScheduleUpdateHangfireJob(cfg, batchRunner);
         await job.ExecuteAsync();
         
         // Give async operations time to complete
@@ -50,7 +51,8 @@ public class ScheduleUpdateJobTests
         var cfg = fs.GetTestConfig();
         
         // No user directories exist
-        var job = new ScheduleUpdateHangfireJob(cfg);
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
+        var job = new ScheduleUpdateHangfireJob(cfg, batchRunner);
         
         // Should complete without errors
         await job.ExecuteAsync();
@@ -89,7 +91,8 @@ public class ScheduleUpdateJobTests
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
         PriceMemory.Set(today, tomorrow);
         
-        var job = new ScheduleUpdateHangfireJob(cfg);
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
+        var job = new ScheduleUpdateHangfireJob(cfg, batchRunner);
         await job.ExecuteAsync();
         
         await Task.Delay(1500);
@@ -131,7 +134,8 @@ public class ScheduleUpdateJobTests
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
         PriceMemory.Set(today, tomorrow);
         
-        var job = new ScheduleUpdateHangfireJob(cfg);
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
+        var job = new ScheduleUpdateHangfireJob(cfg, batchRunner);
         
         // Should not throw despite corrupt user data
         await job.ExecuteAsync();
@@ -164,7 +168,8 @@ public class ScheduleUpdateJobTests
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
         PriceMemory.Set(today, tomorrow);
         
-        var job = new ScheduleUpdateHangfireJob(cfg);
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
+        var job = new ScheduleUpdateHangfireJob(cfg, batchRunner);
         await job.ExecuteAsync();
         
         await Task.Delay(500);
