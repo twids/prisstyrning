@@ -152,16 +152,19 @@ public class ScheduleHistoryPersistenceTests
     [Fact]
     public async Task SaveAsync_WithInvalidPath_ThrowsException()
     {
-        // Arrange - Use a path with illegal characters that cannot be created
-        var invalidBaseDir = "\\\\?\\invalid\\<>|path\\with:illegal*chars";
+        // Arrange - Create a file first, then try to use it as a base directory
+        // This is cross-platform invalid (can't create a directory inside a file)
+        using var fs = new TempFileSystem();
+        var fileAsDir = Path.Combine(fs.BaseDir, "this-is-a-file.txt");
+        await File.WriteAllTextAsync(fileAsDir, "blocking content");
+        
         var userId = "test-user";
         var payload = TestDataFactory.CreateValidSchedulePayload(("monday", 8, "comfort"));
 
         // Act & Assert
-        // This should throw because the path contains illegal characters
-        // The specific exception type may vary, but it should throw something
+        // This should throw because we're trying to create a directory path inside a file
         await Assert.ThrowsAnyAsync<Exception>(async () =>
-            await ScheduleHistoryPersistence.SaveAsync(userId, payload, DateTimeOffset.UtcNow, retentionDays: 7, baseDir: invalidBaseDir)
+            await ScheduleHistoryPersistence.SaveAsync(userId, payload, DateTimeOffset.UtcNow, retentionDays: 7, baseDir: fileAsDir)
         );
     }
 
