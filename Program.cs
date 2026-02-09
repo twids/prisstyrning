@@ -163,7 +163,7 @@ app.MapPost("/api/user/settings", async (HttpContext ctx) =>
     node["MaxComfortGapHours"] = maxComfortGapHours;
     Directory.CreateDirectory(Path.GetDirectoryName(path)!);
     await File.WriteAllTextAsync(path, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-    return Results.Ok(new { saved = true });
+    return Results.Json(new { ComfortHours = comfortHours, TurnOffPercentile = turnOffPercentile, AutoApplySchedule = autoApplySchedule, MaxComfortGapHours = maxComfortGapHours });
 });
 
 // Försök förladda minnescache från senaste persistenta fil så /api/prices/memory inte ger 404 direkt vid start
