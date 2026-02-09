@@ -3,8 +3,8 @@ import { apiClient } from '../api/client';
 import type { SchedulePayload } from '../types/api';
 
 interface ApplyScheduleParams {
-  gatewayDeviceId: string;
-  embeddedId: string;
+  gatewayDeviceId?: string; // Optional - will be auto-detected if not provided
+  embeddedId?: string; // Optional - will be auto-detected if not provided
   schedulePayload: SchedulePayload;
   mode?: string;
   activateScheduleId?: string;

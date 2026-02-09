@@ -1,4 +1,4 @@
-﻿
+
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection;
@@ -163,7 +163,7 @@ app.MapPost("/api/user/settings", async (HttpContext ctx) =>
     node["MaxComfortGapHours"] = maxComfortGapHours;
     Directory.CreateDirectory(Path.GetDirectoryName(path)!);
     await File.WriteAllTextAsync(path, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-    return Results.Ok(new { saved = true });
+    return Results.Json(new { ComfortHours = comfortHours, TurnOffPercentile = turnOffPercentile, AutoApplySchedule = autoApplySchedule, MaxComfortGapHours = maxComfortGapHours });
 });
 
 // Försök förladda minnescache från senaste persistenta fil så /api/prices/memory inte ger 404 direkt vid start
@@ -473,8 +473,8 @@ scheduleGroup.MapGet("/preview", async (HttpContext c) => {
     var cfg = (IConfiguration)builder.Configuration;
     var userId = GetUserId(c);
     
-    // Use BatchRunner to generate schedule and handle history persistence
-    var (generated, schedulePayload, message) = await BatchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: true);
+    // Preview should NOT persist to history - only apply should persist
+    var (generated, schedulePayload, message) = await BatchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: false);
     var zone = UserSettingsService.GetUserZone(cfg, userId);
     
     return Results.Json(new { schedulePayload, generated, message, zone });

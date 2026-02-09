@@ -68,7 +68,10 @@ export interface SaveZoneResponse {
 }
 
 export interface SaveSettingsResponse {
-  saved: boolean;
+  ComfortHours: number;
+  TurnOffPercentile: number;
+  AutoApplySchedule: boolean;
+  MaxComfortGapHours: number;
 }
 
 export interface AuthUrlResponse {
@@ -84,8 +87,8 @@ export interface AuthRevokeResponse {
 }
 
 export interface ApplyScheduleRequest {
-  gatewayDeviceId: string;
-  embeddedId: string;
+  gatewayDeviceId?: string; // Optional - will be auto-detected if not provided
+  embeddedId?: string; // Optional - will be auto-detected if not provided
   mode?: string;
   schedulePayload: SchedulePayload;
   activateScheduleId?: string;
