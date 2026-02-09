@@ -68,7 +68,10 @@ export interface SaveZoneResponse {
 }
 
 export interface SaveSettingsResponse {
-  saved: boolean;
+  ComfortHours: number;
+  TurnOffPercentile: number;
+  AutoApplySchedule: boolean;
+  MaxComfortGapHours: number;
 }
 
 export interface AuthUrlResponse {

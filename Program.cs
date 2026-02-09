@@ -206,7 +206,7 @@ app.MapPost("/api/user/settings", async (HttpContext ctx, UserSettingsRepository
     { if (!int.TryParse(rawMcgh, out maxComfortGapHours) || maxComfortGapHours < 1 || maxComfortGapHours > 72) { errors.Add("MaxComfortGapHours must be an integer between 1 and 72"); maxComfortGapHours = 28; } }
     if (errors.Count > 0) return Results.BadRequest(new { error = "Validation failed", errors });
     await settingsRepo.SaveSettingsAsync(userId, comfortHours, turnOffPercentile, autoApplySchedule, maxComfortGapHours);
-    return Results.Ok(new { saved = true });
+    return Results.Json(new { ComfortHours = comfortHours, TurnOffPercentile = turnOffPercentile, AutoApplySchedule = autoApplySchedule, MaxComfortGapHours = maxComfortGapHours });
 });
 
 // Preload price memory from database
