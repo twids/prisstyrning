@@ -3,6 +3,7 @@ import { AppBar, Toolbar, Typography, Container, Button, Box } from '@mui/materi
 import { Link as RouterLink } from 'react-router-dom';
 import SettingsIcon from '@mui/icons-material/Settings';
 import DashboardIcon from '@mui/icons-material/Dashboard';
+import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 
 interface LayoutProps {
   children: ReactNode;
@@ -31,6 +32,14 @@ export default function Layout({ children }: LayoutProps) {
             startIcon={<SettingsIcon />}
           >
             Settings
+          </Button>
+          <Button
+            color="inherit"
+            component={RouterLink}
+            to="/admin"
+            startIcon={<AdminPanelSettingsIcon />}
+          >
+            Admin
           </Button>
         </Toolbar>
       </AppBar>

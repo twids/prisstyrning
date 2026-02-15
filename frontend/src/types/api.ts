@@ -102,3 +102,32 @@ export interface StatusResponse {
   status: string;
   timestamp: string;
 }
+
+// Admin types
+export interface AdminStatus {
+  isAdmin: boolean;
+  userId: string;
+}
+
+export interface AdminUser {
+  userId: string;
+  settings: {
+    ComfortHours: number;
+    TurnOffPercentile: number;
+    MaxComfortGapHours: number;
+  };
+  zone: string;
+  daikinAuthorized: boolean;
+  daikinExpiresAtUtc: string | null;
+  hasScheduleHistory: boolean;
+  scheduleCount: number | null;
+  lastScheduleDate: string | null;
+  isAdmin: boolean;
+  isCurrentUser: boolean;
+  hasHangfireAccess: boolean;
+  createdAt: string | null;
+}
+
+export interface AdminUsersResponse {
+  users: AdminUser[];
+}
