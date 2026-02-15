@@ -18,4 +18,5 @@ public static class StoragePaths
     public static string GetTokensDir(IConfiguration config) => Path.Combine(GetBaseDir(config), "tokens");
     public static string GetScheduleHistoryDir(IConfiguration config) => Path.Combine(GetBaseDir(config), "schedule_history");
     public static string GetNordpoolDir(IConfiguration config) => Path.Combine(GetBaseDir(config), "nordpool");
+    public static string GetAdminJsonPath(IConfiguration config) => Path.Combine(GetBaseDir(config), "admin.json");
 }
