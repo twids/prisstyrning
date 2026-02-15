@@ -630,6 +630,47 @@ adminGroup.MapDelete("/users/{userId}/hangfire", async (IConfiguration cfg, Http
     return Results.Ok(new { revoked = true, userId });
 });
 
+adminGroup.MapDelete("/users/{userId}", async (IConfiguration cfg, HttpContext c, string userId) =>
+{
+    if (!IsAdminRequest(c, cfg))
+        return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
+
+    var currentUserId = GetUserId(c);
+    if (userId == currentUserId)
+        return Results.Json(new { error = "Cannot delete your own user" }, statusCode: 400);
+
+    // Validate userId format (same as GetUserId validation)
+    if (string.IsNullOrWhiteSpace(userId) || userId.Length > 100 || !userId.All(c => char.IsLetterOrDigit(c) || c == '-' || c == '_'))
+        return Results.Json(new { error = "Invalid user ID" }, statusCode: 400);
+
+    var deleted = false;
+
+    // Delete tokens directory (contains user.json and daikin.json)
+    var userTokenDir = Path.Combine(StoragePaths.GetTokensDir(cfg), userId);
+    if (Directory.Exists(userTokenDir))
+    {
+        Directory.Delete(userTokenDir, recursive: true);
+        deleted = true;
+    }
+
+    // Delete schedule history directory
+    var userHistoryDir = Path.Combine(StoragePaths.GetScheduleHistoryDir(cfg), userId);
+    if (Directory.Exists(userHistoryDir))
+    {
+        Directory.Delete(userHistoryDir, recursive: true);
+        deleted = true;
+    }
+
+    // Remove from admin.json if present
+    await AdminService.RevokeAdmin(cfg, userId);
+    await AdminService.RevokeHangfireAccess(cfg, userId);
+
+    if (!deleted)
+        return Results.Json(new { error = "User not found" }, statusCode: 404);
+
+    return Results.Ok(new { deleted = true, userId });
+});
+
 // Schedule preview/apply
 var scheduleGroup = app.MapGroup("/api/schedule").WithTags("Schedule");
 scheduleGroup.MapGet("/preview", async (HttpContext c) => {

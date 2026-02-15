@@ -114,6 +114,10 @@ class ApiClient {
     await this.del(`/api/admin/users/${encodeURIComponent(userId)}/hangfire`);
   }
 
+  async deleteUser(userId: string): Promise<{ deleted: boolean; userId: string }> {
+    return this.del(`/api/admin/users/${encodeURIComponent(userId)}`);
+  }
+
   // Helper methods
   private async get<T>(url: string): Promise<T> {
     const response = await fetch(this.baseUrl + url, {

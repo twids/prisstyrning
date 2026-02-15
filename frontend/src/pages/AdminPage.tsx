@@ -22,6 +22,13 @@ import {
 } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
+import DeleteIcon from '@mui/icons-material/Delete';
+import IconButton from '@mui/material/IconButton';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogContentText from '@mui/material/DialogContentText';
+import DialogActions from '@mui/material/DialogActions';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../api/client';
 import type { AdminUser } from '../types/api';
@@ -32,6 +39,7 @@ export default function AdminPage() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'error' | 'success' }>({ open: false, message: '', severity: 'error' });
   const [pendingToggles, setPendingToggles] = useState<Set<string>>(new Set());
+  const [deleteTarget, setDeleteTarget] = useState<AdminUser | null>(null);
 
   const statusQuery = useQuery({
     queryKey: ['admin-status'],
@@ -97,6 +105,18 @@ export default function AdminPage() {
     },
     onError: (err) => {
       setSnackbar({ open: true, message: `Hangfire toggle failed: ${err.message}`, severity: 'error' });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (userId: string) => apiClient.deleteUser(userId),
+    onSuccess: () => {
+      setDeleteTarget(null);
+      setSnackbar({ open: true, message: 'Användare borttagen', severity: 'success' });
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+    },
+    onError: (err: Error) => {
+      setSnackbar({ open: true, message: `Kunde inte ta bort: ${err.message}`, severity: 'error' });
     },
   });
 
@@ -182,6 +202,7 @@ export default function AdminPage() {
                 <TableCell>Admin</TableCell>
                 <TableCell>Hangfire</TableCell>
                 <TableCell>Skapad</TableCell>
+                <TableCell>Åtgärd</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -251,11 +272,25 @@ export default function AdminPage() {
                       {user.createdAt ? user.createdAt.slice(0, 10) : '—'}
                     </Typography>
                   </TableCell>
+                  <TableCell>
+                    <Tooltip title={user.isCurrentUser ? 'Kan inte ta bort dig själv' : 'Ta bort användare'}>
+                      <span>
+                        <IconButton
+                          size="small"
+                          color="error"
+                          disabled={user.isCurrentUser}
+                          onClick={() => setDeleteTarget(user)}
+                        >
+                          <DeleteIcon fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  </TableCell>
                 </TableRow>
               ))}
               {users.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={8} align="center">
+                  <TableCell colSpan={9} align="center">
                     <Typography variant="body2" color="text.secondary">Inga användare</Typography>
                   </TableCell>
                 </TableRow>
@@ -264,6 +299,29 @@ export default function AdminPage() {
           </Table>
         </TableContainer>
       )}
+
+      <Dialog open={deleteTarget !== null} onClose={() => setDeleteTarget(null)}>
+        <DialogTitle>Ta bort användare</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Är du säker på att du vill ta bort användare{' '}
+            <strong>{deleteTarget?.userId.slice(0, 8)}…</strong>?
+            {' '}All data (inställningar, tokens, schemahistorik) kommer att raderas permanent.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteTarget(null)}>Avbryt</Button>
+          <Button
+            onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.userId)}
+            color="error"
+            variant="contained"
+            disabled={deleteMutation.isPending}
+            startIcon={deleteMutation.isPending ? <CircularProgress size={18} /> : <DeleteIcon />}
+          >
+            Ta bort
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Snackbar
         open={snackbar.open}
