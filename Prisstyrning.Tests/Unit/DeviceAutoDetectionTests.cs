@@ -58,15 +58,15 @@ public class DeviceAutoDetectionTests
         if (doc.RootElement.TryGetProperty("managementPoints", out var mpArray) && 
             mpArray.ValueKind == JsonValueKind.Array)
         {
-            foreach (var mp in mpArray.EnumerateArray())
+            var dhwPoint = mpArray.EnumerateArray()
+                .Where(mp => mp.TryGetProperty("managementPointType", out var mpt) && 
+                            mpt.GetString() == "domesticHotWaterTank" && 
+                            mp.TryGetProperty("embeddedId", out _))
+                .FirstOrDefault();
+            
+            if (dhwPoint.ValueKind != JsonValueKind.Undefined)
             {
-                if (mp.TryGetProperty("managementPointType", out var mpt) && 
-                    mpt.GetString() == "domesticHotWaterTank" && 
-                    mp.TryGetProperty("embeddedId", out var emb))
-                {
-                    embeddedId = emb.GetString();
-                    break;
-                }
+                embeddedId = dhwPoint.GetProperty("embeddedId").GetString();
             }
         }
         
@@ -96,15 +96,15 @@ public class DeviceAutoDetectionTests
         if (doc.RootElement.TryGetProperty("managementPoints", out var mpArray) && 
             mpArray.ValueKind == JsonValueKind.Array)
         {
-            foreach (var mp in mpArray.EnumerateArray())
+            var dhwPoint = mpArray.EnumerateArray()
+                .Where(mp => mp.TryGetProperty("managementPointType", out var mpt) && 
+                            mpt.GetString() == "domesticHotWaterTank" && 
+                            mp.TryGetProperty("embeddedId", out _))
+                .FirstOrDefault();
+            
+            if (dhwPoint.ValueKind != JsonValueKind.Undefined)
             {
-                if (mp.TryGetProperty("managementPointType", out var mpt) && 
-                    mpt.GetString() == "domesticHotWaterTank" && 
-                    mp.TryGetProperty("embeddedId", out var emb))
-                {
-                    embeddedId = emb.GetString();
-                    break;
-                }
+                embeddedId = dhwPoint.GetProperty("embeddedId").GetString();
             }
         }
         

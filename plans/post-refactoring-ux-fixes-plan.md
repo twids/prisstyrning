@@ -107,7 +107,7 @@ Fix three critical UX regressions after the ECO removal + frontend rewrite: (1) 
      11. Run component tests for toggle behavior
      12. Consider reusing ScheduleViewer for schedule history display (future enhancement)
 
-**Open Questions:
+### Open Questions
 1. Device detection fallback: If auto-detection fails (no DHW device found), should we show a technical error or user-friendly message? **Suggestion:** User-friendly: "Could not find Daikin DHW device. Please check your Daikin authorization."
 2. Config overrides: Should we honor existing `Daikin:DeviceId` and `Daikin:ManagementPointEmbeddedId` config for manual apply too? **Suggestion:** Yes - use same logic as BatchRunner for consistency
 3. Settings response: Should return format be `{saved: true, settings: {...}}` or just `{...settings}`? **Suggestion:** Just return settings directly for consistency with GET endpoint

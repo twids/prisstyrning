@@ -26,7 +26,7 @@ public class BatchRunnerTests
         PriceMemory.Set(today, tomorrow);
         
         // Act: Call with persist=false
-        var (generated, payload, message) = await BatchRunner.RunBatchAsync(
+        var (generated, payload, _) = await BatchRunner.RunBatchAsync(
             cfg, 
             userId, 
             applySchedule: false, 
@@ -56,7 +56,7 @@ public class BatchRunnerTests
         PriceMemory.Set(today, tomorrow);
         
         // Act: Call with persist=true
-        var (generated, payload, message) = await BatchRunner.RunBatchAsync(
+        var (generated, payload, _) = await BatchRunner.RunBatchAsync(
             cfg, 
             userId, 
             applySchedule: false, 

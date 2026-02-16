@@ -25,7 +25,7 @@ public class ScheduleHistoryIntegrationTests
         PriceMemory.Set(today, tomorrow);
         
         // Act: Call GenerateSchedulePreview (used by /api/schedule/preview endpoint)
-        var result = await BatchRunner.GenerateSchedulePreview(cfg);
+        await BatchRunner.GenerateSchedulePreview(cfg);
         
         // Assert: No history should be saved
         await Task.Delay(100); // Wait for any async saves
@@ -40,7 +40,6 @@ public class ScheduleHistoryIntegrationTests
     {
         // Arrange
         using var fs = new TempFileSystem();
-        var cfg = fs.GetTestConfig();
         var userId = "test-apply-saves-history";
         var date = new DateTime(2026, 2, 7);
         
