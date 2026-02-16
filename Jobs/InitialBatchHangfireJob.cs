@@ -9,7 +9,7 @@ namespace Prisstyrning.Jobs;
 /// This job fetches/prerenders data without auto-applying schedules.
 /// Can also be triggered manually from Hangfire dashboard if needed.
 /// </summary>
-public class InitialBatchHangfireJob
+internal class InitialBatchHangfireJob
 {
     private readonly IConfiguration _cfg;
     private readonly BatchRunner _batchRunner;

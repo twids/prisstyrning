@@ -29,7 +29,7 @@ public static class MockServiceFactory
         // Mock elprisetjustnu.se API (used by NordpoolClient)
         // Expected format: array of objects with "time_start" and "SEK_per_kWh"
         var priceArray = new List<object>();
-        var baseDate = new DateTime(2026, 2, 7); // Match test data date
+        var baseDate = DateTime.UtcNow.Date; // Use current date to avoid time-dependent tests
         
         for (int h = 0; h < 24; h++)
         {
@@ -52,7 +52,7 @@ public static class MockServiceFactory
     /// <summary>
     /// Creates a BatchRunner with test IHttpClientFactory and DaikinOAuthService.
     /// </summary>
-    public static BatchRunner CreateMockBatchRunner(IHttpClientFactory? httpClientFactory = null, DaikinOAuthService? daikinOAuthService = null)
+    internal static BatchRunner CreateMockBatchRunner(IHttpClientFactory? httpClientFactory = null, DaikinOAuthService? daikinOAuthService = null)
     {
         var factory = httpClientFactory ?? CreateMockHttpClientFactory();
         var oauthService = daikinOAuthService ?? CreateMockDaikinOAuthService(factory);
@@ -62,7 +62,7 @@ public static class MockServiceFactory
     /// <summary>
     /// Creates a DaikinOAuthService with test IHttpClientFactory.
     /// </summary>
-    public static DaikinOAuthService CreateMockDaikinOAuthService(IHttpClientFactory? httpClientFactory = null)
+    internal static DaikinOAuthService CreateMockDaikinOAuthService(IHttpClientFactory? httpClientFactory = null)
     {
         var factory = httpClientFactory ?? CreateMockHttpClientFactory();
         return new DaikinOAuthService(factory);
