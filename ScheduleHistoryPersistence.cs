@@ -23,7 +23,12 @@ internal static class ScheduleHistoryPersistence
         var lockKey = file.ToLowerInvariant();
         var fileLock = _fileLocks.GetOrAdd(lockKey, _ => new SemaphoreSlim(1, 1));
         
-        await fileLock.WaitAsync();
+        // Wait with timeout to prevent deadlocks (30 second timeout)
+        var acquired = await fileLock.WaitAsync(TimeSpan.FromSeconds(30));
+        if (!acquired)
+        {
+            throw new TimeoutException($"Failed to acquire file lock for {file} within 30 seconds");
+        }
         try
         {
             var history = new List<JsonObject>();
