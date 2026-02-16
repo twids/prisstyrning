@@ -11,6 +11,8 @@ using System.Linq;
 using Hangfire;
 using Hangfire.InMemory;
 using Hangfire.Dashboard;
+using Microsoft.EntityFrameworkCore;
+using Prisstyrning.Data;
 using Prisstyrning.Jobs;
 
 // Constants for maintainability
@@ -39,6 +41,12 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+// PostgreSQL + EF Core
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+    ?? "Host=localhost;Database=prisstyrning;Username=prisstyrning;Password=prisstyrning";
+builder.Services.AddDbContext<PrisstyrningDbContext>(options =>
+    options.UseNpgsql(connectionString));
+
 // Configure Hangfire with in-memory storage
 builder.Services.AddHangfire(config => config
     .UseInMemoryStorage());
@@ -52,6 +60,26 @@ builder.Services.AddTransient<InitialBatchHangfireJob>();
 builder.Services.AddTransient<ScheduleUpdateHangfireJob>();
 
 var app = builder.Build();
+
+// Apply EF Core migrations on startup (with retry for container orchestration)
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+    for (var attempt = 1; attempt <= 5; attempt++)
+    {
+        try
+        {
+            db.Database.Migrate();
+            Console.WriteLine("[Startup] Database migrations applied successfully.");
+            break;
+        }
+        catch (Exception ex) when (attempt < 5)
+        {
+            Console.WriteLine($"[Startup] Database migration attempt {attempt}/5 failed: {ex.Message}. Retrying in {attempt * 2}s...");
+            Thread.Sleep(attempt * 2000);
+        }
+    }
+}
 
 // Configure Hangfire middleware
 var hangfirePassword = builder.Configuration["Hangfire:DashboardPassword"];
