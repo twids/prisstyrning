@@ -758,12 +758,9 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IConfiguration cfg, HttpCont
             else
             {
                 var sitesJson = await client.GetSitesAsync();
-                using var siteDoc = JsonDocument.Parse(sitesJson);
-                if (siteDoc.RootElement.ValueKind == JsonValueKind.Array && siteDoc.RootElement.GetArrayLength() > 0)
-                {
-                    detectedSite = siteDoc.RootElement[0].GetProperty("id").GetString();
+                detectedSite = DeviceAutoDetection.GetFirstSiteId(sitesJson);
+                if (detectedSite != null)
                     Console.WriteLine($"[SchedulePut] Auto-detected site: {detectedSite}");
-                }
             }
 
             if (detectedSite == null)
@@ -777,32 +774,21 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IConfiguration cfg, HttpCont
             else
             {
                 var devicesJson = await client.GetDevicesAsync(detectedSite);
-                using var deviceDoc = JsonDocument.Parse(devicesJson);
-                if (deviceDoc.RootElement.ValueKind == JsonValueKind.Array && deviceDoc.RootElement.GetArrayLength() > 0)
+                var (deviceId, deviceJsonRaw) = DeviceAutoDetection.GetFirstDevice(devicesJson);
+                detectedDevice = deviceId;
+                
+                // Also detect embedded ID from the device
+                if (!string.IsNullOrWhiteSpace(overrideEmbedded))
+                    detectedEmbedded = overrideEmbedded;
+                else if (deviceJsonRaw != null)
                 {
-                    var firstDevice = deviceDoc.RootElement[0];
-                    detectedDevice = firstDevice.GetProperty("id").GetString();
-                    
-                    // Also detect embedded ID from the device
-                    if (!string.IsNullOrWhiteSpace(overrideEmbedded))
-                        detectedEmbedded = overrideEmbedded;
-                    else if (firstDevice.TryGetProperty("managementPoints", out var mpArray) && mpArray.ValueKind == JsonValueKind.Array)
-                    {
-                        foreach (var mp in mpArray.EnumerateArray())
-                        {
-                            if (mp.TryGetProperty("managementPointType", out var mpt) && 
-                                mpt.GetString() == "domesticHotWaterTank" && 
-                                mp.TryGetProperty("embeddedId", out var emb))
-                            {
-                                detectedEmbedded = emb.GetString();
-                                Console.WriteLine($"[SchedulePut] Auto-detected DHW embeddedId: {detectedEmbedded}");
-                                break;
-                            }
-                        }
-                    }
-                    
-                    Console.WriteLine($"[SchedulePut] Auto-detected device: {detectedDevice}");
+                    detectedEmbedded = DeviceAutoDetection.FindDhwEmbeddedId(deviceJsonRaw);
+                    if (detectedEmbedded != null)
+                        Console.WriteLine($"[SchedulePut] Auto-detected DHW embeddedId: {detectedEmbedded}");
                 }
+                
+                if (detectedDevice != null)
+                    Console.WriteLine($"[SchedulePut] Auto-detected device: {detectedDevice}");
             }
 
             if (detectedDevice == null)

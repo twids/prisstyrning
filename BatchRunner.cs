@@ -169,17 +169,9 @@ internal static class BatchRunner
                     }
                     if (pickedDeviceJson != null)
                     {
-                        using (var devDoc = JsonDocument.Parse(pickedDeviceJson))
-                        {
-                            if (devDoc.RootElement.TryGetProperty("managementPoints", out var mpArray) && mpArray.ValueKind == JsonValueKind.Array)
-                            {
-                                foreach (var mp in mpArray.EnumerateArray())
-                                {
-                                    if (mp.TryGetProperty("managementPointType", out var mpt) && mpt.GetString() == "domesticHotWaterTank" && mp.TryGetProperty("embeddedId", out var emb))
-                                    { embeddedId = emb.GetString(); Console.WriteLine($"[Schedule] found DHW embeddedId={embeddedId}"); break; }
-                                }
-                            }
-                        }
+                        embeddedId = DeviceAutoDetection.FindDhwEmbeddedId(pickedDeviceJson);
+                        if (embeddedId != null)
+                            Console.WriteLine($"[Schedule] found DHW embeddedId={embeddedId}");
                     }
                 }
                 if (embeddedId == null)
