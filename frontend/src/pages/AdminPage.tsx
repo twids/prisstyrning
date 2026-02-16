@@ -269,7 +269,7 @@ export default function AdminPage() {
                   </TableCell>
                   <TableCell>
                     {user.createdAt ? (
-                      <Tooltip title={`${user.createdAt} (UTC)`}>
+                      <Tooltip title={`${new Date(user.createdAt).toISOString()}`}>
                         <Typography variant="body2">
                           {new Date(user.createdAt).toLocaleString(undefined, {
                             year: 'numeric',

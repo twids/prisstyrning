@@ -545,7 +545,7 @@ adminGroup.MapGet("/users", async (IConfiguration cfg, HttpContext c) =>
     var hangfireUserIds = AdminService.GetHangfireUserIds(cfg);
     var users = new List<object>();
 
-    // NOTE: This performs multiple file I/O operations per user (N+1 pattern).
+    // NOTE: This performs sequential file I/O operations for each user.
     // For systems with many users, consider implementing pagination or caching.
     // Current implementation is acceptable for typical usage (tens of users),
     // but may need optimization if user count grows to hundreds or more.
