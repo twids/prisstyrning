@@ -522,7 +522,11 @@ adminGroup.MapGet("/users", async (IConfiguration cfg, HttpContext c) =>
     if (Directory.Exists(tokensDir))
     {
         foreach (var dir in Directory.GetDirectories(tokensDir))
-            userIds.Add(Path.GetFileName(dir));
+        {
+            var uid = Path.GetFileName(dir);
+            if (IsValidUserId(uid))
+                userIds.Add(uid);
+        }
     }
 
     // Scan schedule_history directories
@@ -530,13 +534,21 @@ adminGroup.MapGet("/users", async (IConfiguration cfg, HttpContext c) =>
     if (Directory.Exists(historyDir))
     {
         foreach (var dir in Directory.GetDirectories(historyDir))
-            userIds.Add(Path.GetFileName(dir));
+        {
+            var uid = Path.GetFileName(dir);
+            if (IsValidUserId(uid))
+                userIds.Add(uid);
+        }
     }
 
     var adminUserIds = AdminService.GetAdminUserIds(cfg);
     var hangfireUserIds = AdminService.GetHangfireUserIds(cfg);
     var users = new List<object>();
 
+    // NOTE: This performs multiple file I/O operations per user (N+1 pattern).
+    // For systems with many users, consider implementing pagination or caching.
+    // Current implementation is acceptable for typical usage (tens of users),
+    // but may need optimization if user count grows to hundreds or more.
     foreach (var uid in userIds)
     {
         var settings = UserSettingsService.LoadScheduleSettings(cfg, uid);
@@ -662,29 +674,54 @@ adminGroup.MapDelete("/users/{userId}", async (IConfiguration cfg, HttpContext c
         return Results.Json(new { error = "Cannot delete your own user" }, statusCode: 400);
 
     var deleted = false;
+    var errors = new List<string>();
 
     // Delete tokens directory (contains user.json and daikin.json)
     var userTokenDir = Path.Combine(StoragePaths.GetTokensDir(cfg), userId);
     if (Directory.Exists(userTokenDir))
     {
-        Directory.Delete(userTokenDir, recursive: true);
-        deleted = true;
+        try
+        {
+            Directory.Delete(userTokenDir, recursive: true);
+            deleted = true;
+        }
+        catch (Exception ex)
+        {
+            errors.Add($"Failed to delete tokens: {ex.Message}");
+        }
     }
 
     // Delete schedule history directory
     var userHistoryDir = Path.Combine(StoragePaths.GetScheduleHistoryDir(cfg), userId);
     if (Directory.Exists(userHistoryDir))
     {
-        Directory.Delete(userHistoryDir, recursive: true);
-        deleted = true;
+        try
+        {
+            Directory.Delete(userHistoryDir, recursive: true);
+            deleted = true;
+        }
+        catch (Exception ex)
+        {
+            errors.Add($"Failed to delete schedule history: {ex.Message}");
+        }
     }
 
     // Remove from admin.json if present
-    await AdminService.RevokeAdmin(cfg, userId);
-    await AdminService.RevokeHangfireAccess(cfg, userId);
+    try
+    {
+        await AdminService.RevokeAdmin(cfg, userId);
+        await AdminService.RevokeHangfireAccess(cfg, userId);
+    }
+    catch (Exception ex)
+    {
+        errors.Add($"Failed to update admin.json: {ex.Message}");
+    }
 
     if (!deleted)
         return Results.Json(new { error = "User not found" }, statusCode: 404);
+
+    if (errors.Any())
+        return Results.Json(new { deleted = true, userId, warnings = errors });
 
     return Results.Json(new { deleted = true, userId });
 });

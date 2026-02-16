@@ -268,9 +268,21 @@ export default function AdminPage() {
                     )}
                   </TableCell>
                   <TableCell>
-                    <Typography variant="body2">
-                      {user.createdAt ? user.createdAt.slice(0, 10) : '—'}
-                    </Typography>
+                    {user.createdAt ? (
+                      <Tooltip title={`${user.createdAt} (UTC)`}>
+                        <Typography variant="body2">
+                          {new Date(user.createdAt).toLocaleString(undefined, {
+                            year: 'numeric',
+                            month: '2-digit',
+                            day: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </Typography>
+                      </Tooltip>
+                    ) : (
+                      <Typography variant="body2">—</Typography>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Tooltip title={user.isCurrentUser ? 'Kan inte ta bort dig själv' : 'Ta bort användare'}>
@@ -306,7 +318,7 @@ export default function AdminPage() {
         <DialogContent>
           <DialogContentText>
             Är du säker på att du vill ta bort användare{' '}
-            <strong>{deleteTarget?.userId.slice(0, 8)}…</strong>?
+            <strong>{deleteTarget?.userId?.slice(0, 8)}…</strong>?
             {' '}All data (inställningar, tokens, schemahistorik) kommer att raderas permanent.
           </DialogContentText>
         </DialogContent>
