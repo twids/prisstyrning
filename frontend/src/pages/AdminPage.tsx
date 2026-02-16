@@ -66,15 +66,15 @@ export default function AdminPage() {
     },
   });
 
-  const toggleAdminMutation = useMutation<void, Error, AdminUser>({
+  const toggleAdminMutation = useMutation<{ granted?: boolean; revoked?: boolean; userId: string }, Error, AdminUser>({
     mutationFn: (user) =>
       user.isAdmin ? apiClient.revokeAdmin(user.userId) : apiClient.grantAdmin(user.userId),
     onMutate: (user) => {
-      setPendingToggles((prev: Set<string>) => new Set(prev).add(`admin-${user.userId}`));
+      setPendingToggles((prev) => new Set(prev).add(`admin-${user.userId}`));
     },
-    onSettled: (_data: void | undefined, _err: Error | null, user: AdminUser | undefined) => {
+    onSettled: (_data, _err, user) => {
       if (user) {
-        setPendingToggles((prev: Set<string>) => {
+        setPendingToggles((prev) => {
           const next = new Set(prev);
           next.delete(`admin-${user.userId}`);
           return next;
@@ -87,15 +87,15 @@ export default function AdminPage() {
     },
   });
 
-  const toggleHangfireMutation = useMutation<void, Error, AdminUser>({
+  const toggleHangfireMutation = useMutation<{ granted?: boolean; revoked?: boolean; userId: string }, Error, AdminUser>({
     mutationFn: (user) =>
       user.hasHangfireAccess ? apiClient.revokeHangfire(user.userId) : apiClient.grantHangfire(user.userId),
     onMutate: (user) => {
-      setPendingToggles((prev: Set<string>) => new Set(prev).add(`hangfire-${user.userId}`));
+      setPendingToggles((prev) => new Set(prev).add(`hangfire-${user.userId}`));
     },
-    onSettled: (_data: void | undefined, _err: Error | null, user: AdminUser | undefined) => {
+    onSettled: (_data, _err, user) => {
       if (user) {
-        setPendingToggles((prev: Set<string>) => {
+        setPendingToggles((prev) => {
           const next = new Set(prev);
           next.delete(`hangfire-${user.userId}`);
           return next;
@@ -280,6 +280,7 @@ export default function AdminPage() {
                           color="error"
                           disabled={user.isCurrentUser}
                           onClick={() => setDeleteTarget(user)}
+                          aria-label={user.isCurrentUser ? 'Kan inte ta bort din egen användare' : `Ta bort användare ${user.userId.slice(0, 8)}`}
                         >
                           <DeleteIcon fontSize="small" />
                         </IconButton>

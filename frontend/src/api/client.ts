@@ -89,7 +89,7 @@ class ApiClient {
     });
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(text || `HTTP ${response.status}`);
+      throw new Error(this.extractErrorMessage(text) || `HTTP ${response.status}`);
     }
     return response.json();
   }
@@ -98,20 +98,20 @@ class ApiClient {
     return this.get('/api/admin/users');
   }
 
-  async grantAdmin(userId: string): Promise<void> {
-    await this.post(`/api/admin/users/${encodeURIComponent(userId)}/grant`);
+  async grantAdmin(userId: string): Promise<{ granted: boolean; userId: string }> {
+    return this.post(`/api/admin/users/${encodeURIComponent(userId)}/grant`);
   }
 
-  async revokeAdmin(userId: string): Promise<void> {
-    await this.del(`/api/admin/users/${encodeURIComponent(userId)}/grant`);
+  async revokeAdmin(userId: string): Promise<{ revoked: boolean; userId: string }> {
+    return this.del(`/api/admin/users/${encodeURIComponent(userId)}/grant`);
   }
 
-  async grantHangfire(userId: string): Promise<void> {
-    await this.post(`/api/admin/users/${encodeURIComponent(userId)}/hangfire`);
+  async grantHangfire(userId: string): Promise<{ granted: boolean; userId: string }> {
+    return this.post(`/api/admin/users/${encodeURIComponent(userId)}/hangfire`);
   }
 
-  async revokeHangfire(userId: string): Promise<void> {
-    await this.del(`/api/admin/users/${encodeURIComponent(userId)}/hangfire`);
+  async revokeHangfire(userId: string): Promise<{ revoked: boolean; userId: string }> {
+    return this.del(`/api/admin/users/${encodeURIComponent(userId)}/hangfire`);
   }
 
   async deleteUser(userId: string): Promise<{ deleted: boolean; userId: string }> {
@@ -125,7 +125,7 @@ class ApiClient {
     });
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(text || `HTTP ${response.status}: ${url}`);
+      throw new Error(this.extractErrorMessage(text) || `HTTP ${response.status}: ${url}`);
     }
     return response.json();
   }
@@ -139,7 +139,7 @@ class ApiClient {
     });
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(text || `HTTP ${response.status}: ${url}`);
+      throw new Error(this.extractErrorMessage(text) || `HTTP ${response.status}: ${url}`);
     }
     return response.json();
   }
@@ -151,9 +151,21 @@ class ApiClient {
     });
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(text || `HTTP ${response.status}: ${url}`);
+      throw new Error(this.extractErrorMessage(text) || `HTTP ${response.status}: ${url}`);
     }
     return response.json();
+  }
+
+  /** Try to extract a user-friendly error message from a response body that may be JSON */
+  private extractErrorMessage(text: string): string {
+    if (!text) return '';
+    try {
+      const json = JSON.parse(text);
+      if (typeof json.error === 'string') return json.error;
+    } catch {
+      // Not JSON, return as-is
+    }
+    return text;
   }
 }
 

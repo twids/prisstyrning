@@ -478,6 +478,13 @@ bool IsAdminRequest(HttpContext ctx, IConfiguration cfg)
     return isAdmin;
 }
 
+static bool IsValidUserId(string? userId)
+{
+    if (string.IsNullOrWhiteSpace(userId) || userId.Length > 100)
+        return false;
+    return userId.All(c => char.IsLetterOrDigit(c) || c == '-' || c == '_');
+}
+
 adminGroup.MapGet("/status", (IConfiguration cfg, HttpContext c) =>
 {
     var userId = GetUserId(c);
@@ -499,7 +506,7 @@ adminGroup.MapPost("/login", async (IConfiguration cfg, HttpContext c) =>
     if (!string.IsNullOrEmpty(userId))
         await AdminService.GrantAdmin(cfg, userId);
 
-    return Results.Ok(new { granted = true, userId });
+    return Results.Json(new { granted = true, userId });
 });
 
 adminGroup.MapGet("/users", async (IConfiguration cfg, HttpContext c) =>
@@ -595,8 +602,11 @@ adminGroup.MapPost("/users/{userId}/grant", async (IConfiguration cfg, HttpConte
     if (!IsAdminRequest(c, cfg))
         return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
 
+    if (!IsValidUserId(userId))
+        return Results.Json(new { error = "Invalid user ID" }, statusCode: 400);
+
     await AdminService.GrantAdmin(cfg, userId);
-    return Results.Ok(new { granted = true, userId });
+    return Results.Json(new { granted = true, userId });
 });
 
 adminGroup.MapDelete("/users/{userId}/grant", async (IConfiguration cfg, HttpContext c, string userId) =>
@@ -604,12 +614,15 @@ adminGroup.MapDelete("/users/{userId}/grant", async (IConfiguration cfg, HttpCon
     if (!IsAdminRequest(c, cfg))
         return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
 
+    if (!IsValidUserId(userId))
+        return Results.Json(new { error = "Invalid user ID" }, statusCode: 400);
+
     var currentUserId = GetUserId(c);
     if (userId == currentUserId)
         return Results.Json(new { error = "Cannot revoke your own admin access" }, statusCode: 400);
 
     await AdminService.RevokeAdmin(cfg, userId);
-    return Results.Ok(new { revoked = true, userId });
+    return Results.Json(new { revoked = true, userId });
 });
 
 adminGroup.MapPost("/users/{userId}/hangfire", async (IConfiguration cfg, HttpContext c, string userId) =>
@@ -617,8 +630,11 @@ adminGroup.MapPost("/users/{userId}/hangfire", async (IConfiguration cfg, HttpCo
     if (!IsAdminRequest(c, cfg))
         return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
 
+    if (!IsValidUserId(userId))
+        return Results.Json(new { error = "Invalid user ID" }, statusCode: 400);
+
     await AdminService.GrantHangfireAccess(cfg, userId);
-    return Results.Ok(new { granted = true, userId });
+    return Results.Json(new { granted = true, userId });
 });
 
 adminGroup.MapDelete("/users/{userId}/hangfire", async (IConfiguration cfg, HttpContext c, string userId) =>
@@ -626,8 +642,11 @@ adminGroup.MapDelete("/users/{userId}/hangfire", async (IConfiguration cfg, Http
     if (!IsAdminRequest(c, cfg))
         return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
 
+    if (!IsValidUserId(userId))
+        return Results.Json(new { error = "Invalid user ID" }, statusCode: 400);
+
     await AdminService.RevokeHangfireAccess(cfg, userId);
-    return Results.Ok(new { revoked = true, userId });
+    return Results.Json(new { revoked = true, userId });
 });
 
 adminGroup.MapDelete("/users/{userId}", async (IConfiguration cfg, HttpContext c, string userId) =>
@@ -635,13 +654,12 @@ adminGroup.MapDelete("/users/{userId}", async (IConfiguration cfg, HttpContext c
     if (!IsAdminRequest(c, cfg))
         return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
 
+    if (!IsValidUserId(userId))
+        return Results.Json(new { error = "Invalid user ID" }, statusCode: 400);
+
     var currentUserId = GetUserId(c);
     if (userId == currentUserId)
         return Results.Json(new { error = "Cannot delete your own user" }, statusCode: 400);
-
-    // Validate userId format (same as GetUserId validation)
-    if (string.IsNullOrWhiteSpace(userId) || userId.Length > 100 || !userId.All(c => char.IsLetterOrDigit(c) || c == '-' || c == '_'))
-        return Results.Json(new { error = "Invalid user ID" }, statusCode: 400);
 
     var deleted = false;
 
@@ -668,7 +686,7 @@ adminGroup.MapDelete("/users/{userId}", async (IConfiguration cfg, HttpContext c
     if (!deleted)
         return Results.Json(new { error = "User not found" }, statusCode: 404);
 
-    return Results.Ok(new { deleted = true, userId });
+    return Results.Json(new { deleted = true, userId });
 });
 
 // Schedule preview/apply
@@ -1068,12 +1086,16 @@ public class HangfirePasswordAuthorizationFilter : IDashboardAuthorizationFilter
         // Check 1: Cookie-based access via admin.json hangfireUserIds
         // Note: must match UserCookieName constant in top-level statements
         var userId = httpContext.Request.Cookies["ps_user"];
-        if (!string.IsNullOrEmpty(userId) && AdminService.HasHangfireAccess(_cfg, userId))
-            return true;
+        // Validate cookie value using shared validation logic
+        if (AdminService.IsValidUserId(userId))
+        {
+            if (AdminService.HasHangfireAccess(_cfg, userId))
+                return true;
 
-        // Check 2: Also allow admins
-        if (!string.IsNullOrEmpty(userId) && AdminService.IsAdmin(_cfg, userId))
-            return true;
+            // Check 2: Also allow admins
+            if (AdminService.IsAdmin(_cfg, userId))
+                return true;
+        }
 
         // Check 3: Original Basic Auth password check
         if (string.IsNullOrWhiteSpace(_password))

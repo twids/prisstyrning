@@ -4,6 +4,20 @@ using Microsoft.Extensions.Configuration;
 
 internal static class AdminService
 {
+    private static readonly SemaphoreSlim _lock = new(1, 1);
+
+    private const int MaxUserIdLength = 100;
+
+    /// <summary>
+    /// Validates that a userId is well-formed: non-empty, within length limit, and contains only safe characters.
+    /// </summary>
+    public static bool IsValidUserId(string? userId)
+    {
+        if (string.IsNullOrWhiteSpace(userId)) return false;
+        if (userId.Length > MaxUserIdLength) return false;
+        return userId.All(c => char.IsLetterOrDigit(c) || c == '-' || c == '_');
+    }
+
     public static bool IsAdmin(IConfiguration cfg, string? userId)
     {
         if (string.IsNullOrWhiteSpace(userId)) return false;
@@ -13,24 +27,40 @@ internal static class AdminService
 
     public static async Task GrantAdmin(IConfiguration cfg, string userId)
     {
-        var data = LoadAdminJson(cfg);
-        var admins = GetListFromJson(data, "adminUserIds");
-        if (!admins.Contains(userId))
+        await _lock.WaitAsync();
+        try
         {
-            admins.Add(userId);
-            SetListInJson(data, "adminUserIds", admins);
-            await SaveAdminJson(cfg, data);
+            var data = LoadAdminJson(cfg);
+            var admins = GetListFromJson(data, "adminUserIds");
+            if (!admins.Contains(userId))
+            {
+                admins.Add(userId);
+                SetListInJson(data, "adminUserIds", admins);
+                await SaveAdminJson(cfg, data);
+            }
+        }
+        finally
+        {
+            _lock.Release();
         }
     }
 
     public static async Task RevokeAdmin(IConfiguration cfg, string userId)
     {
-        var data = LoadAdminJson(cfg);
-        var admins = GetListFromJson(data, "adminUserIds");
-        if (admins.Remove(userId))
+        await _lock.WaitAsync();
+        try
         {
-            SetListInJson(data, "adminUserIds", admins);
-            await SaveAdminJson(cfg, data);
+            var data = LoadAdminJson(cfg);
+            var admins = GetListFromJson(data, "adminUserIds");
+            if (admins.Remove(userId))
+            {
+                SetListInJson(data, "adminUserIds", admins);
+                await SaveAdminJson(cfg, data);
+            }
+        }
+        finally
+        {
+            _lock.Release();
         }
     }
 
@@ -49,24 +79,40 @@ internal static class AdminService
 
     public static async Task GrantHangfireAccess(IConfiguration cfg, string userId)
     {
-        var data = LoadAdminJson(cfg);
-        var hangfireUsers = GetListFromJson(data, "hangfireUserIds");
-        if (!hangfireUsers.Contains(userId))
+        await _lock.WaitAsync();
+        try
         {
-            hangfireUsers.Add(userId);
-            SetListInJson(data, "hangfireUserIds", hangfireUsers);
-            await SaveAdminJson(cfg, data);
+            var data = LoadAdminJson(cfg);
+            var hangfireUsers = GetListFromJson(data, "hangfireUserIds");
+            if (!hangfireUsers.Contains(userId))
+            {
+                hangfireUsers.Add(userId);
+                SetListInJson(data, "hangfireUserIds", hangfireUsers);
+                await SaveAdminJson(cfg, data);
+            }
+        }
+        finally
+        {
+            _lock.Release();
         }
     }
 
     public static async Task RevokeHangfireAccess(IConfiguration cfg, string userId)
     {
-        var data = LoadAdminJson(cfg);
-        var hangfireUsers = GetListFromJson(data, "hangfireUserIds");
-        if (hangfireUsers.Remove(userId))
+        await _lock.WaitAsync();
+        try
         {
-            SetListInJson(data, "hangfireUserIds", hangfireUsers);
-            await SaveAdminJson(cfg, data);
+            var data = LoadAdminJson(cfg);
+            var hangfireUsers = GetListFromJson(data, "hangfireUserIds");
+            if (hangfireUsers.Remove(userId))
+            {
+                SetListInJson(data, "hangfireUserIds", hangfireUsers);
+                await SaveAdminJson(cfg, data);
+            }
+        }
+        finally
+        {
+            _lock.Release();
         }
     }
 

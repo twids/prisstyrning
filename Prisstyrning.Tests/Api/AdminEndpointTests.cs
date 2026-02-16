@@ -282,4 +282,44 @@ public class AdminEndpointTests
 
         Assert.Equal(currentUserId, targetUserId); // Would be a 400 in the endpoint
     }
+
+    [Fact]
+    public async Task AdminService_ConcurrentGrants_NoDataLoss()
+    {
+        using var fs = new TempFileSystem();
+        var cfg = fs.GetTestConfig();
+        var tasks = Enumerable.Range(0, 10)
+            .Select(i => AdminService.GrantAdmin(cfg, $"concurrent-user-{i}"))
+            .ToArray();
+        await Task.WhenAll(tasks);
+        var admins = AdminService.GetAdminUserIds(cfg);
+        Assert.Equal(10, admins.Count);
+    }
+
+    [Fact(Skip = "Requires HTTP integration test infrastructure (WebApplicationFactory)")]
+    public void Admin_NoAuth_Returns401()
+    {
+        // Intended behavior:
+        // - Send HTTP request to /api/admin/users without any auth cookie or password header
+        // - Assert response status code is 401 Unauthorized
+    }
+
+    [Fact(Skip = "Requires HTTP integration test infrastructure (WebApplicationFactory)")]
+    public void Admin_ListUsers_ReturnsAllUsers()
+    {
+        // Intended behavior:
+        // - Seed multiple users into test storage (tokens + schedule_history dirs)
+        // - Authenticate as admin via X-Admin-Password header
+        // - Call GET /api/admin/users
+        // - Assert status 200 and response body contains all seeded users
+    }
+
+    [Fact(Skip = "Requires HTTP integration test infrastructure (WebApplicationFactory)")]
+    public void Admin_NoPasswordConfigured_Returns403()
+    {
+        // Intended behavior:
+        // - Configure the application WITHOUT an Admin:Password setting
+        // - Call POST /api/admin/login with any password header
+        // - Assert response status code is 403 Forbidden
+    }
 }
