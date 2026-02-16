@@ -674,7 +674,7 @@ adminGroup.MapDelete("/users/{userId}", async (IConfiguration cfg, HttpContext c
         return Results.Json(new { error = "Cannot delete your own user" }, statusCode: 400);
 
     var deleted = false;
-    var errors = new List<string>();
+    var warnings = new List<string>();
 
     // Delete tokens directory (contains user.json and daikin.json)
     var userTokenDir = Path.Combine(StoragePaths.GetTokensDir(cfg), userId);
@@ -687,7 +687,7 @@ adminGroup.MapDelete("/users/{userId}", async (IConfiguration cfg, HttpContext c
         }
         catch (Exception ex)
         {
-            errors.Add($"Failed to delete tokens: {ex.Message}");
+            warnings.Add($"Failed to delete tokens: {ex.Message}");
         }
     }
 
@@ -702,7 +702,7 @@ adminGroup.MapDelete("/users/{userId}", async (IConfiguration cfg, HttpContext c
         }
         catch (Exception ex)
         {
-            errors.Add($"Failed to delete schedule history: {ex.Message}");
+            warnings.Add($"Failed to delete schedule history: {ex.Message}");
         }
     }
 
@@ -714,16 +714,13 @@ adminGroup.MapDelete("/users/{userId}", async (IConfiguration cfg, HttpContext c
     }
     catch (Exception ex)
     {
-        errors.Add($"Failed to update admin.json: {ex.Message}");
+        warnings.Add($"Failed to update admin.json: {ex.Message}");
     }
 
     if (!deleted)
         return Results.Json(new { error = "User not found" }, statusCode: 404);
 
-    if (errors.Any())
-        return Results.Json(new { deleted = true, userId, warnings = errors });
-
-    return Results.Json(new { deleted = true, userId });
+    return Results.Json(new { deleted = true, userId, warnings });
 });
 
 // Schedule preview/apply
