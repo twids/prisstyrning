@@ -391,7 +391,7 @@ daikinAuthGroup.MapGet("/callback", async (IConfiguration cfg, HttpContext c, st
             if (!string.IsNullOrEmpty(userId))
                 DaikinOAuthService.MigrateUserData(cfg, userId, stableUserId);
             // Update the cookie to the deterministic userId
-            c.Response.Cookies.Append(UserCookieName, stableUserId, new CookieOptions { HttpOnly = true, SameSite = SameSiteMode.Lax, IsEssential = true, Expires = DateTimeOffset.UtcNow.AddYears(1) });
+            c.Response.Cookies.Append(UserCookieName, stableUserId, new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Lax, IsEssential = true, Expires = DateTimeOffset.UtcNow.AddYears(1) });
             Console.WriteLine($"[DaikinOAuth][Callback] Remapped userId={userId} -> {stableUserId} (subject={result.Subject})");
         }
     }
