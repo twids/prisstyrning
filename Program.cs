@@ -13,6 +13,7 @@ using Hangfire.InMemory;
 using Hangfire.Dashboard;
 using Microsoft.EntityFrameworkCore;
 using Prisstyrning.Data;
+using Prisstyrning.Data.Repositories;
 using Prisstyrning.Jobs;
 
 // Constants for maintainability
@@ -51,6 +52,10 @@ builder.Services.AddDbContext<PrisstyrningDbContext>(options =>
 builder.Services.AddHangfire(config => config
     .UseInMemoryStorage());
 builder.Services.AddHangfireServer();
+
+// Register repositories
+builder.Services.AddScoped<UserSettingsRepository>();
+builder.Services.AddScoped<AdminRepository>();
 
 // Register job classes for dependency injection
 builder.Services.AddTransient<NordpoolPriceHangfireJob>();
@@ -130,43 +135,23 @@ app.MapGet("/api/user/schedule-history", (HttpContext ctx) =>
     });
     return Results.Json(result);
 });
-app.MapGet("/api/user/settings", async (HttpContext ctx) =>
+app.MapGet("/api/user/settings", async (HttpContext ctx, UserSettingsRepository settingsRepo) =>
 {
-    var cfg = (IConfiguration)builder.Configuration;
     var userId = GetUserId(ctx) ?? "default";
-    var path = StoragePaths.GetUserJsonPath(cfg, userId);
-    if (!File.Exists(path)) return Results.Json(new { ComfortHours = 3, TurnOffPercentile = 0.9, AutoApplySchedule = false, MaxComfortGapHours = 28 });
-    try
-    {
-        var json = await File.ReadAllTextAsync(path);
-        var node = JsonNode.Parse(json) as JsonObject;
-        int comfortHours = int.TryParse(node?["ComfortHours"]?.ToString(), out var ch) ? ch : 3;
-        double turnOffPercentile = double.TryParse(node?["TurnOffPercentile"]?.ToString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var tp) ? tp : 0.9;
-        bool autoApplySchedule = bool.TryParse(node?["AutoApplySchedule"]?.ToString(), out var aas) ? aas : false;
-        int maxComfortGapHours = int.TryParse(node?["MaxComfortGapHours"]?.ToString(), out var mcgh) ? mcgh : 28;
-        return Results.Json(new { ComfortHours = comfortHours, TurnOffPercentile = turnOffPercentile, AutoApplySchedule = autoApplySchedule, MaxComfortGapHours = maxComfortGapHours });
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"[UserSettings] read error: {ex.Message}");
-        return Results.Json(new { ComfortHours = 3, TurnOffPercentile = 0.9, AutoApplySchedule = false, MaxComfortGapHours = 28 });
-    }
+    var entity = await settingsRepo.GetOrCreateAsync(userId);
+    return Results.Json(new { 
+        ComfortHours = entity.ComfortHours, 
+        TurnOffPercentile = entity.TurnOffPercentile, 
+        AutoApplySchedule = entity.AutoApplySchedule, 
+        MaxComfortGapHours = entity.MaxComfortGapHours 
+    });
 });
 
-app.MapPost("/api/user/settings", async (HttpContext ctx) =>
+app.MapPost("/api/user/settings", async (HttpContext ctx, UserSettingsRepository settingsRepo) =>
 {
     var userId = GetUserId(ctx) ?? "default";
     var body = await JsonNode.ParseAsync(ctx.Request.Body) as JsonObject;
     if (body == null) return Results.BadRequest(new { error = "Missing body" });
-    var cfg = (IConfiguration)builder.Configuration;
-    var path = StoragePaths.GetUserJsonPath(cfg, userId);
-    JsonObject node;
-    if (File.Exists(path))
-    {
-        try { var jsonExisting = await File.ReadAllTextAsync(path); node = JsonNode.Parse(jsonExisting) as JsonObject ?? new JsonObject(); }
-        catch { node = new JsonObject(); }
-    }
-    else node = new JsonObject();
     string? rawCh = body["ComfortHours"]?.ToString();
     string? rawTp = body["TurnOffPercentile"]?.ToString();
     string? rawAas = body["AutoApplySchedule"]?.ToString();
@@ -185,12 +170,7 @@ app.MapPost("/api/user/settings", async (HttpContext ctx) =>
     if (!string.IsNullOrWhiteSpace(rawMcgh))
     { if (!int.TryParse(rawMcgh, out maxComfortGapHours) || maxComfortGapHours < 1 || maxComfortGapHours > 72) { errors.Add("MaxComfortGapHours must be an integer between 1 and 72"); maxComfortGapHours = 28; } }
     if (errors.Count > 0) return Results.BadRequest(new { error = "Validation failed", errors });
-    node["ComfortHours"] = comfortHours;
-    node["TurnOffPercentile"] = turnOffPercentile;
-    node["AutoApplySchedule"] = autoApplySchedule;
-    node["MaxComfortGapHours"] = maxComfortGapHours;
-    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-    await File.WriteAllTextAsync(path, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+    await settingsRepo.SaveSettingsAsync(userId, comfortHours, turnOffPercentile, autoApplySchedule, maxComfortGapHours);
     return Results.Ok(new { saved = true });
 });
 
@@ -278,10 +258,10 @@ pricesGroup.MapGet("/latest", () =>
 });
 
 // Diagnostic endpoint for Nordpool fetch debugging
-app.MapGet("/api/prices/_debug/fetch", async (HttpContext ctx, IConfiguration cfg) =>
+app.MapGet("/api/prices/_debug/fetch", async (HttpContext ctx, IConfiguration cfg, UserSettingsRepository settingsRepo) =>
 {
     var userId = GetUserId(ctx);
-    var zone = UserSettingsService.GetUserZone(cfg, userId) ?? "SE3";
+    var zone = await settingsRepo.GetUserZoneAsync(userId) ?? "SE3";
     var dateStr = ctx.Request.Query["date"].FirstOrDefault();
     DateTime date = DateTime.TryParse(dateStr, out var d) ? d : DateTime.Today;
     var currency = cfg["Price:Nordpool:Currency"] ?? "SEK";
@@ -306,34 +286,23 @@ pricesGroup.MapGet("/memory", () =>
     return Results.Json(new { updated, today, tomorrow });
 });
 // Per-user zone get/set
-pricesGroup.MapGet("/zone", (HttpContext c, IConfiguration cfg) => {
-    var userId = GetUserId(c); var zone = UserSettingsService.GetUserZone(cfg, userId); return Results.Json(new { zone });
+pricesGroup.MapGet("/zone", async (HttpContext c, UserSettingsRepository settingsRepo) => {
+    var userId = GetUserId(c); var zone = await settingsRepo.GetUserZoneAsync(userId); return Results.Json(new { zone });
 });
-pricesGroup.MapPost("/zone", async (HttpContext c, IConfiguration cfg) => {
+pricesGroup.MapPost("/zone", async (HttpContext c, UserSettingsRepository settingsRepo) => {
     try {
         using var doc = await JsonDocument.ParseAsync(c.Request.Body);
         if (!doc.RootElement.TryGetProperty("zone", out var zEl)) return Results.BadRequest(new { error = "Missing zone" });
         var zone = zEl.GetString();
-        if (!UserSettingsService.IsValidZone(zone)) return Results.BadRequest(new { error = "Invalid zone" });
+        if (!UserSettingsRepository.IsValidZone(zone)) return Results.BadRequest(new { error = "Invalid zone" });
         var userId = GetUserId(c);
-        // Persist user zone inside user.json (merge/update existing)
-        var userJsonPath = StoragePaths.GetUserJsonPath(builder.Configuration, userId ?? "");
-        Directory.CreateDirectory(Path.GetDirectoryName(userJsonPath)!);
-        JsonObject userNode;
-        if (File.Exists(userJsonPath))
-        {
-            try { userNode = JsonNode.Parse(await File.ReadAllTextAsync(userJsonPath)) as JsonObject ?? new JsonObject(); }
-            catch { userNode = new JsonObject(); }
-        }
-        else userNode = new JsonObject();
-        userNode["Zone"] = zone;
-        await File.WriteAllTextAsync(userJsonPath, userNode.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        await settingsRepo.SetUserZoneAsync(userId, zone!);
         return Results.Ok(new { saved = true, zone });
     } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
 // Get latest persisted Nordpool snapshot for zone
-pricesGroup.MapGet("/nordpool/latest", (HttpContext c, IConfiguration cfg, string? zone) => {
-    zone ??= UserSettingsService.GetUserZone(cfg, GetUserId(c));
+pricesGroup.MapGet("/nordpool/latest", (HttpContext c, IConfiguration cfg, UserSettingsRepository settingsRepo, string? zone) => {
+    zone ??= settingsRepo.GetUserZone(GetUserId(c));
     var file = NordpoolPersistence.GetLatestFile(zone, cfg["Storage:Directory"] ?? "data");
     if (file == null) return Results.NotFound(new { error = "No snapshot" });
     return Results.File(file, "application/json");
@@ -497,13 +466,13 @@ daikinAuthGroup.MapGet("/introspect", async (IConfiguration cfg, HttpContext c, 
 
 // Schedule preview/apply
 var scheduleGroup = app.MapGroup("/api/schedule").WithTags("Schedule");
-scheduleGroup.MapGet("/preview", async (HttpContext c) => {
+scheduleGroup.MapGet("/preview", async (HttpContext c, UserSettingsRepository settingsRepo) => {
     var cfg = (IConfiguration)builder.Configuration;
     var userId = GetUserId(c);
     
     // Use BatchRunner to generate schedule and handle history persistence
     var (generated, schedulePayload, message) = await BatchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: true);
-    var zone = UserSettingsService.GetUserZone(cfg, userId);
+    var zone = await settingsRepo.GetUserZoneAsync(userId);
     
     return Results.Json(new { schedulePayload, generated, message, zone });
 });

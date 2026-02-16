@@ -1,6 +1,8 @@
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Hangfire;
+using Prisstyrning.Data.Repositories;
 
 namespace Prisstyrning.Jobs;
 
@@ -10,10 +12,12 @@ namespace Prisstyrning.Jobs;
 public class NordpoolPriceHangfireJob
 {
     private readonly IConfiguration _cfg;
+    private readonly IServiceScopeFactory _scopeFactory;
 
-    public NordpoolPriceHangfireJob(IConfiguration cfg)
+    public NordpoolPriceHangfireJob(IConfiguration cfg, IServiceScopeFactory scopeFactory)
     {
         _cfg = cfg;
+        _scopeFactory = scopeFactory;
     }
 
     [DisableConcurrentExecution(60)] // Prevent overlapping executions with 60s timeout
@@ -26,24 +30,14 @@ public class NordpoolPriceHangfireJob
         
         try
         {
-            // Discover user zones by scanning token subdirs
-            var tokensDirOuter = StoragePaths.GetTokensDir(_cfg);
-            if (Directory.Exists(tokensDirOuter))
+            // Discover user zones from database
+            using var scope = _scopeFactory.CreateScope();
+            var settingsRepo = scope.ServiceProvider.GetRequiredService<UserSettingsRepository>();
+            var userZones = await settingsRepo.GetAllUserZonesAsync();
+            foreach (var z in userZones)
             {
-                foreach (var userDir in Directory.GetDirectories(tokensDirOuter))
-                {
-                    try
-                    {
-                        var zoneFile = Path.Combine(userDir, "zone.txt");
-                        if (File.Exists(zoneFile))
-                        {
-                            var z = File.ReadAllText(zoneFile).Trim();
-                            if (UserSettingsService.IsValidZone(z)) zones.Add(z.Trim().ToUpperInvariant());
-                        }
-                    }
-                    catch { }
-                    if (zones.Count > 20) break; // safety cap
-                }
+                if (UserSettingsRepository.IsValidZone(z)) zones.Add(z.Trim().ToUpperInvariant());
+                if (zones.Count > 20) break; // safety cap
             }
         }
         catch { }

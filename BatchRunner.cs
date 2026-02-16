@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
+using Prisstyrning.Data.Repositories;
 
 internal enum HourState { None, Comfort, Eco, TurnOff }
 internal record ClassifiedHour(int Hour, decimal Price, HourState State);
@@ -19,7 +20,7 @@ internal static class BatchRunner
     {
         var settings = UserSettingsService.LoadScheduleSettings(config, userId);
         int activationLimit = int.TryParse(config["Schedule:MaxActivationsPerDay"], out var mpd) ? Math.Clamp(mpd, 1, 24) : 4;
-        var (generated, schedulePayload, message) = await RunBatchInternalAsync(config, settings, activationLimit, applySchedule, persist, userId);
+        var (generated, schedulePayload, message) = await RunBatchInternalAsync(config, new UserScheduleSettings(settings.ComfortHours, settings.TurnOffPercentile, settings.MaxComfortGapHours), activationLimit, applySchedule, persist, userId);
         
         // Enhanced logging for history persistence
         if (!persist)
@@ -44,7 +45,7 @@ internal static class BatchRunner
     }
 
     // Returnerar schedulePayload som JsonNode istället för sträng för att API-responsen ska ha ett inbäddat JSON-objekt
-    private static async Task<(bool generated, JsonNode? schedulePayload, string message)> RunBatchInternalAsync(IConfiguration config, UserSettingsService.UserScheduleSettings settings, int activationLimit, bool applySchedule, bool persist, string? userId)
+    private static async Task<(bool generated, JsonNode? schedulePayload, string message)> RunBatchInternalAsync(IConfiguration config, UserScheduleSettings settings, int activationLimit, bool applySchedule, bool persist, string? userId)
     {
         var environment = config["ASPNETCORE_ENVIRONMENT"] ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production";
         var accessToken = config["Daikin:AccessToken"] ?? string.Empty;

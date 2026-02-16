@@ -1,4 +1,10 @@
 using System.Text.Json.Nodes;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Prisstyrning.Data;
+using Prisstyrning.Data.Entities;
+using Prisstyrning.Data.Repositories;
 using Prisstyrning.Jobs;
 using Prisstyrning.Tests.Fixtures;
 using Xunit;
@@ -8,8 +14,36 @@ namespace Prisstyrning.Tests.Jobs;
 /// <summary>
 /// Tests for NordpoolPriceHangfireJob - periodic price data fetching
 /// </summary>
-public class NordpoolPriceJobTests
+public class NordpoolPriceJobTests : IDisposable
 {
+    private ServiceProvider? _serviceProvider;
+
+    public void Dispose()
+    {
+        _serviceProvider?.Dispose();
+    }
+
+    private IServiceScopeFactory BuildScopeFactory(IConfiguration cfg, Action<PrisstyrningDbContext>? seed = null)
+    {
+        var dbName = Guid.NewGuid().ToString();
+        var services = new ServiceCollection();
+        services.AddDbContext<PrisstyrningDbContext>(o =>
+            o.UseInMemoryDatabase(dbName));
+        services.AddSingleton(cfg);
+        services.AddScoped<UserSettingsRepository>();
+        _serviceProvider = services.BuildServiceProvider();
+
+        if (seed != null)
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+            db.Database.EnsureCreated();
+            seed(db);
+        }
+
+        return _serviceProvider.GetRequiredService<IServiceScopeFactory>();
+    }
+
     [Fact]
     public async Task ExecuteAsync_FetchesPricesForAllZones()
     {
@@ -19,17 +53,15 @@ public class NordpoolPriceJobTests
             ["Price:Nordpool:DefaultZone"] = "SE3",
             ["Price:Nordpool:Currency"] = "SEK"
         });
+
+        var scopeFactory = BuildScopeFactory(cfg, db =>
+        {
+            db.UserSettings.Add(new UserSettings { UserId = "user-zone-se2", Zone = "SE2" });
+            db.UserSettings.Add(new UserSettings { UserId = "user-zone-no5", Zone = "NO5" });
+            db.SaveChanges();
+        });
         
-        // Create user directories with zone.txt files
-        var user1Dir = Path.Combine(fs.TokensDir, "user-zone-se2");
-        var user2Dir = Path.Combine(fs.TokensDir, "user-zone-no5");
-        Directory.CreateDirectory(user1Dir);
-        Directory.CreateDirectory(user2Dir);
-        
-        await File.WriteAllTextAsync(Path.Combine(user1Dir, "zone.txt"), "SE2");
-        await File.WriteAllTextAsync(Path.Combine(user2Dir, "zone.txt"), "NO5");
-        
-        var job = new NordpoolPriceHangfireJob(cfg);
+        var job = new NordpoolPriceHangfireJob(cfg, scopeFactory);
         
         // Note: Will attempt to fetch real data and may fail
         // The test verifies the job completes without crashing
@@ -59,8 +91,9 @@ public class NordpoolPriceJobTests
         
         var (beforeToday, _, _) = PriceMemory.GetReadOnly();
         Assert.NotNull(beforeToday);
-        
-        var job = new NordpoolPriceHangfireJob(cfg);
+
+        var scopeFactory = BuildScopeFactory(cfg);
+        var job = new NordpoolPriceHangfireJob(cfg, scopeFactory);
         
         // Execute job (will attempt real fetch, may fail)
         try
@@ -83,8 +116,9 @@ public class NordpoolPriceJobTests
     {
         using var fs = new TempFileSystem();
         var cfg = fs.GetTestConfig();
-        
-        var job = new NordpoolPriceHangfireJob(cfg);
+
+        var scopeFactory = BuildScopeFactory(cfg);
+        var job = new NordpoolPriceHangfireJob(cfg, scopeFactory);
         
         // Attempt to execute job
         try
