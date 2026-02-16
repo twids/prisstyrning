@@ -36,8 +36,8 @@ public class ScheduleUpdateJobTests
         var job = new ScheduleUpdateHangfireJob(cfg, batchRunner);
         await job.ExecuteAsync();
         
-        // Give async operations time to complete
-        await Task.Delay(1000);
+        // Fire-and-forget history save may still be in progress - give it a brief moment
+        await Task.Delay(100);
         
         // Verify: History was saved (persist=true in RunBatchAsync)
         var historyFile = Path.Combine(fs.HistoryDir, userId, "history.json");
@@ -95,7 +95,8 @@ public class ScheduleUpdateJobTests
         var job = new ScheduleUpdateHangfireJob(cfg, batchRunner);
         await job.ExecuteAsync();
         
-        await Task.Delay(1500);
+        // Fire-and-forget history save may still be in progress - give it a brief moment
+        await Task.Delay(100);
         
         // Both users should have history
         var history1 = Path.Combine(fs.HistoryDir, user1, "history.json");
@@ -140,8 +141,6 @@ public class ScheduleUpdateJobTests
         // Should not throw despite corrupt user data
         await job.ExecuteAsync();
         
-        await Task.Delay(1000);
-        
         // Good user should still be processed
         var goodHistory = Path.Combine(fs.HistoryDir, goodUser, "history.json");
         // Note: May or may not exist depending on error handling, but job should complete
@@ -172,7 +171,8 @@ public class ScheduleUpdateJobTests
         var job = new ScheduleUpdateHangfireJob(cfg, batchRunner);
         await job.ExecuteAsync();
         
-        await Task.Delay(500);
+        // Fire-and-forget history save may still be in progress - give it a brief moment  
+        await Task.Delay(100);
         
         // User without auto-apply should NOT have history saved
         var historyFile = Path.Combine(fs.HistoryDir, userNoAuto, "history.json");
