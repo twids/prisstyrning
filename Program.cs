@@ -56,6 +56,7 @@ builder.Services.AddHangfireServer();
 // Register repositories
 builder.Services.AddScoped<UserSettingsRepository>();
 builder.Services.AddScoped<AdminRepository>();
+builder.Services.AddScoped<PriceRepository>();
 
 // Register job classes for dependency injection
 builder.Services.AddTransient<NordpoolPriceHangfireJob>();
@@ -174,39 +175,27 @@ app.MapPost("/api/user/settings", async (HttpContext ctx, UserSettingsRepository
     return Results.Ok(new { saved = true });
 });
 
-// Försök förladda minnescache från senaste persistenta fil så /api/prices/memory inte ger 404 direkt vid start
+// Preload price memory from database
 try
 {
-    var preloadDir = builder.Configuration["Storage:Directory"] ?? "data";
-    if (Directory.Exists(preloadDir))
+    using var preloadScope = app.Services.CreateScope();
+    var priceRepo = preloadScope.ServiceProvider.GetRequiredService<PriceRepository>();
+    var defaultZone = builder.Configuration["Price:Nordpool:DefaultZone"] ?? "SE3";
+    var latestSnapshot = await priceRepo.GetLatestAsync(defaultZone);
+    if (latestSnapshot != null)
     {
-        var latest = Directory.GetFiles(preloadDir, "prices-*.json").OrderByDescending(f => f).FirstOrDefault();
-        if (latest != null)
+        var todayArr = JsonSerializer.Deserialize<JsonArray>(latestSnapshot.TodayPricesJson);
+        var tomorrowArr = JsonSerializer.Deserialize<JsonArray>(latestSnapshot.TomorrowPricesJson);
+        if (todayArr != null || tomorrowArr != null)
         {
-            var json = await File.ReadAllTextAsync(latest);
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-            JsonArray? todayArr = null;
-            JsonArray? tomorrowArr = null;
-            if (root.TryGetProperty("today", out var tEl) && tEl.ValueKind == JsonValueKind.Array)
-            {
-                todayArr = JsonSerializer.Deserialize<JsonArray>(tEl.GetRawText());
-            }
-            if (root.TryGetProperty("tomorrow", out var tmEl) && tmEl.ValueKind == JsonValueKind.Array)
-            {
-                tomorrowArr = JsonSerializer.Deserialize<JsonArray>(tmEl.GetRawText());
-            }
-            if (todayArr != null || tomorrowArr != null)
-            {
-                PriceMemory.Set(todayArr, tomorrowArr);
-                Console.WriteLine("[Startup] Preloaded price memory from latest file");
-            }
+            PriceMemory.Set(todayArr, tomorrowArr);
+            Console.WriteLine($"[Startup] Preloaded price memory from database (zone={defaultZone}, date={latestSnapshot.Date})");
         }
     }
 }
 catch (Exception ex)
 {
-    Console.WriteLine($"[Startup] Preload failed: {ex.Message}");
+    Console.WriteLine($"[Startup] DB preload failed: {ex.Message}");
 }
 
 if (app.Environment.IsDevelopment() || true)
@@ -301,13 +290,13 @@ pricesGroup.MapPost("/zone", async (HttpContext c, UserSettingsRepository settin
     } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
 // Get latest persisted Nordpool snapshot for zone
-pricesGroup.MapGet("/nordpool/latest", (HttpContext c, IConfiguration cfg, UserSettingsRepository settingsRepo, string? zone) => {
+pricesGroup.MapGet("/nordpool/latest", async (HttpContext c, IConfiguration cfg, UserSettingsRepository settingsRepo, PriceRepository priceRepo, string? zone) => {
     zone ??= settingsRepo.GetUserZone(GetUserId(c));
-    var file = NordpoolPersistence.GetLatestFile(zone, cfg["Storage:Directory"] ?? "data");
-    if (file == null) return Results.NotFound(new { error = "No snapshot" });
-    return Results.File(file, "application/json");
+    var snapshot = await priceRepo.GetLatestAsync(zone);
+    if (snapshot == null) return Results.NotFound(new { error = "No snapshot" });
+    return Results.Json(new { zone = snapshot.Zone, date = snapshot.Date.ToString("yyyy-MM-dd"), savedAt = snapshot.SavedAtUtc, today = JsonSerializer.Deserialize<JsonArray>(snapshot.TodayPricesJson), tomorrow = JsonSerializer.Deserialize<JsonArray>(snapshot.TomorrowPricesJson) });
 });
-pricesGroup.MapGet("/timeseries", (HttpContext ctx) =>
+pricesGroup.MapGet("/timeseries", async (HttpContext ctx, PriceRepository priceRepo, IConfiguration cfg) =>
 {
     var source = ctx.Request.Query["source"].ToString();
     var (memToday, memTomorrow, updated) = PriceMemory.Get();
@@ -318,32 +307,19 @@ pricesGroup.MapGet("/timeseries", (HttpContext ctx) =>
     {
         try
         {
-            var dir = builder.Configuration["Storage:Directory"] ?? "data";
-            if (Directory.Exists(dir))
+            var zone = cfg["Price:Nordpool:DefaultZone"] ?? "SE3";
+            var snapshot = await priceRepo.GetLatestAsync(zone);
+            if (snapshot != null)
             {
-                var file = Directory.GetFiles(dir, "prices-*.json").OrderByDescending(f => f).FirstOrDefault();
-                if (file != null)
-                {
-                    using var doc = JsonDocument.Parse(File.ReadAllText(file));
-                    var root = doc.RootElement;
-                    if (today == null && root.TryGetProperty("today", out var tEl) && tEl.ValueKind == JsonValueKind.Array)
-                    {
-                        // Convert JsonElement directly to JsonArray without re-parsing
-                        var todayNode = JsonSerializer.Deserialize<JsonArray>(tEl.GetRawText());
-                        today = todayNode;
-                    }
-                    if (tomorrow == null && root.TryGetProperty("tomorrow", out var tmEl) && tmEl.ValueKind == JsonValueKind.Array)
-                    {
-                        // Convert JsonElement directly to JsonArray without re-parsing
-                        var tomorrowNode = JsonSerializer.Deserialize<JsonArray>(tmEl.GetRawText());
-                        tomorrow = tomorrowNode;
-                    }
-                }
+                if (today == null)
+                    today = JsonSerializer.Deserialize<JsonArray>(snapshot.TodayPricesJson);
+                if (tomorrow == null)
+                    tomorrow = JsonSerializer.Deserialize<JsonArray>(snapshot.TomorrowPricesJson);
             }
         }
         catch (Exception ex) 
         { 
-            Console.WriteLine($"[Timeseries] Failed to read fallback price file: {ex.Message}");
+            Console.WriteLine($"[Timeseries] Failed to read price data from DB: {ex.Message}");
         }
     }
     var items = new List<(DateTimeOffset start, decimal value, string day)>();

@@ -65,7 +65,6 @@ internal static class BatchRunner
             var fetched = await np.GetTodayTomorrowAsync(zone);
             rawToday = fetched.today; rawTomorrow = fetched.tomorrow;
             PriceMemory.Set(rawToday, rawTomorrow);
-            NordpoolPersistence.Save(zone, rawToday, rawTomorrow, config["Storage:Directory"] ?? "data");
         }
         catch (Exception ex)
         {
@@ -92,8 +91,7 @@ internal static class BatchRunner
                 {
                     try { scheduleNode = JsonNode.Parse(dynamicSchedulePayload); } catch { /* ignorerar parse-fel */ }
                 }
-                // Prisschema ska inte sparas med tid i namnet längre
-                // Om du vill spara schema, använd prices-YYYYMMDD-ZON.json via NordpoolPersistence
+                // Price persistence is handled by NordpoolPriceHangfireJob via PriceRepository
             }
             catch (Exception ex)
             {

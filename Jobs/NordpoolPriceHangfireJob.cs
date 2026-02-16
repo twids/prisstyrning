@@ -49,22 +49,19 @@ public class NordpoolPriceHangfireJob
         {
             try
             {
-                var nordpoolDir = StoragePaths.GetNordpoolDir(_cfg);
-                var file = NordpoolPersistence.GetLatestFile(zone, nordpoolDir);
+                using var zoneScope = _scopeFactory.CreateScope();
+                var priceRepo = zoneScope.ServiceProvider.GetRequiredService<PriceRepository>();
                 bool needUpdate = false;
                 JsonArray? today = null;
                 JsonArray? tomorrow = null;
                 
-                if (file != null && File.Exists(file))
+                var todayDate = DateOnly.FromDateTime(DateTime.UtcNow);
+                var snapshot = await priceRepo.GetByDateAsync(zone, todayDate);
+                if (snapshot != null)
                 {
-                    var json = File.ReadAllText(file);
-                    var doc = System.Text.Json.JsonDocument.Parse(json);
-                    var root = doc.RootElement;
-                    if (root.TryGetProperty("today", out var tEl) && tEl.ValueKind == System.Text.Json.JsonValueKind.Array)
-                        today = JsonNode.Parse(tEl.GetRawText()) as JsonArray;
-                    if (root.TryGetProperty("tomorrow", out var tmEl) && tmEl.ValueKind == System.Text.Json.JsonValueKind.Array)
-                        tomorrow = JsonNode.Parse(tmEl.GetRawText()) as JsonArray;
-                    // Kontroll: efter kl 13:00, om tomorrow saknas eller är tom, hämta ny data
+                    today = System.Text.Json.JsonSerializer.Deserialize<JsonArray>(snapshot.TodayPricesJson);
+                    tomorrow = System.Text.Json.JsonSerializer.Deserialize<JsonArray>(snapshot.TomorrowPricesJson);
+                    // After 13:00, if tomorrow data is missing, fetch new data
                     var now = DateTimeOffset.Now;
                     if (now.Hour >= 13 && (tomorrow == null || tomorrow.Count == 0))
                     {
@@ -82,7 +79,7 @@ public class NordpoolPriceHangfireJob
                     var fetched = await client.GetTodayTomorrowAsync(zone);
                     today = fetched.today;
                     tomorrow = fetched.tomorrow;
-                    NordpoolPersistence.Save(zone, today, tomorrow, StoragePaths.GetNordpoolDir(_cfg));
+                    await priceRepo.SaveSnapshotAsync(zone, todayDate, today ?? new JsonArray(), tomorrow ?? new JsonArray());
                 }
                 
                 if (string.Equals(zone, defaultZone, StringComparison.OrdinalIgnoreCase))
