@@ -17,7 +17,6 @@ public class ScheduleHistoryIntegrationTests
         // Arrange
         using var fs = new TempFileSystem();
         var cfg = fs.GetTestConfig();
-        var userId = "test-preview-no-history";
         var date = new DateTime(2026, 2, 7);
         
         var today = TestDataFactory.CreatePriceData(date);
@@ -25,19 +24,27 @@ public class ScheduleHistoryIntegrationTests
         PriceMemory.Set(today, tomorrow);
         
         // Act: Call GenerateSchedulePreview (used by /api/schedule/preview endpoint)
+        // This calls RunBatchAsync with userId=null and persist=false
         await BatchRunner.GenerateSchedulePreview(cfg);
         
-        // Assert: No history should be saved
+        // Assert: No history should be saved anywhere (check entire history directory)
         await Task.Delay(100); // Wait for any async saves
         
-        var historyPath = fs.GetHistoryPath(userId);
-        Assert.False(File.Exists(historyPath), 
-            "Preview should NOT create history file");
+        var historyDir = Path.Combine(fs.BaseDir, "schedules");
+        if (Directory.Exists(historyDir))
+        {
+            var historyFiles = Directory.GetFiles(historyDir, "*.json", SearchOption.AllDirectories);
+            Assert.Empty(historyFiles); // No history files should exist
+        }
+        // If directory doesn't exist, that's also fine - no history was saved
     }
     
     [Fact]
-    public async Task Test_ScheduleApply_SavesHistory()
+    public async Task Test_ScheduleHistoryPersistence_SavesCorrectly()
     {
+        // NOTE: This tests the ScheduleHistoryPersistence layer directly, not the full /api/daikin/gateway/schedule/put endpoint.
+        // The endpoint integration is verified manually or through full E2E tests.
+        
         // Arrange
         using var fs = new TempFileSystem();
         var userId = "test-apply-saves-history";
@@ -47,7 +54,7 @@ public class ScheduleHistoryIntegrationTests
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
         PriceMemory.Set(today, tomorrow);
         
-        // Create a schedule payload to "apply"
+        // Create a schedule payload to save
         var schedulePayload = new JsonObject
         {
             ["schedule1"] = new JsonObject
@@ -60,8 +67,7 @@ public class ScheduleHistoryIntegrationTests
             }
         };
         
-        // Act: Simulate schedule application by saving to history
-        // (This mimics what /api/daikin/gateway/schedule/put should do after successful PUT)
+        // Act: Test that the persistence layer works correctly
         await ScheduleHistoryPersistence.SaveAsync(
             userId, 
             schedulePayload, 
@@ -73,7 +79,7 @@ public class ScheduleHistoryIntegrationTests
         // Assert: History should be saved
         var historyPath = fs.GetHistoryPath(userId);
         Assert.True(File.Exists(historyPath), 
-            "Apply SHOULD create history file");
+            "History file should be created");
         
         var historyJson = await File.ReadAllTextAsync(historyPath);
         var historyArray = JsonNode.Parse(historyJson) as JsonArray;
