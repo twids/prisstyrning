@@ -687,7 +687,8 @@ adminGroup.MapDelete("/users/{userId}", async (IConfiguration cfg, HttpContext c
         }
         catch (Exception ex)
         {
-            warnings.Add($"Failed to delete tokens: {ex.Message}");
+            Console.WriteLine($"[Admin] Failed to delete tokens for user {userId}: {ex.Message}");
+            warnings.Add("Failed to delete tokens directory");
         }
     }
 
@@ -702,7 +703,8 @@ adminGroup.MapDelete("/users/{userId}", async (IConfiguration cfg, HttpContext c
         }
         catch (Exception ex)
         {
-            warnings.Add($"Failed to delete schedule history: {ex.Message}");
+            Console.WriteLine($"[Admin] Failed to delete schedule history for user {userId}: {ex.Message}");
+            warnings.Add("Failed to delete schedule history directory");
         }
     }
 
@@ -714,7 +716,8 @@ adminGroup.MapDelete("/users/{userId}", async (IConfiguration cfg, HttpContext c
     }
     catch (Exception ex)
     {
-        warnings.Add($"Failed to update admin.json: {ex.Message}");
+        Console.WriteLine($"[Admin] Failed to update admin.json for user {userId}: {ex.Message}");
+        warnings.Add("Failed to update admin configuration");
     }
 
     if (!deleted)
