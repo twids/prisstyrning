@@ -129,8 +129,8 @@ public class EndpointIntegrationTests
         var batchRunner = MockServiceFactory.CreateMockBatchRunner();
         await batchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: true);
         
-        // Wait for async save
-        await Task.Delay(1000);
+        // Fire-and-forget history save may still be in progress - give it a brief moment
+        await Task.Delay(100);
         
         // Load history (endpoint calls ScheduleHistoryPersistence.Load)
         var history = ScheduleHistoryPersistence.Load(userId, fs.BaseDir);
