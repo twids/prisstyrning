@@ -1,5 +1,3 @@
-using System.Text.Json;
-using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
 using Prisstyrning.Tests.Fixtures;
 using Xunit;
@@ -8,8 +6,6 @@ namespace Prisstyrning.Tests.Unit;
 
 /// <summary>
 /// Tests for device auto-detection helper that extracts device IDs
-/// Note: The AutoDetectDeviceAsync method is a local function in Program.cs
-/// These tests verify the behavior through integration tests instead.
 /// </summary>
 public class DeviceAutoDetectionTests
 {
@@ -33,9 +29,9 @@ public class DeviceAutoDetectionTests
     }
 
     [Fact]
-    public void ParseDeviceJson_FindsDHWManagementPoint()
+    public void FindDhwEmbeddedId_FindsDHWManagementPoint()
     {
-        // Test JSON parsing logic for DHW management point detection
+        // Test JSON for DHW management point detection
         var deviceJson = """
         {
             "id": "test-device-123",
@@ -52,30 +48,14 @@ public class DeviceAutoDetectionTests
         }
         """;
         
-        using var doc = JsonDocument.Parse(deviceJson);
-        string? embeddedId = null;
-        
-        if (doc.RootElement.TryGetProperty("managementPoints", out var mpArray) && 
-            mpArray.ValueKind == JsonValueKind.Array)
-        {
-            var dhwPoint = mpArray.EnumerateArray()
-                .Where(mp => mp.TryGetProperty("managementPointType", out var mpt) && 
-                            mpt.GetString() == "domesticHotWaterTank" && 
-                            mp.TryGetProperty("embeddedId", out _))
-                .FirstOrDefault();
-            
-            if (dhwPoint.ValueKind != JsonValueKind.Undefined)
-            {
-                embeddedId = dhwPoint.GetProperty("embeddedId").GetString();
-            }
-        }
+        var embeddedId = DeviceAutoDetection.FindDhwEmbeddedId(deviceJson);
         
         // Verify DHW management point is found with correct embeddedId
         Assert.Equal("2", embeddedId);
     }
     
     [Fact]
-    public void ParseDeviceJson_NoDHW_ReturnsNull()
+    public void FindDhwEmbeddedId_NoDHW_ReturnsNull()
     {
         // Test that when no DHW management point exists, returns null
         var deviceJson = """
@@ -90,30 +70,14 @@ public class DeviceAutoDetectionTests
         }
         """;
         
-        using var doc = JsonDocument.Parse(deviceJson);
-        string? embeddedId = null;
-        
-        if (doc.RootElement.TryGetProperty("managementPoints", out var mpArray) && 
-            mpArray.ValueKind == JsonValueKind.Array)
-        {
-            var dhwPoint = mpArray.EnumerateArray()
-                .Where(mp => mp.TryGetProperty("managementPointType", out var mpt) && 
-                            mpt.GetString() == "domesticHotWaterTank" && 
-                            mp.TryGetProperty("embeddedId", out _))
-                .FirstOrDefault();
-            
-            if (dhwPoint.ValueKind != JsonValueKind.Undefined)
-            {
-                embeddedId = dhwPoint.GetProperty("embeddedId").GetString();
-            }
-        }
+        var embeddedId = DeviceAutoDetection.FindDhwEmbeddedId(deviceJson);
         
         // Verify no DHW management point found
         Assert.Null(embeddedId);
     }
 
     [Fact]
-    public void ParseSitesJson_ExtractsFirstSiteId()
+    public void GetFirstSiteId_ExtractsFirstSiteId()
     {
         // Test that the first site ID is correctly extracted
         var sitesJson = """
@@ -129,20 +93,14 @@ public class DeviceAutoDetectionTests
         ]
         """;
         
-        using var doc = JsonDocument.Parse(sitesJson);
-        string? siteId = null;
-        
-        if (doc.RootElement.ValueKind == JsonValueKind.Array && doc.RootElement.GetArrayLength() > 0)
-        {
-            siteId = doc.RootElement[0].GetProperty("id").GetString();
-        }
+        var siteId = DeviceAutoDetection.GetFirstSiteId(sitesJson);
         
         // Verify first site is selected
         Assert.Equal("site-001", siteId);
     }
     
     [Fact]
-    public void ParseDevicesJson_ExtractsFirstDeviceIdAndJson()
+    public void GetFirstDevice_ExtractsFirstDeviceIdAndJson()
     {
         // Test that first device is correctly extracted with full JSON
         var devicesJson = """
@@ -164,16 +122,7 @@ public class DeviceAutoDetectionTests
         ]
         """;
         
-        using var doc = JsonDocument.Parse(devicesJson);
-        string? deviceId = null;
-        string? deviceJsonRaw = null;
-        
-        if (doc.RootElement.ValueKind == JsonValueKind.Array && doc.RootElement.GetArrayLength() > 0)
-        {
-            var elem = doc.RootElement[0];
-            deviceId = elem.GetProperty("id").GetString();
-            deviceJsonRaw = elem.GetRawText();
-        }
+        var (deviceId, deviceJsonRaw) = DeviceAutoDetection.GetFirstDevice(devicesJson);
         
         // Verify first device is selected
         Assert.Equal("device-001", deviceId);
