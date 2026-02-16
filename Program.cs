@@ -57,7 +57,7 @@ var app = builder.Build();
 var hangfirePassword = builder.Configuration["Hangfire:DashboardPassword"];
 app.UseHangfireDashboard("/hangfire", new DashboardOptions
 {
-    Authorization = new[] { new HangfirePasswordAuthorizationFilter(hangfirePassword) }
+    Authorization = new[] { new HangfirePasswordAuthorizationFilter(hangfirePassword, builder.Configuration) }
 });
 
 // Schedule recurring jobs
@@ -467,6 +467,265 @@ daikinAuthGroup.MapGet("/debug", (IConfiguration cfg, HttpContext c) => { var us
 daikinAuthGroup.MapPost("/revoke", async (IConfiguration cfg, HttpContext c) => { var userId = GetUserId(c); var ok = await DaikinOAuthService.RevokeAsync(cfg, userId); return ok ? Results.Ok(new { revoked = true }) : Results.BadRequest(new { error = "Revoke failed" }); });
 daikinAuthGroup.MapGet("/introspect", async (IConfiguration cfg, HttpContext c, bool refresh) => { var userId = GetUserId(c); var result = await DaikinOAuthService.IntrospectAsync(cfg, userId, refresh); return result == null ? Results.BadRequest(new { error = "Not authorized" }) : Results.Json(result); });
 
+// Admin group
+var adminGroup = app.MapGroup("/api/admin").WithTags("Admin");
+
+bool IsAdminRequest(HttpContext ctx, IConfiguration cfg)
+{
+    var userId = GetUserId(ctx);
+    var password = ctx.Request.Headers["X-Admin-Password"].FirstOrDefault();
+    var (isAdmin, _) = AdminService.CheckAdminAccess(cfg, userId, password);
+    return isAdmin;
+}
+
+static bool IsValidUserId(string? userId)
+{
+    if (string.IsNullOrWhiteSpace(userId) || userId.Length > 100)
+        return false;
+    return userId.All(c => char.IsLetterOrDigit(c) || c == '-' || c == '_');
+}
+
+adminGroup.MapGet("/status", (IConfiguration cfg, HttpContext c) =>
+{
+    var userId = GetUserId(c);
+    var isAdmin = IsAdminRequest(c, cfg);
+    return Results.Json(new { isAdmin, userId });
+});
+
+adminGroup.MapPost("/login", async (IConfiguration cfg, HttpContext c) =>
+{
+    var userId = GetUserId(c);
+    var configuredPassword = cfg["Admin:Password"];
+    if (string.IsNullOrEmpty(configuredPassword))
+        return Results.Json(new { error = "No admin password configured" }, statusCode: 403);
+
+    var password = c.Request.Headers["X-Admin-Password"].FirstOrDefault();
+    if (string.IsNullOrEmpty(password) || password != configuredPassword)
+        return Results.Json(new { error = "Invalid admin password" }, statusCode: 401);
+
+    if (!string.IsNullOrEmpty(userId))
+        await AdminService.GrantAdmin(cfg, userId);
+
+    return Results.Json(new { granted = true, userId });
+});
+
+adminGroup.MapGet("/users", async (IConfiguration cfg, HttpContext c) =>
+{
+    if (!IsAdminRequest(c, cfg))
+        return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
+
+    var currentUserId = GetUserId(c);
+    var userIds = new HashSet<string>();
+
+    // Scan tokens directories
+    var tokensDir = StoragePaths.GetTokensDir(cfg);
+    if (Directory.Exists(tokensDir))
+    {
+        foreach (var dir in Directory.GetDirectories(tokensDir))
+        {
+            var uid = Path.GetFileName(dir);
+            if (IsValidUserId(uid))
+                userIds.Add(uid);
+        }
+    }
+
+    // Scan schedule_history directories
+    var historyDir = StoragePaths.GetScheduleHistoryDir(cfg);
+    if (Directory.Exists(historyDir))
+    {
+        foreach (var dir in Directory.GetDirectories(historyDir))
+        {
+            var uid = Path.GetFileName(dir);
+            if (IsValidUserId(uid))
+                userIds.Add(uid);
+        }
+    }
+
+    var adminUserIds = AdminService.GetAdminUserIds(cfg);
+    var hangfireUserIds = AdminService.GetHangfireUserIds(cfg);
+    var users = new List<object>();
+
+    // NOTE: This performs sequential file I/O operations for each user.
+    // For systems with many users, consider implementing pagination or caching.
+    // Current implementation is acceptable for typical usage (tens of users),
+    // but may need optimization if user count grows to hundreds or more.
+    foreach (var uid in userIds)
+    {
+        var settings = UserSettingsService.LoadScheduleSettings(cfg, uid);
+        var zone = UserSettingsService.GetUserZone(cfg, uid);
+        var daikinTokenPath = Path.Combine(tokensDir, uid, "daikin.json");
+        var daikinAuthorized = File.Exists(daikinTokenPath);
+        string? daikinExpiresAtUtc = null;
+        if (daikinAuthorized)
+        {
+            try
+            {
+                var daikinJson = await File.ReadAllTextAsync(daikinTokenPath);
+                var daikinNode = System.Text.Json.Nodes.JsonNode.Parse(daikinJson) as System.Text.Json.Nodes.JsonObject;
+                daikinExpiresAtUtc = daikinNode?["expires_at_utc"]?.ToString();
+            }
+            catch { }
+        }
+
+        var userHistoryPath = Path.Combine(historyDir, uid, "history.json");
+        var hasScheduleHistory = File.Exists(userHistoryPath);
+        int? scheduleCount = null;
+        string? lastScheduleDate = null;
+        if (hasScheduleHistory)
+        {
+            try
+            {
+                var histJson = await File.ReadAllTextAsync(userHistoryPath);
+                var histArr = System.Text.Json.Nodes.JsonNode.Parse(histJson) as System.Text.Json.Nodes.JsonArray;
+                if (histArr != null)
+                {
+                    scheduleCount = histArr.Count;
+                    lastScheduleDate = histArr.LastOrDefault()?["timestamp"]?.ToString();
+                }
+            }
+            catch { }
+        }
+
+        var userTokenDir = Path.Combine(tokensDir, uid);
+        DateTime? createdAt = Directory.Exists(userTokenDir) ? Directory.GetCreationTimeUtc(userTokenDir) : null;
+
+        users.Add(new
+        {
+            userId = uid,
+            settings = new { settings.ComfortHours, settings.TurnOffPercentile, settings.MaxComfortGapHours },
+            zone,
+            daikinAuthorized,
+            daikinExpiresAtUtc,
+            hasScheduleHistory,
+            scheduleCount,
+            lastScheduleDate,
+            isAdmin = adminUserIds.Contains(uid),
+            hasHangfireAccess = hangfireUserIds.Contains(uid),
+            isCurrentUser = uid == currentUserId,
+            createdAt
+        });
+    }
+
+    return Results.Json(new { users });
+});
+
+adminGroup.MapPost("/users/{userId}/grant", async (IConfiguration cfg, HttpContext c, string userId) =>
+{
+    if (!IsAdminRequest(c, cfg))
+        return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
+
+    if (!IsValidUserId(userId))
+        return Results.Json(new { error = "Invalid user ID" }, statusCode: 400);
+
+    await AdminService.GrantAdmin(cfg, userId);
+    return Results.Json(new { granted = true, userId });
+});
+
+adminGroup.MapDelete("/users/{userId}/grant", async (IConfiguration cfg, HttpContext c, string userId) =>
+{
+    if (!IsAdminRequest(c, cfg))
+        return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
+
+    if (!IsValidUserId(userId))
+        return Results.Json(new { error = "Invalid user ID" }, statusCode: 400);
+
+    var currentUserId = GetUserId(c);
+    if (userId == currentUserId)
+        return Results.Json(new { error = "Cannot revoke your own admin access" }, statusCode: 400);
+
+    await AdminService.RevokeAdmin(cfg, userId);
+    return Results.Json(new { revoked = true, userId });
+});
+
+adminGroup.MapPost("/users/{userId}/hangfire", async (IConfiguration cfg, HttpContext c, string userId) =>
+{
+    if (!IsAdminRequest(c, cfg))
+        return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
+
+    if (!IsValidUserId(userId))
+        return Results.Json(new { error = "Invalid user ID" }, statusCode: 400);
+
+    await AdminService.GrantHangfireAccess(cfg, userId);
+    return Results.Json(new { granted = true, userId });
+});
+
+adminGroup.MapDelete("/users/{userId}/hangfire", async (IConfiguration cfg, HttpContext c, string userId) =>
+{
+    if (!IsAdminRequest(c, cfg))
+        return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
+
+    if (!IsValidUserId(userId))
+        return Results.Json(new { error = "Invalid user ID" }, statusCode: 400);
+
+    await AdminService.RevokeHangfireAccess(cfg, userId);
+    return Results.Json(new { revoked = true, userId });
+});
+
+adminGroup.MapDelete("/users/{userId}", async (IConfiguration cfg, HttpContext c, string userId) =>
+{
+    if (!IsAdminRequest(c, cfg))
+        return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
+
+    if (!IsValidUserId(userId))
+        return Results.Json(new { error = "Invalid user ID" }, statusCode: 400);
+
+    var currentUserId = GetUserId(c);
+    if (userId == currentUserId)
+        return Results.Json(new { error = "Cannot delete your own user" }, statusCode: 400);
+
+    var deleted = false;
+    var warnings = new List<string>();
+
+    // Delete tokens directory (contains user.json and daikin.json)
+    var userTokenDir = Path.Combine(StoragePaths.GetTokensDir(cfg), userId);
+    if (Directory.Exists(userTokenDir))
+    {
+        try
+        {
+            Directory.Delete(userTokenDir, recursive: true);
+            deleted = true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Admin] Failed to delete tokens for user {userId}: {ex.Message}");
+            warnings.Add("Failed to delete tokens directory");
+        }
+    }
+
+    // Delete schedule history directory
+    var userHistoryDir = Path.Combine(StoragePaths.GetScheduleHistoryDir(cfg), userId);
+    if (Directory.Exists(userHistoryDir))
+    {
+        try
+        {
+            Directory.Delete(userHistoryDir, recursive: true);
+            deleted = true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Admin] Failed to delete schedule history for user {userId}: {ex.Message}");
+            warnings.Add("Failed to delete schedule history directory");
+        }
+    }
+
+    // Remove from admin.json if present
+    try
+    {
+        await AdminService.RevokeAdmin(cfg, userId);
+        await AdminService.RevokeHangfireAccess(cfg, userId);
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[Admin] Failed to update admin.json for user {userId}: {ex.Message}");
+        warnings.Add("Failed to update admin configuration");
+    }
+
+    if (!deleted)
+        return Results.Json(new { error = "User not found" }, statusCode: 404);
+
+    return Results.Json(new { deleted = true, userId, warnings });
+});
+
 // Schedule preview/apply
 var scheduleGroup = app.MapGroup("/api/schedule").WithTags("Schedule");
 scheduleGroup.MapGet("/preview", async (HttpContext c) => {
@@ -849,17 +1108,33 @@ await app.RunAsync();
 public class HangfirePasswordAuthorizationFilter : IDashboardAuthorizationFilter
 {
     private readonly string? _password;
+    private readonly IConfiguration _cfg;
 
-    public HangfirePasswordAuthorizationFilter(string? password)
+    public HangfirePasswordAuthorizationFilter(string? password, IConfiguration cfg)
     {
         _password = password;
+        _cfg = cfg;
     }
 
     public bool Authorize(DashboardContext context)
     {
         var httpContext = context.GetHttpContext();
 
-        // If no password is configured, deny access
+        // Check 1: Cookie-based access via admin.json hangfireUserIds
+        // Note: must match UserCookieName constant in top-level statements
+        var userId = httpContext.Request.Cookies["ps_user"];
+        // Validate cookie value using shared validation logic
+        if (AdminService.IsValidUserId(userId))
+        {
+            if (AdminService.HasHangfireAccess(_cfg, userId))
+                return true;
+
+            // Check 2: Also allow admins
+            if (AdminService.IsAdmin(_cfg, userId))
+                return true;
+        }
+
+        // Check 3: Original Basic Auth password check
         if (string.IsNullOrWhiteSpace(_password))
         {
             httpContext.Response.StatusCode = 401;
@@ -867,7 +1142,6 @@ public class HangfirePasswordAuthorizationFilter : IDashboardAuthorizationFilter
             return false;
         }
 
-        // Check for Authorization header with Basic authentication
         var authHeader = httpContext.Request.Headers["Authorization"].ToString();
         if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
         {
@@ -878,14 +1152,12 @@ public class HangfirePasswordAuthorizationFilter : IDashboardAuthorizationFilter
 
         try
         {
-            // Decode the Base64-encoded credentials
             var encodedCredentials = authHeader.Substring(6).Trim();
             var decodedCredentials = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encodedCredentials));
             var parts = decodedCredentials.Split(':', 2);
 
             if (parts.Length == 2)
             {
-                // Username can be anything, only password is checked
                 var providedPassword = parts[1];
                 if (providedPassword == _password)
                 {

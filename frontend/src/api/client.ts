@@ -75,6 +75,49 @@ class ApiClient {
     return this.get('/api/status');
   }
 
+  // Admin endpoints
+  async getAdminStatus(): Promise<T.AdminStatus> {
+    return this.get('/api/admin/status');
+  }
+
+  // Uses custom fetch instead of post() helper since we need X-Admin-Password header without JSON body
+  async adminLogin(password: string): Promise<{ granted: boolean; userId: string }> {
+    const response = await fetch(this.baseUrl + '/api/admin/login', {
+      method: 'POST',
+      headers: { 'X-Admin-Password': password },
+      credentials: 'same-origin',
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(this.extractErrorMessage(text) || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  async getAdminUsers(): Promise<T.AdminUsersResponse> {
+    return this.get('/api/admin/users');
+  }
+
+  async grantAdmin(userId: string): Promise<{ granted: boolean; userId: string }> {
+    return this.post(`/api/admin/users/${encodeURIComponent(userId)}/grant`);
+  }
+
+  async revokeAdmin(userId: string): Promise<{ revoked: boolean; userId: string }> {
+    return this.del(`/api/admin/users/${encodeURIComponent(userId)}/grant`);
+  }
+
+  async grantHangfire(userId: string): Promise<{ granted: boolean; userId: string }> {
+    return this.post(`/api/admin/users/${encodeURIComponent(userId)}/hangfire`);
+  }
+
+  async revokeHangfire(userId: string): Promise<{ revoked: boolean; userId: string }> {
+    return this.del(`/api/admin/users/${encodeURIComponent(userId)}/hangfire`);
+  }
+
+  async deleteUser(userId: string): Promise<{ deleted: boolean; userId: string }> {
+    return this.del(`/api/admin/users/${encodeURIComponent(userId)}`);
+  }
+
   // Helper methods
   private async get<T>(url: string): Promise<T> {
     const response = await fetch(this.baseUrl + url, {
@@ -82,7 +125,7 @@ class ApiClient {
     });
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(text || `HTTP ${response.status}: ${url}`);
+      throw new Error(this.extractErrorMessage(text) || `HTTP ${response.status}: ${url}`);
     }
     return response.json();
   }
@@ -96,9 +139,33 @@ class ApiClient {
     });
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(text || `HTTP ${response.status}: ${url}`);
+      throw new Error(this.extractErrorMessage(text) || `HTTP ${response.status}: ${url}`);
     }
     return response.json();
+  }
+
+  private async del<T>(url: string): Promise<T> {
+    const response = await fetch(this.baseUrl + url, {
+      method: 'DELETE',
+      credentials: 'same-origin',
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(this.extractErrorMessage(text) || `HTTP ${response.status}: ${url}`);
+    }
+    return response.json();
+  }
+
+  /** Try to extract a user-friendly error message from a response body that may be JSON */
+  private extractErrorMessage(text: string): string {
+    if (!text) return '';
+    try {
+      const json = JSON.parse(text);
+      if (typeof json.error === 'string') return json.error;
+    } catch {
+      // Not JSON, return as-is
+    }
+    return text;
   }
 }
 
