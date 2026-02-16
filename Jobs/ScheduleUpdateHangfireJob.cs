@@ -47,7 +47,7 @@ public class ScheduleUpdateHangfireJob
             Console.WriteLine($"[ScheduleUpdateHangfireJob] Processing user {userId}");
             try
             {
-                var (generated, schedulePayload, message) = await BatchRunner.RunBatchAsync(_cfg, userId, applySchedule: true, persist: true);
+                var (generated, schedulePayload, message) = await BatchRunner.RunBatchAsync(_cfg, userId, applySchedule: true, persist: true, _scopeFactory);
                 Console.WriteLine($"[ScheduleUpdateHangfireJob] user={userId} generated={generated} message={message}");
                 processedCount++;
             }

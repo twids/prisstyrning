@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Prisstyrning.Data.Repositories;
 
 internal enum HourState { None, Comfort, Eco, TurnOff }
@@ -9,14 +10,14 @@ internal record GeneratedSegments(List<(int hour,string state)> Segments);
 
 internal static class BatchRunner
 {
-    public static async Task<object> GenerateSchedulePreview(IConfiguration config)
+    public static async Task<object> GenerateSchedulePreview(IConfiguration config, IServiceScopeFactory? scopeFactory = null)
     {
-        var res = await RunBatchAsync(config, null, applySchedule:false, persist:false);
+        var res = await RunBatchAsync(config, null, applySchedule:false, persist:false, scopeFactory);
         return new { res.schedulePayload, res.generated, res.message };
     }
 
     // Overload that uses user-specific settings from user.json and unified ScheduleAlgorithm
-    public static async Task<(bool generated, JsonNode? schedulePayload, string message)> RunBatchAsync(IConfiguration config, string? userId, bool applySchedule, bool persist)
+    public static async Task<(bool generated, JsonNode? schedulePayload, string message)> RunBatchAsync(IConfiguration config, string? userId, bool applySchedule, bool persist, IServiceScopeFactory? scopeFactory = null)
     {
         var settings = UserSettingsService.LoadScheduleSettings(config, userId);
         int activationLimit = int.TryParse(config["Schedule:MaxActivationsPerDay"], out var mpd) ? Math.Clamp(mpd, 1, 24) : 4;
@@ -38,7 +39,7 @@ internal static class BatchRunner
         else if (generated && schedulePayload is JsonObject payload)
         {
             // Fire and forget async save - only when persist is true
-            _ = SaveHistoryAsync(userId, payload, config);
+            _ = SaveHistoryAsync(userId, payload, config, scopeFactory);
         }
         
         return (generated, schedulePayload, message);
@@ -249,18 +250,18 @@ internal static class BatchRunner
     }
 
     // Helper method for fire-and-forget history save with error handling
-    private static async Task SaveHistoryAsync(string userId, JsonObject payload, IConfiguration config)
+    private static async Task SaveHistoryAsync(string userId, JsonObject payload, IConfiguration config, IServiceScopeFactory? scopeFactory)
     {
         try 
         {
-            // Read retention days from configuration with fallback to 7
-            int retentionDays = int.TryParse(config["Schedule:HistoryRetentionDays"], out var configuredRetention) 
-                && configuredRetention > 0 
-                && configuredRetention <= 365 
-                ? configuredRetention 
-                : 7;
-            
-            await ScheduleHistoryPersistence.SaveAsync(userId, payload, DateTimeOffset.UtcNow, retentionDays, StoragePaths.GetBaseDir(config));
+            if (scopeFactory == null)
+            {
+                Console.WriteLine($"[BatchRunner] History NOT saved: no scope factory (userId={userId})");
+                return;
+            }
+            using var scope = scopeFactory.CreateScope();
+            var historyRepo = scope.ServiceProvider.GetRequiredService<ScheduleHistoryRepository>();
+            await historyRepo.SaveAsync(userId, payload, DateTimeOffset.UtcNow);
             Console.WriteLine($"[BatchRunner] Saved schedule history for user {userId}");
         }
         catch (Exception ex)

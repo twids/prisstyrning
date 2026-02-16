@@ -57,6 +57,7 @@ builder.Services.AddHangfireServer();
 builder.Services.AddScoped<UserSettingsRepository>();
 builder.Services.AddScoped<AdminRepository>();
 builder.Services.AddScoped<PriceRepository>();
+builder.Services.AddScoped<ScheduleHistoryRepository>();
 
 // Register job classes for dependency injection
 builder.Services.AddTransient<NordpoolPriceHangfireJob>();
@@ -125,14 +126,14 @@ RecurringJob.AddOrUpdate<InitialBatchHangfireJob>("initial-batch-job",
 
 // User settings endpoints
 // Schedule history endpoint for frontend visualization
-app.MapGet("/api/user/schedule-history", (HttpContext ctx) =>
+app.MapGet("/api/user/schedule-history", async (HttpContext ctx, ScheduleHistoryRepository historyRepo) =>
 {
-    var userId = GetUserId(ctx);
-    var history = ScheduleHistoryPersistence.Load(userId ?? "default", StoragePaths.GetBaseDir(builder.Configuration));
-    var result = history.Select(e => new {
-        timestamp = e?["timestamp"]?.ToString(),
-        date = DateTimeOffset.TryParse(e?["timestamp"]?.ToString(), out var dt) ? dt.ToString("yyyy-MM-dd") : null,
-        schedule = e?["schedule"]
+    var userId = GetUserId(ctx) ?? "default";
+    var entries = await historyRepo.LoadAsync(userId);
+    var result = entries.Select(e => new {
+        timestamp = e.Timestamp.ToString("o"),
+        date = e.Timestamp.ToString("yyyy-MM-dd"),
+        schedule = (JsonNode?)JsonNode.Parse(e.SchedulePayloadJson)
     });
     return Results.Json(result);
 });
@@ -442,17 +443,17 @@ daikinAuthGroup.MapGet("/introspect", async (IConfiguration cfg, HttpContext c, 
 
 // Schedule preview/apply
 var scheduleGroup = app.MapGroup("/api/schedule").WithTags("Schedule");
-scheduleGroup.MapGet("/preview", async (HttpContext c, UserSettingsRepository settingsRepo) => {
+scheduleGroup.MapGet("/preview", async (HttpContext c, UserSettingsRepository settingsRepo, IServiceScopeFactory scopeFactory) => {
     var cfg = (IConfiguration)builder.Configuration;
     var userId = GetUserId(c);
     
     // Use BatchRunner to generate schedule and handle history persistence
-    var (generated, schedulePayload, message) = await BatchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: true);
+    var (generated, schedulePayload, message) = await BatchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: true, scopeFactory);
     var zone = await settingsRepo.GetUserZoneAsync(userId);
     
     return Results.Json(new { schedulePayload, generated, message, zone });
 });
-scheduleGroup.MapPost("/apply", async (HttpContext ctx) => await HandleApplyScheduleAsync(ctx, builder.Configuration));
+scheduleGroup.MapPost("/apply", async (HttpContext ctx, IServiceScopeFactory scopeFactory) => await HandleApplyScheduleAsync(ctx, builder.Configuration, scopeFactory));
 
 // Move this method to top-level scope (outside of any endpoint/lambda)
 
@@ -460,10 +461,10 @@ scheduleGroup.MapPost("/apply", async (HttpContext ctx) => await HandleApplySche
 var daikinGroup = app.MapGroup("/api/daikin").WithTags("Daikin");
 // Simple proxy for sites (needed by frontend Sites button) – user-scoped
 // Extracted method for /apply endpoint logic
-async Task<IResult> HandleApplyScheduleAsync(HttpContext ctx, IConfiguration configuration)
+async Task<IResult> HandleApplyScheduleAsync(HttpContext ctx, IConfiguration configuration, IServiceScopeFactory scopeFactory)
 {
     var userId = GetUserId(ctx);
-    var result = await BatchRunner.RunBatchAsync(configuration, userId, applySchedule: false, persist: true);
+    var result = await BatchRunner.RunBatchAsync(configuration, userId, applySchedule: false, persist: true, scopeFactory);
     return Results.Json(new { generated = result.generated, schedulePayload = result.schedulePayload, message = result.message });
 }
 daikinGroup.MapGet("/sites", async (IConfiguration cfg, HttpContext c) =>
@@ -684,7 +685,7 @@ daikinGroup.MapGet("/gateway", async (IConfiguration cfg, HttpContext c) =>
 
 
 // PUT (upload) a schedule payload to a gateway device management point + optionally activate a scheduleId (mode auto-detect if omitted or 'auto')
-daikinGroup.MapPost("/gateway/schedule/put", async (IConfiguration cfg, HttpContext ctx) =>
+daikinGroup.MapPost("/gateway/schedule/put", async (IConfiguration cfg, HttpContext ctx, ScheduleHistoryRepository historyRepo) =>
 {
     var userId = GetUserId(ctx);
     var (token, _) = DaikinOAuthService.TryGetValidAccessToken(cfg, userId);
@@ -769,7 +770,7 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IConfiguration cfg, HttpCont
     {
         try
         {
-            await ScheduleHistoryPersistence.SaveAsync(userId, scheduleObj, DateTimeOffset.UtcNow, 7, StoragePaths.GetBaseDir(cfg));
+            await historyRepo.SaveAsync(userId, scheduleObj, DateTimeOffset.UtcNow);
             Console.WriteLine($"[SchedulePut] Saved schedule to history for user {userId}");
         }
         catch (Exception exHist)

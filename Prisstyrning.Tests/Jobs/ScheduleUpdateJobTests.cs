@@ -31,6 +31,7 @@ public class ScheduleUpdateJobTests : IDisposable
             o.UseInMemoryDatabase(dbName));
         services.AddSingleton(cfg);
         services.AddScoped<UserSettingsRepository>();
+        services.AddScoped<ScheduleHistoryRepository>();
         _serviceProvider = services.BuildServiceProvider();
 
         if (seed != null)
@@ -84,9 +85,13 @@ public class ScheduleUpdateJobTests : IDisposable
         // Give async operations time to complete
         await Task.Delay(1000);
         
-        // Verify: History was saved (persist=true in RunBatchAsync)
-        var historyFile = Path.Combine(fs.HistoryDir, userId, "history.json");
-        Assert.True(File.Exists(historyFile), "History should be saved for auto-apply users");
+        // Verify: History was saved to DB (persist=true in RunBatchAsync)
+        using (var scope = scopeFactory.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+            var historyCount = await db.ScheduleHistory.CountAsync(h => h.UserId == userId);
+            Assert.True(historyCount > 0, "History should be saved for auto-apply users");
+        }
     }
 
     [Fact]
@@ -142,12 +147,15 @@ public class ScheduleUpdateJobTests : IDisposable
         
         await Task.Delay(1500);
         
-        // Both users should have history
-        var history1 = Path.Combine(fs.HistoryDir, user1, "history.json");
-        var history2 = Path.Combine(fs.HistoryDir, user2, "history.json");
-        
-        Assert.True(File.Exists(history1) || File.Exists(history2), 
-            "At least one user should have history saved");
+        // Both users should have history in DB
+        using (var scope = scopeFactory.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+            var history1Count = await db.ScheduleHistory.CountAsync(h => h.UserId == user1);
+            var history2Count = await db.ScheduleHistory.CountAsync(h => h.UserId == user2);
+            Assert.True(history1Count > 0 || history2Count > 0, 
+                "At least one user should have history saved");
+        }
     }
 
     [Fact]
