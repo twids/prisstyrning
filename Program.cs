@@ -378,7 +378,29 @@ daikinAuthGroup.MapGet("/callback", async (IConfiguration cfg, HttpContext c, st
     var userId = GetUserId(c);
     if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state))
         return Results.BadRequest(new { error = "Missing code/state" });
-    var ok = await DaikinOAuthService.HandleCallbackAsync(cfg, code, state, userId);
+    var result = await DaikinOAuthService.HandleCallbackWithSubjectAsync(cfg, code, state, userId);
+    var ok = result.Success;
+    // If we got a stable OIDC subject, remap the user to a deterministic userId
+    if (ok && !string.IsNullOrEmpty(result.Subject))
+    {
+        var stableUserId = DaikinOAuthService.DeriveUserId(result.Subject);
+        if (userId != stableUserId)
+        {
+            // Migrate data from the old browser-random userId to the deterministic one
+            if (!string.IsNullOrEmpty(userId))
+                DaikinOAuthService.MigrateUserData(cfg, userId, stableUserId);
+            // Save tokens under the new deterministic userId as well
+            var (accessToken, _) = DaikinOAuthService.TryGetValidAccessToken(cfg, userId);
+            if (accessToken != null)
+            {
+                // Tokens were saved under old userId during HandleCallbackWithSubjectAsync;
+                // MigrateUserData already moved the files, so tokens are now under stableUserId
+            }
+            // Update the cookie to the deterministic userId
+            c.Response.Cookies.Append(UserCookieName, stableUserId, new CookieOptions { HttpOnly = true, SameSite = SameSiteMode.Lax, IsEssential = true, Expires = DateTimeOffset.UtcNow.AddYears(1) });
+            Console.WriteLine($"[DaikinOAuth][Callback] Remapped userId={userId} -> {stableUserId} (subject={result.Subject})");
+        }
+    }
     // Secure redirect handling to avoid open redirect vulnerabilities.
     var configured = cfg["Daikin:PostAuthRedirect"];
     string finalBase;

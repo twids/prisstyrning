@@ -420,6 +420,243 @@ public class DaikinOAuthServiceIntegrationTests
         Assert.Equal("user2-token", token2Result);
     }
 
+    [Fact]
+    public async Task HandleCallbackWithSubjectAsync_ExtractsSubjectFromIdToken()
+    {
+        using var fs = new TempFileSystem();
+        var config = fs.GetTestConfig(new Dictionary<string, string?>
+        {
+            ["Daikin:ClientId"] = "test-client-id",
+            ["Daikin:ClientSecret"] = "test-secret",
+            ["Daikin:RedirectUri"] = "http://localhost:5000/callback"
+        });
+
+        var authUrl = DaikinOAuthService.GetAuthorizationUrl(config);
+        var state = ExtractParameter(authUrl, "state");
+
+        // Create a mock id_token (JWT) with a 'sub' claim
+        var idToken = CreateMockIdToken(new { sub = "daikin-user-12345", iss = "https://idp.onecta.daikineurope.com" });
+
+        var mockHandler = new MockHttpMessageHandler();
+        mockHandler.AddRoute("idp.onecta.daikineurope.com/v1/oidc/token",
+            HttpStatusCode.OK,
+            JsonSerializer.Serialize(new
+            {
+                access_token = "test-access-token",
+                refresh_token = "test-refresh-token",
+                expires_in = 3600,
+                token_type = "Bearer",
+                id_token = idToken
+            }));
+
+        var mockHttpClient = new HttpClient(mockHandler);
+        var result = await DaikinOAuthService.HandleCallbackWithSubjectAsync(config, "auth-code-123", state, userId: "test-user", mockHttpClient);
+
+        Assert.True(result.Success);
+        Assert.Equal("daikin-user-12345", result.Subject);
+    }
+
+    [Fact]
+    public async Task HandleCallbackWithSubjectAsync_ReturnsNullSubject_WhenNoIdToken()
+    {
+        using var fs = new TempFileSystem();
+        var config = fs.GetTestConfig(new Dictionary<string, string?>
+        {
+            ["Daikin:ClientId"] = "test-client-id",
+            ["Daikin:ClientSecret"] = "test-secret",
+            ["Daikin:RedirectUri"] = "http://localhost:5000/callback"
+        });
+
+        var authUrl = DaikinOAuthService.GetAuthorizationUrl(config);
+        var state = ExtractParameter(authUrl, "state");
+
+        var mockHandler = new MockHttpMessageHandler();
+        mockHandler.AddRoute("idp.onecta.daikineurope.com/v1/oidc/token",
+            HttpStatusCode.OK,
+            JsonSerializer.Serialize(new
+            {
+                access_token = "test-access-token",
+                refresh_token = "test-refresh-token",
+                expires_in = 3600,
+                token_type = "Bearer"
+                // No id_token
+            }));
+
+        var mockHttpClient = new HttpClient(mockHandler);
+        var result = await DaikinOAuthService.HandleCallbackWithSubjectAsync(config, "auth-code-123", state, userId: "test-user", mockHttpClient);
+
+        Assert.True(result.Success);
+        Assert.Null(result.Subject);
+    }
+
+    [Fact]
+    public void DeriveUserId_ReturnsDeterministicValue()
+    {
+        var userId1 = DaikinOAuthService.DeriveUserId("daikin-user-12345");
+        var userId2 = DaikinOAuthService.DeriveUserId("daikin-user-12345");
+
+        Assert.Equal(userId1, userId2);
+        Assert.StartsWith("daikin-", userId1);
+    }
+
+    [Fact]
+    public void DeriveUserId_DifferentSubjects_ProduceDifferentIds()
+    {
+        var userId1 = DaikinOAuthService.DeriveUserId("user-A");
+        var userId2 = DaikinOAuthService.DeriveUserId("user-B");
+
+        Assert.NotEqual(userId1, userId2);
+    }
+
+    [Fact]
+    public void ExtractSubjectFromIdToken_ValidJwt_ExtractsSub()
+    {
+        var idToken = CreateMockIdToken(new { sub = "test-subject-xyz", iss = "https://example.com" });
+        var json = JsonSerializer.Serialize(new { id_token = idToken });
+        using var doc = JsonDocument.Parse(json);
+        var subject = DaikinOAuthService.ExtractSubjectFromIdToken(doc.RootElement);
+
+        Assert.Equal("test-subject-xyz", subject);
+    }
+
+    [Fact]
+    public void ExtractSubjectFromIdToken_MissingIdToken_ReturnsNull()
+    {
+        var json = JsonSerializer.Serialize(new { access_token = "abc" });
+        using var doc = JsonDocument.Parse(json);
+        var subject = DaikinOAuthService.ExtractSubjectFromIdToken(doc.RootElement);
+
+        Assert.Null(subject);
+    }
+
+    [Fact]
+    public void ExtractSubjectFromIdToken_InvalidJwt_ReturnsNull()
+    {
+        var json = JsonSerializer.Serialize(new { id_token = "not-a-valid-jwt" });
+        using var doc = JsonDocument.Parse(json);
+        var subject = DaikinOAuthService.ExtractSubjectFromIdToken(doc.RootElement);
+
+        Assert.Null(subject);
+    }
+
+    [Fact]
+    public void MigrateUserData_MovesFilesToNewDirectory()
+    {
+        using var fs = new TempFileSystem();
+        var config = fs.GetTestConfig();
+
+        // Create token file under old userId
+        var oldDir = Path.Combine(fs.TokensDir, "old-user-id");
+        Directory.CreateDirectory(oldDir);
+        File.WriteAllText(Path.Combine(oldDir, "daikin.json"), "{\"access_token\":\"abc\"}");
+        File.WriteAllText(Path.Combine(oldDir, "user.json"), "{\"zone\":\"SE3\"}");
+
+        DaikinOAuthService.MigrateUserData(config, "old-user-id", "new-user-id");
+
+        var newDir = Path.Combine(fs.TokensDir, "new-user-id");
+        Assert.True(File.Exists(Path.Combine(newDir, "daikin.json")));
+        Assert.True(File.Exists(Path.Combine(newDir, "user.json")));
+        // Old directory should be cleaned up
+        Assert.False(Directory.Exists(oldDir));
+    }
+
+    [Fact]
+    public void MigrateUserData_DoesNotOverwriteExistingFiles()
+    {
+        using var fs = new TempFileSystem();
+        var config = fs.GetTestConfig();
+
+        // Create token file under old userId
+        var oldDir = Path.Combine(fs.TokensDir, "old-user");
+        Directory.CreateDirectory(oldDir);
+        File.WriteAllText(Path.Combine(oldDir, "daikin.json"), "{\"old\":true}");
+
+        // Create existing file under new userId
+        var newDir = Path.Combine(fs.TokensDir, "new-user");
+        Directory.CreateDirectory(newDir);
+        File.WriteAllText(Path.Combine(newDir, "daikin.json"), "{\"existing\":true}");
+
+        DaikinOAuthService.MigrateUserData(config, "old-user", "new-user");
+
+        // Existing file should NOT be overwritten
+        var content = File.ReadAllText(Path.Combine(newDir, "daikin.json"));
+        Assert.Contains("existing", content);
+    }
+
+    [Fact]
+    public async Task HandleCallbackWithSubjectAsync_SameDaikinUser_SameStableUserId()
+    {
+        // Simulate two different browsers (different random userIds) authenticating
+        // with the same Daikin account - they should derive the same stable userId
+        using var fs = new TempFileSystem();
+        var config = fs.GetTestConfig(new Dictionary<string, string?>
+        {
+            ["Daikin:ClientId"] = "test-client-id",
+            ["Daikin:ClientSecret"] = "test-secret",
+            ["Daikin:RedirectUri"] = "http://localhost:5000/callback"
+        });
+
+        var daikinSubject = "unique-daikin-subject-42";
+        var idToken = CreateMockIdToken(new { sub = daikinSubject });
+
+        // Browser A
+        var authUrl1 = DaikinOAuthService.GetAuthorizationUrl(config);
+        var state1 = ExtractParameter(authUrl1, "state");
+
+        var mockHandler1 = new MockHttpMessageHandler();
+        mockHandler1.AddRoute("idp.onecta.daikineurope.com/v1/oidc/token",
+            HttpStatusCode.OK,
+            JsonSerializer.Serialize(new
+            {
+                access_token = "token-a",
+                refresh_token = "refresh-a",
+                expires_in = 3600,
+                id_token = idToken
+            }));
+
+        var result1 = await DaikinOAuthService.HandleCallbackWithSubjectAsync(config, "code-a", state1, "browser-a-guid", new HttpClient(mockHandler1));
+
+        // Browser B
+        var authUrl2 = DaikinOAuthService.GetAuthorizationUrl(config);
+        var state2 = ExtractParameter(authUrl2, "state");
+
+        var mockHandler2 = new MockHttpMessageHandler();
+        mockHandler2.AddRoute("idp.onecta.daikineurope.com/v1/oidc/token",
+            HttpStatusCode.OK,
+            JsonSerializer.Serialize(new
+            {
+                access_token = "token-b",
+                refresh_token = "refresh-b",
+                expires_in = 3600,
+                id_token = idToken
+            }));
+
+        var result2 = await DaikinOAuthService.HandleCallbackWithSubjectAsync(config, "code-b", state2, "browser-b-guid", new HttpClient(mockHandler2));
+
+        // Both should succeed and return the same subject
+        Assert.True(result1.Success);
+        Assert.True(result2.Success);
+        Assert.Equal(daikinSubject, result1.Subject);
+        Assert.Equal(daikinSubject, result2.Subject);
+
+        // DeriveUserId should produce the same result for both
+        var stableId1 = DaikinOAuthService.DeriveUserId(result1.Subject!);
+        var stableId2 = DaikinOAuthService.DeriveUserId(result2.Subject!);
+        Assert.Equal(stableId1, stableId2);
+    }
+
+    // Helper: Create a mock JWT id_token with the given payload claims (no real signature)
+    private static string CreateMockIdToken(object payloadClaims)
+    {
+        var header = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("{\"alg\":\"RS256\",\"typ\":\"JWT\"}"));
+        var payload = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payloadClaims)));
+        var signature = "mock-signature";
+        // Convert to base64url
+        header = header.Replace("+", "-").Replace("/", "_").Replace("=", "");
+        payload = payload.Replace("+", "-").Replace("/", "_").Replace("=", "");
+        return $"{header}.{payload}.{signature}";
+    }
+
     // Helper method to extract query parameter from URL
     private static string ExtractParameter(string url, string paramName)
     {
