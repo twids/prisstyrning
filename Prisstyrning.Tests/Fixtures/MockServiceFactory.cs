@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using System.Net;
 using System.Text.Json;
@@ -60,12 +61,19 @@ public static class MockServiceFactory
     }
     
     /// <summary>
-    /// Creates a DaikinOAuthService with test IHttpClientFactory.
+    /// Creates a DaikinOAuthService with test dependencies.
     /// </summary>
-    internal static DaikinOAuthService CreateMockDaikinOAuthService(IHttpClientFactory? httpClientFactory = null)
+    internal static DaikinOAuthService CreateMockDaikinOAuthService(IHttpClientFactory? httpClientFactory = null, IConfiguration? config = null)
     {
         var factory = httpClientFactory ?? CreateMockHttpClientFactory();
-        return new DaikinOAuthService(factory);
+        var cfg = config ?? new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>()).Build();
+        var options = new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<Prisstyrning.Data.PrisstyrningDbContext>()
+            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+            .Options;
+        var db = new Prisstyrning.Data.PrisstyrningDbContext(options);
+        db.Database.EnsureCreated();
+        var tokenRepo = new Prisstyrning.Data.Repositories.DaikinTokenRepository(db);
+        return new DaikinOAuthService(cfg, tokenRepo, factory);
     }
     
     /// <summary>

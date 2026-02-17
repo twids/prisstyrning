@@ -1,4 +1,10 @@
 using System.Text.Json.Nodes;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Prisstyrning.Data;
+using Prisstyrning.Data.Entities;
+using Prisstyrning.Data.Repositories;
 using Prisstyrning.Jobs;
 using Prisstyrning.Tests.Fixtures;
 using Xunit;
@@ -8,8 +14,41 @@ namespace Prisstyrning.Tests.Jobs;
 /// <summary>
 /// Tests for ScheduleUpdateHangfireJob - scheduled generation and application
 /// </summary>
-public class ScheduleUpdateJobTests
+public class ScheduleUpdateJobTests : IDisposable
 {
+    private ServiceProvider? _serviceProvider;
+
+    public void Dispose()
+    {
+        _serviceProvider?.Dispose();
+    }
+
+    private IServiceScopeFactory BuildScopeFactory(IConfiguration cfg, Action<PrisstyrningDbContext>? seed = null)
+    {
+        var dbName = Guid.NewGuid().ToString();
+        var services = new ServiceCollection();
+        services.AddDbContext<PrisstyrningDbContext>(o =>
+            o.UseInMemoryDatabase(dbName));
+        services.AddSingleton(cfg);
+        services.AddSingleton<IHttpClientFactory>(MockServiceFactory.CreateMockHttpClientFactory());
+        services.AddScoped<UserSettingsRepository>();
+        services.AddScoped<ScheduleHistoryRepository>();
+        services.AddScoped<DaikinTokenRepository>();
+        services.AddScoped<DaikinOAuthService>();
+        services.AddScoped<BatchRunner>();
+        _serviceProvider = services.BuildServiceProvider();
+
+        if (seed != null)
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+            db.Database.EnsureCreated();
+            seed(db);
+        }
+
+        return _serviceProvider.GetRequiredService<IServiceScopeFactory>();
+    }
+
     [Fact]
     public async Task ExecuteAsync_WithAutoApplyEnabled_GeneratesSchedules()
     {
@@ -18,30 +57,36 @@ public class ScheduleUpdateJobTests
         var userId = "auto-apply-user";
         var date = new DateTime(2026, 2, 7);
         
-        // Setup: Create user with AutoApplySchedule=true
-        var userDir = Path.Combine(fs.TokensDir, userId);
-        Directory.CreateDirectory(userDir);
-        File.WriteAllText(
-            Path.Combine(userDir, "user.json"),
-            "{\"AutoApplySchedule\":true,\"ComfortHours\":3}"
-        );
+        // Setup: Create user with AutoApplySchedule=true in DB
+        var scopeFactory = BuildScopeFactory(cfg, db =>
+        {
+            db.UserSettings.Add(new UserSettings
+            {
+                UserId = userId,
+                AutoApplySchedule = true,
+                ComfortHours = 3
+            });
+            db.SaveChanges();
+        });
         
         // Setup: Create price data
         var today = TestDataFactory.CreatePriceData(date);
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
-        NordpoolPersistence.Save("SE3", today, tomorrow, fs.NordpoolDir);
         PriceMemory.Set(today, tomorrow);
         
-        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
-        var job = new ScheduleUpdateHangfireJob(cfg, batchRunner);
+        var job = new ScheduleUpdateHangfireJob(cfg, scopeFactory);
         await job.ExecuteAsync();
         
         // Fire-and-forget history save may still be in progress - give it a brief moment
         await Task.Delay(100);
         
-        // Verify: History was saved (persist=true in RunBatchAsync)
-        var historyFile = Path.Combine(fs.HistoryDir, userId, "history.json");
-        Assert.True(File.Exists(historyFile), "History should be saved for auto-apply users");
+        // Verify: History was saved to DB (persist=true in RunBatchAsync)
+        using (var scope = scopeFactory.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+            var historyCount = await db.ScheduleHistory.CountAsync(h => h.UserId == userId);
+            Assert.True(historyCount > 0, "History should be saved for auto-apply users");
+        }
     }
 
     [Fact]
@@ -50,9 +95,9 @@ public class ScheduleUpdateJobTests
         using var fs = new TempFileSystem();
         var cfg = fs.GetTestConfig();
         
-        // No user directories exist
-        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
-        var job = new ScheduleUpdateHangfireJob(cfg, batchRunner);
+        // No users in DB
+        var scopeFactory = BuildScopeFactory(cfg);
+        var job = new ScheduleUpdateHangfireJob(cfg, scopeFactory);
         
         // Should complete without errors
         await job.ExecuteAsync();
@@ -68,42 +113,37 @@ public class ScheduleUpdateJobTests
         var cfg = fs.GetTestConfig();
         var date = new DateTime(2026, 2, 7);
         
-        // Create multiple users with auto-apply
         var user1 = "user-multi-1";
         var user2 = "user-multi-2";
         
-        var user1Dir = Path.Combine(fs.TokensDir, user1);
-        var user2Dir = Path.Combine(fs.TokensDir, user2);
-        Directory.CreateDirectory(user1Dir);
-        Directory.CreateDirectory(user2Dir);
-        
-        File.WriteAllText(
-            Path.Combine(user1Dir, "user.json"),
-            "{\"AutoApplySchedule\":true,\"ComfortHours\":2}"
-        );
-        File.WriteAllText(
-            Path.Combine(user2Dir, "user.json"),
-            "{\"AutoApplySchedule\":true,\"ComfortHours\":4}"
-        );
+        // Seed DB with auto-apply users
+        var scopeFactory = BuildScopeFactory(cfg, db =>
+        {
+            db.UserSettings.Add(new UserSettings { UserId = user1, AutoApplySchedule = true, ComfortHours = 2 });
+            db.UserSettings.Add(new UserSettings { UserId = user2, AutoApplySchedule = true, ComfortHours = 4 });
+            db.SaveChanges();
+        });
         
         // Setup price data
         var today = TestDataFactory.CreatePriceData(date);
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
         PriceMemory.Set(today, tomorrow);
         
-        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
-        var job = new ScheduleUpdateHangfireJob(cfg, batchRunner);
+        var job = new ScheduleUpdateHangfireJob(cfg, scopeFactory);
         await job.ExecuteAsync();
         
         // Fire-and-forget history save may still be in progress - give it a brief moment
         await Task.Delay(100);
         
-        // Both users should have history
-        var history1 = Path.Combine(fs.HistoryDir, user1, "history.json");
-        var history2 = Path.Combine(fs.HistoryDir, user2, "history.json");
-        
-        Assert.True(File.Exists(history1) || File.Exists(history2), 
-            "At least one user should have history saved");
+        // Both users should have history in DB
+        using (var scope = scopeFactory.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+            var history1Count = await db.ScheduleHistory.CountAsync(h => h.UserId == user1);
+            var history2Count = await db.ScheduleHistory.CountAsync(h => h.UserId == user2);
+            Assert.True(history1Count > 0 || history2Count > 0, 
+                "At least one user should have history saved");
+        }
     }
 
     [Fact]
@@ -113,37 +153,27 @@ public class ScheduleUpdateJobTests
         var cfg = fs.GetTestConfig();
         var date = new DateTime(2026, 2, 7);
         
-        // Create one user with corrupt json, one with valid
         var badUser = "user-corrupt";
         var goodUser = "user-good";
         
-        var badDir = Path.Combine(fs.TokensDir, badUser);
-        var goodDir = Path.Combine(fs.TokensDir, goodUser);
-        Directory.CreateDirectory(badDir);
-        Directory.CreateDirectory(goodDir);
-        
-        File.WriteAllText(
-            Path.Combine(badDir, "user.json"),
-            "{ invalid json }"
-        );
-        File.WriteAllText(
-            Path.Combine(goodDir, "user.json"),
-            "{\"AutoApplySchedule\":true,\"ComfortHours\":3}"
-        );
+        // Seed DB - both have auto-apply
+        var scopeFactory = BuildScopeFactory(cfg, db =>
+        {
+            db.UserSettings.Add(new UserSettings { UserId = badUser, AutoApplySchedule = true, ComfortHours = 3 });
+            db.UserSettings.Add(new UserSettings { UserId = goodUser, AutoApplySchedule = true, ComfortHours = 3 });
+            db.SaveChanges();
+        });
         
         var today = TestDataFactory.CreatePriceData(date);
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
         PriceMemory.Set(today, tomorrow);
         
-        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
-        var job = new ScheduleUpdateHangfireJob(cfg, batchRunner);
+        var job = new ScheduleUpdateHangfireJob(cfg, scopeFactory);
         
         // Should not throw despite corrupt user data
         await job.ExecuteAsync();
         
         // Good user should still be processed
-        var goodHistory = Path.Combine(fs.HistoryDir, goodUser, "history.json");
-        // Note: May or may not exist depending on error handling, but job should complete
         Assert.True(true, "Job completed without crashing");
     }
 
@@ -154,29 +184,31 @@ public class ScheduleUpdateJobTests
         var cfg = fs.GetTestConfig();
         var date = new DateTime(2026, 2, 7);
         
-        // Create user with AutoApplySchedule=false
         var userNoAuto = "user-no-auto";
-        var userDir = Path.Combine(fs.TokensDir, userNoAuto);
-        Directory.CreateDirectory(userDir);
-        File.WriteAllText(
-            Path.Combine(userDir, "user.json"),
-            "{\"AutoApplySchedule\":false,\"ComfortHours\":3}"
-        );
+        
+        // Seed DB with AutoApplySchedule=false
+        var scopeFactory = BuildScopeFactory(cfg, db =>
+        {
+            db.UserSettings.Add(new UserSettings { UserId = userNoAuto, AutoApplySchedule = false, ComfortHours = 3 });
+            db.SaveChanges();
+        });
         
         var today = TestDataFactory.CreatePriceData(date);
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
         PriceMemory.Set(today, tomorrow);
         
-        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
-        var job = new ScheduleUpdateHangfireJob(cfg, batchRunner);
+        var job = new ScheduleUpdateHangfireJob(cfg, scopeFactory);
         await job.ExecuteAsync();
         
         // Fire-and-forget history save may still be in progress - give it a brief moment  
         await Task.Delay(100);
         
         // User without auto-apply should NOT have history saved
-        var historyFile = Path.Combine(fs.HistoryDir, userNoAuto, "history.json");
-        Assert.False(File.Exists(historyFile), 
-            "Users with AutoApplySchedule=false should be skipped");
+        using (var scope = scopeFactory.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+            var historyCount = await db.ScheduleHistory.CountAsync(h => h.UserId == userNoAuto);
+            Assert.Equal(0, historyCount);
+        }
     }
 }

@@ -11,6 +11,9 @@ using System.Linq;
 using Hangfire;
 using Hangfire.InMemory;
 using Hangfire.Dashboard;
+using Microsoft.EntityFrameworkCore;
+using Prisstyrning.Data;
+using Prisstyrning.Data.Repositories;
 using Prisstyrning.Jobs;
 
 // Constants for maintainability
@@ -38,6 +41,12 @@ builder.WebHost.ConfigureKestrel(o =>
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+// PostgreSQL + EF Core
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+    ?? "Host=localhost;Database=prisstyrning;Username=prisstyrning;Password=prisstyrning";
+builder.Services.AddDbContext<PrisstyrningDbContext>(options =>
+    options.UseNpgsql(connectionString));
 
 // Configure HttpClientFactory with named clients
 builder.Services.AddHttpClient("Nordpool", client =>
@@ -67,13 +76,21 @@ builder.Services.AddHttpClient("Entsoe", client =>
 });
 
 // Register application services
-builder.Services.AddSingleton<BatchRunner>();
-builder.Services.AddSingleton<DaikinOAuthService>();
+builder.Services.AddScoped<BatchRunner>();
 
 // Configure Hangfire with in-memory storage
 builder.Services.AddHangfire(config => config
     .UseInMemoryStorage());
 builder.Services.AddHangfireServer();
+
+// Register repositories
+builder.Services.AddScoped<UserSettingsRepository>();
+builder.Services.AddScoped<AdminRepository>();
+builder.Services.AddScoped<PriceRepository>();
+builder.Services.AddScoped<ScheduleHistoryRepository>();
+builder.Services.AddScoped<DaikinTokenRepository>();
+builder.Services.AddScoped<DaikinOAuthService>();
+builder.Services.AddHostedService<JsonMigrationService>();
 
 // Register job classes for dependency injection
 builder.Services.AddTransient<NordpoolPriceHangfireJob>();
@@ -83,6 +100,26 @@ builder.Services.AddTransient<InitialBatchHangfireJob>();
 builder.Services.AddTransient<ScheduleUpdateHangfireJob>();
 
 var app = builder.Build();
+
+// Apply EF Core migrations on startup (with retry for container orchestration)
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+    for (var attempt = 1; attempt <= 5; attempt++)
+    {
+        try
+        {
+            db.Database.Migrate();
+            Console.WriteLine("[Startup] Database migrations applied successfully.");
+            break;
+        }
+        catch (Exception ex) when (attempt < 5)
+        {
+            Console.WriteLine($"[Startup] Database migration attempt {attempt}/5 failed: {ex.Message}. Retrying in {attempt * 2}s...");
+            Thread.Sleep(attempt * 2000);
+        }
+    }
+}
 
 // Configure Hangfire middleware
 var hangfirePassword = builder.Configuration["Hangfire:DashboardPassword"];
@@ -122,54 +159,34 @@ RecurringJob.AddOrUpdate<InitialBatchHangfireJob>("initial-batch-job",
 
 // User settings endpoints
 // Schedule history endpoint for frontend visualization
-app.MapGet("/api/user/schedule-history", (HttpContext ctx) =>
+app.MapGet("/api/user/schedule-history", async (HttpContext ctx, ScheduleHistoryRepository historyRepo) =>
 {
-    var userId = GetUserId(ctx);
-    var history = ScheduleHistoryPersistence.Load(userId ?? "default", StoragePaths.GetBaseDir(builder.Configuration));
-    var result = history.Select(e => new {
-        timestamp = e?["timestamp"]?.ToString(),
-        date = DateTimeOffset.TryParse(e?["timestamp"]?.ToString(), out var dt) ? dt.ToString("yyyy-MM-dd") : null,
-        schedule = e?["schedule"]
+    var userId = GetUserId(ctx) ?? "default";
+    var entries = await historyRepo.LoadAsync(userId);
+    var result = entries.Select(e => new {
+        timestamp = e.Timestamp.ToString("o"),
+        date = e.Timestamp.ToString("yyyy-MM-dd"),
+        schedule = (JsonNode?)JsonNode.Parse(e.SchedulePayloadJson)
     });
     return Results.Json(result);
 });
-app.MapGet("/api/user/settings", async (HttpContext ctx) =>
+app.MapGet("/api/user/settings", async (HttpContext ctx, UserSettingsRepository settingsRepo) =>
 {
-    var cfg = (IConfiguration)builder.Configuration;
     var userId = GetUserId(ctx) ?? "default";
-    var path = StoragePaths.GetUserJsonPath(cfg, userId);
-    if (!File.Exists(path)) return Results.Json(new { ComfortHours = 3, TurnOffPercentile = 0.9, AutoApplySchedule = false, MaxComfortGapHours = 28 });
-    try
-    {
-        var json = await File.ReadAllTextAsync(path);
-        var node = JsonNode.Parse(json) as JsonObject;
-        int comfortHours = int.TryParse(node?["ComfortHours"]?.ToString(), out var ch) ? ch : 3;
-        double turnOffPercentile = double.TryParse(node?["TurnOffPercentile"]?.ToString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var tp) ? tp : 0.9;
-        bool autoApplySchedule = bool.TryParse(node?["AutoApplySchedule"]?.ToString(), out var aas) ? aas : false;
-        int maxComfortGapHours = int.TryParse(node?["MaxComfortGapHours"]?.ToString(), out var mcgh) ? mcgh : 28;
-        return Results.Json(new { ComfortHours = comfortHours, TurnOffPercentile = turnOffPercentile, AutoApplySchedule = autoApplySchedule, MaxComfortGapHours = maxComfortGapHours });
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"[UserSettings] read error: {ex.Message}");
-        return Results.Json(new { ComfortHours = 3, TurnOffPercentile = 0.9, AutoApplySchedule = false, MaxComfortGapHours = 28 });
-    }
+    var entity = await settingsRepo.GetOrCreateAsync(userId);
+    return Results.Json(new { 
+        ComfortHours = entity.ComfortHours, 
+        TurnOffPercentile = entity.TurnOffPercentile, 
+        AutoApplySchedule = entity.AutoApplySchedule, 
+        MaxComfortGapHours = entity.MaxComfortGapHours 
+    });
 });
 
-app.MapPost("/api/user/settings", async (HttpContext ctx) =>
+app.MapPost("/api/user/settings", async (HttpContext ctx, UserSettingsRepository settingsRepo) =>
 {
     var userId = GetUserId(ctx) ?? "default";
     var body = await JsonNode.ParseAsync(ctx.Request.Body) as JsonObject;
     if (body == null) return Results.BadRequest(new { error = "Missing body" });
-    var cfg = (IConfiguration)builder.Configuration;
-    var path = StoragePaths.GetUserJsonPath(cfg, userId);
-    JsonObject node;
-    if (File.Exists(path))
-    {
-        try { var jsonExisting = await File.ReadAllTextAsync(path); node = JsonNode.Parse(jsonExisting) as JsonObject ?? new JsonObject(); }
-        catch { node = new JsonObject(); }
-    }
-    else node = new JsonObject();
     string? rawCh = body["ComfortHours"]?.ToString();
     string? rawTp = body["TurnOffPercentile"]?.ToString();
     string? rawAas = body["AutoApplySchedule"]?.ToString();
@@ -188,48 +205,31 @@ app.MapPost("/api/user/settings", async (HttpContext ctx) =>
     if (!string.IsNullOrWhiteSpace(rawMcgh))
     { if (!int.TryParse(rawMcgh, out maxComfortGapHours) || maxComfortGapHours < 1 || maxComfortGapHours > 72) { errors.Add("MaxComfortGapHours must be an integer between 1 and 72"); maxComfortGapHours = 28; } }
     if (errors.Count > 0) return Results.BadRequest(new { error = "Validation failed", errors });
-    node["ComfortHours"] = comfortHours;
-    node["TurnOffPercentile"] = turnOffPercentile;
-    node["AutoApplySchedule"] = autoApplySchedule;
-    node["MaxComfortGapHours"] = maxComfortGapHours;
-    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-    await File.WriteAllTextAsync(path, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+    await settingsRepo.SaveSettingsAsync(userId, comfortHours, turnOffPercentile, autoApplySchedule, maxComfortGapHours);
     return Results.Ok(new { saved = true });
 });
 
-// Försök förladda minnescache från senaste persistenta fil så /api/prices/memory inte ger 404 direkt vid start
+// Preload price memory from database
 try
 {
-    var preloadDir = builder.Configuration["Storage:Directory"] ?? "data";
-    if (Directory.Exists(preloadDir))
+    using var preloadScope = app.Services.CreateScope();
+    var priceRepo = preloadScope.ServiceProvider.GetRequiredService<PriceRepository>();
+    var defaultZone = builder.Configuration["Price:Nordpool:DefaultZone"] ?? "SE3";
+    var latestSnapshot = await priceRepo.GetLatestAsync(defaultZone);
+    if (latestSnapshot != null)
     {
-        var latest = Directory.GetFiles(preloadDir, "prices-*.json").OrderByDescending(f => f).FirstOrDefault();
-        if (latest != null)
+        var todayArr = JsonSerializer.Deserialize<JsonArray>(latestSnapshot.TodayPricesJson);
+        var tomorrowArr = JsonSerializer.Deserialize<JsonArray>(latestSnapshot.TomorrowPricesJson);
+        if (todayArr != null || tomorrowArr != null)
         {
-            var json = await File.ReadAllTextAsync(latest);
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-            JsonArray? todayArr = null;
-            JsonArray? tomorrowArr = null;
-            if (root.TryGetProperty("today", out var tEl) && tEl.ValueKind == JsonValueKind.Array)
-            {
-                todayArr = JsonSerializer.Deserialize<JsonArray>(tEl.GetRawText());
-            }
-            if (root.TryGetProperty("tomorrow", out var tmEl) && tmEl.ValueKind == JsonValueKind.Array)
-            {
-                tomorrowArr = JsonSerializer.Deserialize<JsonArray>(tmEl.GetRawText());
-            }
-            if (todayArr != null || tomorrowArr != null)
-            {
-                PriceMemory.Set(todayArr, tomorrowArr);
-                Console.WriteLine("[Startup] Preloaded price memory from latest file");
-            }
+            PriceMemory.Set(todayArr, tomorrowArr);
+            Console.WriteLine($"[Startup] Preloaded price memory from database (zone={defaultZone}, date={latestSnapshot.Date})");
         }
     }
 }
 catch (Exception ex)
 {
-    Console.WriteLine($"[Startup] Preload failed: {ex.Message}");
+    Console.WriteLine($"[Startup] DB preload failed: {ex.Message}");
 }
 
 if (app.Environment.IsDevelopment() || true)
@@ -281,10 +281,10 @@ pricesGroup.MapGet("/latest", () =>
 });
 
 // Diagnostic endpoint for Nordpool fetch debugging
-app.MapGet("/api/prices/_debug/fetch", async (IHttpClientFactory httpClientFactory, HttpContext ctx, IConfiguration cfg) =>
+app.MapGet("/api/prices/_debug/fetch", async (IHttpClientFactory httpClientFactory, HttpContext ctx, IConfiguration cfg, UserSettingsRepository settingsRepo) =>
 {
     var userId = GetUserId(ctx);
-    var zone = UserSettingsService.GetUserZone(cfg, userId) ?? "SE3";
+    var zone = await settingsRepo.GetUserZoneAsync(userId) ?? "SE3";
     var dateStr = ctx.Request.Query["date"].FirstOrDefault();
     DateTime date = DateTime.TryParse(dateStr, out var d) ? d : DateTime.Today;
     var currency = cfg["Price:Nordpool:Currency"] ?? "SEK";
@@ -309,39 +309,28 @@ pricesGroup.MapGet("/memory", () =>
     return Results.Json(new { updated, today, tomorrow });
 });
 // Per-user zone get/set
-pricesGroup.MapGet("/zone", (HttpContext c, IConfiguration cfg) => {
-    var userId = GetUserId(c); var zone = UserSettingsService.GetUserZone(cfg, userId); return Results.Json(new { zone });
+pricesGroup.MapGet("/zone", async (HttpContext c, UserSettingsRepository settingsRepo) => {
+    var userId = GetUserId(c); var zone = await settingsRepo.GetUserZoneAsync(userId); return Results.Json(new { zone });
 });
-pricesGroup.MapPost("/zone", async (HttpContext c, IConfiguration cfg) => {
+pricesGroup.MapPost("/zone", async (HttpContext c, UserSettingsRepository settingsRepo) => {
     try {
         using var doc = await JsonDocument.ParseAsync(c.Request.Body);
         if (!doc.RootElement.TryGetProperty("zone", out var zEl)) return Results.BadRequest(new { error = "Missing zone" });
         var zone = zEl.GetString();
-        if (!UserSettingsService.IsValidZone(zone)) return Results.BadRequest(new { error = "Invalid zone" });
+        if (!UserSettingsRepository.IsValidZone(zone)) return Results.BadRequest(new { error = "Invalid zone" });
         var userId = GetUserId(c);
-        // Persist user zone inside user.json (merge/update existing)
-        var userJsonPath = StoragePaths.GetUserJsonPath(builder.Configuration, userId ?? "");
-        Directory.CreateDirectory(Path.GetDirectoryName(userJsonPath)!);
-        JsonObject userNode;
-        if (File.Exists(userJsonPath))
-        {
-            try { userNode = JsonNode.Parse(await File.ReadAllTextAsync(userJsonPath)) as JsonObject ?? new JsonObject(); }
-            catch { userNode = new JsonObject(); }
-        }
-        else userNode = new JsonObject();
-        userNode["Zone"] = zone;
-        await File.WriteAllTextAsync(userJsonPath, userNode.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        await settingsRepo.SetUserZoneAsync(userId, zone!);
         return Results.Ok(new { saved = true, zone });
     } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
 // Get latest persisted Nordpool snapshot for zone
-pricesGroup.MapGet("/nordpool/latest", (HttpContext c, IConfiguration cfg, string? zone) => {
-    zone ??= UserSettingsService.GetUserZone(cfg, GetUserId(c));
-    var file = NordpoolPersistence.GetLatestFile(zone, cfg["Storage:Directory"] ?? "data");
-    if (file == null) return Results.NotFound(new { error = "No snapshot" });
-    return Results.File(file, "application/json");
+pricesGroup.MapGet("/nordpool/latest", async (HttpContext c, IConfiguration cfg, UserSettingsRepository settingsRepo, PriceRepository priceRepo, string? zone) => {
+    zone ??= settingsRepo.GetUserZone(GetUserId(c));
+    var snapshot = await priceRepo.GetLatestAsync(zone);
+    if (snapshot == null) return Results.NotFound(new { error = "No snapshot" });
+    return Results.Json(new { zone = snapshot.Zone, date = snapshot.Date.ToString("yyyy-MM-dd"), savedAt = snapshot.SavedAtUtc, today = JsonSerializer.Deserialize<JsonArray>(snapshot.TodayPricesJson), tomorrow = JsonSerializer.Deserialize<JsonArray>(snapshot.TomorrowPricesJson) });
 });
-pricesGroup.MapGet("/timeseries", (HttpContext ctx) =>
+pricesGroup.MapGet("/timeseries", async (HttpContext ctx, PriceRepository priceRepo, IConfiguration cfg) =>
 {
     var source = ctx.Request.Query["source"].ToString();
     var (memToday, memTomorrow, updated) = PriceMemory.Get();
@@ -352,32 +341,19 @@ pricesGroup.MapGet("/timeseries", (HttpContext ctx) =>
     {
         try
         {
-            var dir = builder.Configuration["Storage:Directory"] ?? "data";
-            if (Directory.Exists(dir))
+            var zone = cfg["Price:Nordpool:DefaultZone"] ?? "SE3";
+            var snapshot = await priceRepo.GetLatestAsync(zone);
+            if (snapshot != null)
             {
-                var file = Directory.GetFiles(dir, "prices-*.json").OrderByDescending(f => f).FirstOrDefault();
-                if (file != null)
-                {
-                    using var doc = JsonDocument.Parse(File.ReadAllText(file));
-                    var root = doc.RootElement;
-                    if (today == null && root.TryGetProperty("today", out var tEl) && tEl.ValueKind == JsonValueKind.Array)
-                    {
-                        // Convert JsonElement directly to JsonArray without re-parsing
-                        var todayNode = JsonSerializer.Deserialize<JsonArray>(tEl.GetRawText());
-                        today = todayNode;
-                    }
-                    if (tomorrow == null && root.TryGetProperty("tomorrow", out var tmEl) && tmEl.ValueKind == JsonValueKind.Array)
-                    {
-                        // Convert JsonElement directly to JsonArray without re-parsing
-                        var tomorrowNode = JsonSerializer.Deserialize<JsonArray>(tmEl.GetRawText());
-                        tomorrow = tomorrowNode;
-                    }
-                }
+                if (today == null)
+                    today = JsonSerializer.Deserialize<JsonArray>(snapshot.TodayPricesJson);
+                if (tomorrow == null)
+                    tomorrow = JsonSerializer.Deserialize<JsonArray>(snapshot.TomorrowPricesJson);
             }
         }
         catch (Exception ex) 
         { 
-            Console.WriteLine($"[Timeseries] Failed to read fallback price file: {ex.Message}");
+            Console.WriteLine($"[Timeseries] Failed to read price data from DB: {ex.Message}");
         }
     }
     var items = new List<(DateTimeOffset start, decimal value, string day)>();
@@ -402,14 +378,14 @@ pricesGroup.MapGet("/timeseries", (HttpContext ctx) =>
 
 // Auth group
 var daikinAuthGroup = app.MapGroup("/auth/daikin").WithTags("Daikin Auth");
-daikinAuthGroup.MapGet("/start", (IConfiguration cfg, HttpContext c) => { try { var url = DaikinOAuthService.GetAuthorizationUrl(cfg, c); return Results.Json(new { url }); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); } });
-daikinAuthGroup.MapGet("/start-min", (IConfiguration cfg, HttpContext c) => { try { var url = DaikinOAuthService.GetMinimalAuthorizationUrl(cfg, c); return Results.Json(new { url }); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); } });
-daikinAuthGroup.MapGet("/callback", async (DaikinOAuthService daikinOAuthService, IConfiguration cfg, HttpContext c, string? code, string? state) =>
+daikinAuthGroup.MapGet("/start", (DaikinOAuthService daikinOAuth, HttpContext c) => { try { var url = daikinOAuth.GetAuthorizationUrl(c); return Results.Json(new { url }); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); } });
+daikinAuthGroup.MapGet("/start-min", (DaikinOAuthService daikinOAuth, HttpContext c) => { try { var url = daikinOAuth.GetMinimalAuthorizationUrl(c); return Results.Json(new { url }); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); } });
+daikinAuthGroup.MapGet("/callback", async (DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext c, string? code, string? state) =>
 {
     var userId = GetUserId(c);
     if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state))
         return Results.BadRequest(new { error = "Missing code/state" });
-    var result = await daikinOAuthService.HandleCallbackWithSubjectAsync(cfg, code, state, userId);
+    var result = await daikinOAuth.HandleCallbackWithSubjectAsync(code, state, userId);
     var ok = result.Success;
     // If we got a stable OIDC subject, remap the user to a deterministic userId
     if (ok && !string.IsNullOrEmpty(result.Subject))
@@ -418,10 +394,9 @@ daikinAuthGroup.MapGet("/callback", async (DaikinOAuthService daikinOAuthService
         if (userId != stableUserId)
         {
             // Migrate data from the old browser-random userId to the deterministic one.
-            // MigrateUserData moves token and settings files without overwriting existing ones.
             if (!string.IsNullOrEmpty(userId))
-                DaikinOAuthService.MigrateUserData(cfg, userId, stableUserId);
-            // Update the cookie to the deterministic userId, matching Secure behavior to the current request
+                await daikinOAuth.MigrateUserDataAsync(userId, stableUserId);
+            // Update the cookie to the deterministic userId
             c.Response.Cookies.Append(
                 UserCookieName,
                 stableUserId,
@@ -499,9 +474,9 @@ daikinAuthGroup.MapGet("/callback", async (DaikinOAuthService daikinOAuthService
     Console.WriteLine($"[DaikinOAuth][Callback] Redirecting userId={userId} success={ok} to={dest}");
     return Results.Redirect(dest, false);
 });
-daikinAuthGroup.MapGet("/status", async (DaikinOAuthService daikinOAuthService, IConfiguration cfg, HttpContext c) => {
+daikinAuthGroup.MapGet("/status", async (DaikinOAuthService daikinOAuth, HttpContext c) => {
     var userId = GetUserId(c);
-    var raw = DaikinOAuthService.Status(cfg, userId); // anonymous object { authorized, expiresAtUtc, ... }
+    var raw = await daikinOAuth.StatusAsync(userId); // anonymous object { authorized, expiresAtUtc, ... }
     try
     {
         // Use reflection to read properties safely
@@ -512,17 +487,31 @@ daikinAuthGroup.MapGet("/status", async (DaikinOAuthService daikinOAuthService, 
         var expiresAt = expProp?.GetValue(raw) as DateTimeOffset?;
         if (authorized == true && expiresAt != null && expiresAt < DateTimeOffset.UtcNow.AddMinutes(5))
         {
-            await daikinOAuthService.RefreshIfNeededAsync(cfg, userId, TimeSpan.FromMinutes(5));
-            raw = DaikinOAuthService.Status(cfg, userId);
+            await daikinOAuth.RefreshIfNeededAsync(userId, TimeSpan.FromMinutes(5));
+            raw = await daikinOAuth.StatusAsync(userId);
         }
     }
     catch { }
     return Results.Json(raw);
 });
-daikinAuthGroup.MapPost("/refresh", async (DaikinOAuthService daikinOAuthService, IConfiguration cfg, HttpContext c) => { var userId = GetUserId(c); var token = await daikinOAuthService.RefreshIfNeededAsync(cfg, userId); return token == null ? Results.BadRequest(new { error = "Refresh failed or not authorized" }) : Results.Ok(new { refreshed = true }); });
-daikinAuthGroup.MapGet("/debug", (IConfiguration cfg, HttpContext c) => { var userId = GetUserId(c); return Results.Json(new { status = DaikinOAuthService.Status(cfg, userId), userId, now = DateTimeOffset.UtcNow }); });
-daikinAuthGroup.MapPost("/revoke", async (DaikinOAuthService daikinOAuthService, IConfiguration cfg, HttpContext c) => { var userId = GetUserId(c); var ok = await daikinOAuthService.RevokeAsync(cfg, userId); return ok ? Results.Ok(new { revoked = true }) : Results.BadRequest(new { error = "Revoke failed" }); });
-daikinAuthGroup.MapGet("/introspect", async (DaikinOAuthService daikinOAuthService, IConfiguration cfg, HttpContext c, bool refresh) => { var userId = GetUserId(c); var result = await daikinOAuthService.IntrospectAsync(cfg, userId, refresh); return result == null ? Results.BadRequest(new { error = "Not authorized" }) : Results.Json(result); });
+daikinAuthGroup.MapPost("/refresh", async (DaikinOAuthService daikinOAuth, HttpContext c) => { var userId = GetUserId(c); var token = await daikinOAuth.RefreshIfNeededAsync(userId); return token == null ? Results.BadRequest(new { error = "Refresh failed or not authorized" }) : Results.Ok(new { refreshed = true }); });
+daikinAuthGroup.MapGet("/debug", async (DaikinOAuthService daikinOAuth, HttpContext c) => { var userId = GetUserId(c); return Results.Json(new { status = await daikinOAuth.StatusAsync(userId), userId, now = DateTimeOffset.UtcNow }); });
+daikinAuthGroup.MapPost("/revoke", async (DaikinOAuthService daikinOAuth, HttpContext c) => { var userId = GetUserId(c); var ok = await daikinOAuth.RevokeAsync(userId); return ok ? Results.Ok(new { revoked = true }) : Results.BadRequest(new { error = "Revoke failed" }); });
+daikinAuthGroup.MapGet("/introspect", async (DaikinOAuthService daikinOAuth, HttpContext c, bool refresh) => { var userId = GetUserId(c); var result = await daikinOAuth.IntrospectAsync(userId, refresh); return result == null ? Results.BadRequest(new { error = "Not authorized" }) : Results.Json(result); });
+
+// Schedule preview/apply
+var scheduleGroup = app.MapGroup("/api/schedule").WithTags("Schedule");
+scheduleGroup.MapGet("/preview", async (HttpContext c, UserSettingsRepository settingsRepo, BatchRunner batchRunner, IServiceScopeFactory scopeFactory) => {
+    var cfg = (IConfiguration)builder.Configuration;
+    var userId = GetUserId(c);
+    
+    // Use BatchRunner to generate schedule and handle history persistence
+    var (generated, schedulePayload, message) = await batchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: true, scopeFactory);
+    var zone = await settingsRepo.GetUserZoneAsync(userId);
+    
+    return Results.Json(new { schedulePayload, generated, message, zone });
+});
+scheduleGroup.MapPost("/apply", async (BatchRunner batchRunner, HttpContext ctx, IServiceScopeFactory scopeFactory) => await HandleApplyScheduleAsync(batchRunner, ctx, builder.Configuration, scopeFactory));
 
 // Admin group
 var adminGroup = app.MapGroup("/api/admin").WithTags("Admin");
@@ -566,85 +555,38 @@ adminGroup.MapPost("/login", async (IConfiguration cfg, HttpContext c) =>
     return Results.Json(new { granted = true, userId });
 });
 
-adminGroup.MapGet("/users", async (IConfiguration cfg, HttpContext c) =>
+adminGroup.MapGet("/users", async (IConfiguration cfg, HttpContext c, UserSettingsRepository settingsRepo, DaikinTokenRepository tokenRepo, ScheduleHistoryRepository historyRepo) =>
 {
     if (!IsAdminRequest(c, cfg))
         return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
 
     var currentUserId = GetUserId(c);
-    var userIds = new HashSet<string>();
 
-    // Scan tokens directories
-    var tokensDir = StoragePaths.GetTokensDir(cfg);
-    if (Directory.Exists(tokensDir))
-    {
-        foreach (var dir in Directory.GetDirectories(tokensDir))
-        {
-            var uid = Path.GetFileName(dir);
-            if (IsValidUserId(uid))
-                userIds.Add(uid);
-        }
-    }
-
-    // Scan schedule_history directories
-    var historyDir = StoragePaths.GetScheduleHistoryDir(cfg);
-    if (Directory.Exists(historyDir))
-    {
-        foreach (var dir in Directory.GetDirectories(historyDir))
-        {
-            var uid = Path.GetFileName(dir);
-            if (IsValidUserId(uid))
-                userIds.Add(uid);
-        }
-    }
+    // Get all known user IDs from DB (tokens + settings + history)
+    var tokenUserIds = await tokenRepo.GetAllUserIdsAsync();
+    var userIds = new HashSet<string>(tokenUserIds);
 
     var adminUserIds = AdminService.GetAdminUserIds(cfg);
     var hangfireUserIds = AdminService.GetHangfireUserIds(cfg);
     var users = new List<object>();
 
-    // NOTE: This performs sequential file I/O operations for each user.
-    // For systems with many users, consider implementing pagination or caching.
-    // Current implementation is acceptable for typical usage (tens of users),
-    // but may need optimization if user count grows to hundreds or more.
     foreach (var uid in userIds)
     {
-        var settings = UserSettingsService.LoadScheduleSettings(cfg, uid);
-        var zone = UserSettingsService.GetUserZone(cfg, uid);
-        var daikinTokenPath = Path.Combine(tokensDir, uid, "daikin.json");
-        var daikinAuthorized = File.Exists(daikinTokenPath);
-        string? daikinExpiresAtUtc = null;
-        if (daikinAuthorized)
-        {
-            try
-            {
-                var daikinJson = await File.ReadAllTextAsync(daikinTokenPath);
-                var daikinNode = System.Text.Json.Nodes.JsonNode.Parse(daikinJson) as System.Text.Json.Nodes.JsonObject;
-                daikinExpiresAtUtc = daikinNode?["expires_at_utc"]?.ToString();
-            }
-            catch { }
-        }
+        var settings = settingsRepo.LoadScheduleSettings(uid);
+        var zone = settingsRepo.GetUserZone(uid);
+        var token = await tokenRepo.LoadAsync(uid);
+        var daikinAuthorized = token != null;
+        string? daikinExpiresAtUtc = token?.ExpiresAtUtc.ToString("o");
 
-        var userHistoryPath = Path.Combine(historyDir, uid, "history.json");
-        var hasScheduleHistory = File.Exists(userHistoryPath);
-        int? scheduleCount = null;
+        var historyCount = await historyRepo.CountAsync(uid);
+        var hasScheduleHistory = historyCount > 0;
+        int? scheduleCount = hasScheduleHistory ? historyCount : null;
         string? lastScheduleDate = null;
         if (hasScheduleHistory)
         {
-            try
-            {
-                var histJson = await File.ReadAllTextAsync(userHistoryPath);
-                var histArr = System.Text.Json.Nodes.JsonNode.Parse(histJson) as System.Text.Json.Nodes.JsonArray;
-                if (histArr != null)
-                {
-                    scheduleCount = histArr.Count;
-                    lastScheduleDate = histArr.LastOrDefault()?["timestamp"]?.ToString();
-                }
-            }
-            catch { }
+            var entries = await historyRepo.LoadAsync(uid);
+            lastScheduleDate = entries.FirstOrDefault()?.Timestamp.ToString("o");
         }
-
-        var userTokenDir = Path.Combine(tokensDir, uid);
-        DateTime? createdAt = Directory.Exists(userTokenDir) ? Directory.GetCreationTimeUtc(userTokenDir) : null;
 
         users.Add(new
         {
@@ -658,8 +600,7 @@ adminGroup.MapGet("/users", async (IConfiguration cfg, HttpContext c) =>
             lastScheduleDate,
             isAdmin = adminUserIds.Contains(uid),
             hasHangfireAccess = hangfireUserIds.Contains(uid),
-            isCurrentUser = uid == currentUserId,
-            createdAt
+            isCurrentUser = uid == currentUserId
         });
     }
 
@@ -718,7 +659,7 @@ adminGroup.MapDelete("/users/{userId}/hangfire", async (IConfiguration cfg, Http
     return Results.Json(new { revoked = true, userId });
 });
 
-adminGroup.MapDelete("/users/{userId}", async (IConfiguration cfg, HttpContext c, string userId) =>
+adminGroup.MapDelete("/users/{userId}", async (IConfiguration cfg, HttpContext c, string userId, DaikinTokenRepository tokenRepo, ScheduleHistoryRepository historyRepo) =>
 {
     if (!IsAdminRequest(c, cfg))
         return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
@@ -733,36 +674,28 @@ adminGroup.MapDelete("/users/{userId}", async (IConfiguration cfg, HttpContext c
     var deleted = false;
     var warnings = new List<string>();
 
-    // Delete tokens directory (contains user.json and daikin.json)
-    var userTokenDir = Path.Combine(StoragePaths.GetTokensDir(cfg), userId);
-    if (Directory.Exists(userTokenDir))
+    // Delete tokens from database
+    try
     {
-        try
-        {
-            Directory.Delete(userTokenDir, recursive: true);
-            deleted = true;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[Admin] Failed to delete tokens for user {userId}: {ex.Message}");
-            warnings.Add("Failed to delete tokens directory");
-        }
+        await tokenRepo.DeleteAsync(userId);
+        deleted = true;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[Admin] Failed to delete tokens for user {userId}: {ex.Message}");
+        warnings.Add("Failed to delete tokens");
     }
 
-    // Delete schedule history directory
-    var userHistoryDir = Path.Combine(StoragePaths.GetScheduleHistoryDir(cfg), userId);
-    if (Directory.Exists(userHistoryDir))
+    // Delete schedule history from database
+    try
     {
-        try
-        {
-            Directory.Delete(userHistoryDir, recursive: true);
-            deleted = true;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[Admin] Failed to delete schedule history for user {userId}: {ex.Message}");
-            warnings.Add("Failed to delete schedule history directory");
-        }
+        var historyDeleted = await historyRepo.DeleteAllOlderThanAsync(DateTimeOffset.MinValue);
+        deleted = true;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[Admin] Failed to delete schedule history for user {userId}: {ex.Message}");
+        warnings.Add("Failed to delete schedule history");
     }
 
     // Remove from admin.json if present
@@ -783,37 +716,21 @@ adminGroup.MapDelete("/users/{userId}", async (IConfiguration cfg, HttpContext c
     return Results.Json(new { deleted = true, userId, warnings });
 });
 
-// Schedule preview/apply
-var scheduleGroup = app.MapGroup("/api/schedule").WithTags("Schedule");
-scheduleGroup.MapGet("/preview", async (BatchRunner batchRunner, HttpContext c) => {
-    var cfg = (IConfiguration)builder.Configuration;
-    var userId = GetUserId(c);
-    
-    // Use BatchRunner to generate schedule and handle history persistence
-    var (generated, schedulePayload, message) = await batchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: true);
-    var zone = UserSettingsService.GetUserZone(cfg, userId);
-    
-    return Results.Json(new { schedulePayload, generated, message, zone });
-});
-scheduleGroup.MapPost("/apply", async (BatchRunner batchRunner, HttpContext ctx) => await HandleApplyScheduleAsync(batchRunner, ctx, builder.Configuration));
-
-// Move this method to top-level scope (outside of any endpoint/lambda)
-
 // Daikin data group
 var daikinGroup = app.MapGroup("/api/daikin").WithTags("Daikin");
 // Simple proxy for sites (needed by frontend Sites button) – user-scoped
 // Extracted method for /apply endpoint logic
-async Task<IResult> HandleApplyScheduleAsync(BatchRunner batchRunner, HttpContext ctx, IConfiguration configuration)
+async Task<IResult> HandleApplyScheduleAsync(BatchRunner batchRunner, HttpContext ctx, IConfiguration configuration, IServiceScopeFactory scopeFactory)
 {
     var userId = GetUserId(ctx);
-    var result = await batchRunner.RunBatchAsync(configuration, userId, applySchedule: false, persist: true);
+    var result = await batchRunner.RunBatchAsync(configuration, userId, applySchedule: false, persist: true, scopeFactory);
     return Results.Json(new { generated = result.generated, schedulePayload = result.schedulePayload, message = result.message });
 }
-daikinGroup.MapGet("/sites", async (IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuthService, IConfiguration cfg, HttpContext c) =>
+daikinGroup.MapGet("/sites", async (IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext c) =>
 {
     var userId = GetUserId(c);
-    var (token, _) = DaikinOAuthService.TryGetValidAccessToken(cfg, userId);
-    token ??= await daikinOAuthService.RefreshIfNeededAsync(cfg, userId);
+    var (token, _) = await daikinOAuth.TryGetValidAccessTokenAsync(userId);
+    token ??= await daikinOAuth.RefreshIfNeededAsync(userId);
     if (token == null) return Results.BadRequest(new { error = "Not authorized" });
     try
     {
@@ -831,14 +748,14 @@ daikinGroup.MapGet("/sites", async (IHttpClientFactory httpClientFactory, Daikin
     }
 });
 // Simplified current schedule via gateway-devices
-daikinGroup.MapGet("/gateway/schedule", async (IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuthService, IConfiguration cfg, HttpContext ctx) =>
+daikinGroup.MapGet("/gateway/schedule", async (IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext ctx) =>
 {
     var deviceId = ctx.Request.Query["deviceId"].FirstOrDefault();
     var embeddedIdQuery = ctx.Request.Query["embeddedId"].FirstOrDefault();
     Console.WriteLine($"[GatewaySchedule] start deviceId={deviceId} embeddedIdQuery={embeddedIdQuery}");
     var userId = GetUserId(ctx);
-    var (token, _) = DaikinOAuthService.TryGetValidAccessToken(cfg, userId);
-    token ??= await daikinOAuthService.RefreshIfNeededAsync(cfg, userId);
+    var (token, _) = await daikinOAuth.TryGetValidAccessTokenAsync(userId);
+    token ??= await daikinOAuth.RefreshIfNeededAsync(userId);
     if (token == null) return Results.Json(new { status="unauthorized", error="Not authorized" });
     try
     {
@@ -977,11 +894,11 @@ daikinGroup.MapGet("/gateway/schedule", async (IHttpClientFactory httpClientFact
         return Results.Json(new { status="error", error=ex.Message });
     }
 });
-daikinGroup.MapGet("/devices", async (IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuthService, IConfiguration cfg, HttpContext c, string? siteId) =>
+daikinGroup.MapGet("/devices", async (IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext c, string? siteId) =>
 {
     var userId = GetUserId(c);
-    var (token, _) = DaikinOAuthService.TryGetValidAccessToken(cfg, userId);
-    token ??= await daikinOAuthService.RefreshIfNeededAsync(cfg, userId);
+    var (token, _) = await daikinOAuth.TryGetValidAccessTokenAsync(userId);
+    token ??= await daikinOAuth.RefreshIfNeededAsync(userId);
     if (token == null) return Results.BadRequest(new { error = "Not authorized" });
     try
     {
@@ -1003,11 +920,11 @@ daikinGroup.MapGet("/devices", async (IHttpClientFactory httpClientFactory, Daik
     catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
 // Simplified gateway devices proxy: return raw array from Daikin
-daikinGroup.MapGet("/gateway", async (IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuthService, IConfiguration cfg, HttpContext c) =>
+daikinGroup.MapGet("/gateway", async (IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext c) =>
 {
     var userId = GetUserId(c);
-    var (token, _) = DaikinOAuthService.TryGetValidAccessToken(cfg, userId);
-    token ??= await daikinOAuthService.RefreshIfNeededAsync(cfg, userId);
+    var (token, _) = await daikinOAuth.TryGetValidAccessTokenAsync(userId);
+    token ??= await daikinOAuth.RefreshIfNeededAsync(userId);
     if (token == null) return Results.BadRequest(new { error = "Not authorized" });
     try
     {
@@ -1027,11 +944,11 @@ daikinGroup.MapGet("/gateway", async (IHttpClientFactory httpClientFactory, Daik
 
 
 // PUT (upload) a schedule payload to a gateway device management point + optionally activate a scheduleId (mode auto-detect if omitted or 'auto')
-daikinGroup.MapPost("/gateway/schedule/put", async (IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuthService, IConfiguration cfg, HttpContext ctx) =>
+daikinGroup.MapPost("/gateway/schedule/put", async (IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext ctx, ScheduleHistoryRepository historyRepo) =>
 {
     var userId = GetUserId(ctx);
-    var (token, _) = DaikinOAuthService.TryGetValidAccessToken(cfg, userId);
-    token ??= await daikinOAuthService.RefreshIfNeededAsync(cfg, userId);
+    var (token, _) = await daikinOAuth.TryGetValidAccessTokenAsync(userId);
+    token ??= await daikinOAuth.RefreshIfNeededAsync(userId);
     if (token == null) return Results.BadRequest(new { error = "Not authorized" });
     try
     {
@@ -1112,7 +1029,7 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IHttpClientFactory httpClien
     {
         try
         {
-            await ScheduleHistoryPersistence.SaveAsync(userId, scheduleObj, DateTimeOffset.UtcNow, 7, StoragePaths.GetBaseDir(cfg));
+            await historyRepo.SaveAsync(userId, scheduleObj, DateTimeOffset.UtcNow);
             Console.WriteLine($"[SchedulePut] Saved schedule to history for user {userId}");
         }
         catch (Exception exHist)

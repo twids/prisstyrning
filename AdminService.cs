@@ -142,9 +142,15 @@ internal static class AdminService
         return (false, "Unauthorized");
     }
 
+    private static string GetAdminJsonPath(IConfiguration cfg)
+    {
+        var baseDir = cfg["Storage:Directory"] ?? "data";
+        return Path.Combine(baseDir, "admin.json");
+    }
+
     private static JsonObject LoadAdminJson(IConfiguration cfg)
     {
-        var path = StoragePaths.GetAdminJsonPath(cfg);
+        var path = GetAdminJsonPath(cfg);
         if (!File.Exists(path)) return new JsonObject();
 
         try
@@ -173,7 +179,7 @@ internal static class AdminService
 
     private static async Task SaveAdminJson(IConfiguration cfg, JsonObject data)
     {
-        var path = StoragePaths.GetAdminJsonPath(cfg);
+        var path = GetAdminJsonPath(cfg);
         var dir = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
 

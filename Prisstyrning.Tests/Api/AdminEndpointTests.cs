@@ -141,7 +141,7 @@ public class AdminEndpointTests
 
         await AdminService.GrantAdmin(cfg, "user-format-test");
 
-        var path = StoragePaths.GetAdminJsonPath(cfg);
+        var path = Path.Combine(cfg["Storage:Directory"] ?? "data", "admin.json");
         Assert.True(File.Exists(path));
 
         var json = await File.ReadAllTextAsync(path);
@@ -198,7 +198,7 @@ public class AdminEndpointTests
         Assert.True(AdminService.HasHangfireAccess(cfg, "hangfire-user-b"));
 
         // Verify the raw JSON has both lists
-        var path = StoragePaths.GetAdminJsonPath(cfg);
+        var path = Path.Combine(cfg["Storage:Directory"] ?? "data", "admin.json");
         var json = await File.ReadAllTextAsync(path);
         var node = JsonNode.Parse(json) as JsonObject;
         Assert.NotNull(node);

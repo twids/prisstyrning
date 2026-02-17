@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Prisstyrning.Data.Repositories;
 
 internal enum HourState { None, Comfort, Eco, TurnOff }
 internal record ClassifiedHour(int Hour, decimal Price, HourState State);
@@ -17,18 +19,32 @@ internal class BatchRunner
         _daikinOAuthService = daikinOAuthService ?? throw new ArgumentNullException(nameof(daikinOAuthService));
     }
 
-    public async Task<object> GenerateSchedulePreview(IConfiguration config)
+    public async Task<object> GenerateSchedulePreview(IConfiguration config, IServiceScopeFactory? scopeFactory = null)
     {
-        var res = await RunBatchAsync(config, null, applySchedule:false, persist:false);
+        var res = await RunBatchAsync(config, null, applySchedule:false, persist:false, scopeFactory);
         return new { res.schedulePayload, res.generated, res.message };
     }
 
-    // Overload that uses user-specific settings from user.json and unified ScheduleAlgorithm
-    public async Task<(bool generated, JsonNode? schedulePayload, string message)> RunBatchAsync(IConfiguration config, string? userId, bool applySchedule, bool persist)
+    // Overload that uses user-specific settings from DB and unified ScheduleAlgorithm
+    public async Task<(bool generated, JsonNode? schedulePayload, string message)> RunBatchAsync(IConfiguration config, string? userId, bool applySchedule, bool persist, IServiceScopeFactory? scopeFactory = null)
     {
-        var settings = UserSettingsService.LoadScheduleSettings(config, userId);
+        UserScheduleSettings settings;
+        if (scopeFactory != null)
+        {
+            using var scope = scopeFactory.CreateScope();
+            var repo = scope.ServiceProvider.GetRequiredService<UserSettingsRepository>();
+            settings = await repo.LoadScheduleSettingsAsync(userId);
+        }
+        else
+        {
+            // Fall back to config defaults when no DI available
+            int ch = int.TryParse(config["Schedule:ComfortHours"], out var _ch) ? Math.Clamp(_ch, 1, 12) : 3;
+            double tp = double.TryParse(config["Schedule:TurnOffPercentile"], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var _tp) ? Math.Clamp(_tp, 0.5, 0.99) : 0.9;
+            int mcgh = int.TryParse(config["Schedule:MaxComfortGapHours"], out var _mcgh) ? Math.Clamp(_mcgh, 1, 72) : 28;
+            settings = new UserScheduleSettings(ch, tp, mcgh);
+        }
         int activationLimit = int.TryParse(config["Schedule:MaxActivationsPerDay"], out var mpd) ? Math.Clamp(mpd, 1, 24) : 4;
-        var (generated, schedulePayload, message) = await RunBatchInternalAsync(config, settings, activationLimit, applySchedule, persist, userId);
+        var (generated, schedulePayload, message) = await RunBatchInternalAsync(config, new UserScheduleSettings(settings.ComfortHours, settings.TurnOffPercentile, settings.MaxComfortGapHours), activationLimit, applySchedule, persist, userId);
         
         // Enhanced logging for history persistence
         if (!persist)
@@ -46,21 +62,21 @@ internal class BatchRunner
         else if (generated && schedulePayload is JsonObject payload)
         {
             // Fire and forget async save - only when persist is true
-            _ = SaveHistoryAsync(userId, payload, config);
+            _ = SaveHistoryAsync(userId, payload, config, scopeFactory);
         }
         
         return (generated, schedulePayload, message);
     }
 
     // Returnerar schedulePayload som JsonNode istället för sträng för att API-responsen ska ha ett inbäddat JSON-objekt
-    private async Task<(bool generated, JsonNode? schedulePayload, string message)> RunBatchInternalAsync(IConfiguration config, UserSettingsService.UserScheduleSettings settings, int activationLimit, bool applySchedule, bool persist, string? userId)
+    private async Task<(bool generated, JsonNode? schedulePayload, string message)> RunBatchInternalAsync(IConfiguration config, UserScheduleSettings settings, int activationLimit, bool applySchedule, bool persist, string? userId)
     {
         var environment = config["ASPNETCORE_ENVIRONMENT"] ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production";
         var accessToken = config["Daikin:AccessToken"] ?? string.Empty;
         if (string.IsNullOrWhiteSpace(accessToken))
         {
-            var (tkn, _) = DaikinOAuthService.TryGetValidAccessToken(config, userId);
-            if (tkn == null) tkn = await _daikinOAuthService.RefreshIfNeededAsync(config, userId);
+            var (tkn, _) = await _daikinOAuthService.TryGetValidAccessTokenAsync(userId);
+            if (tkn == null) tkn = await _daikinOAuthService.RefreshIfNeededAsync(userId);
             accessToken = tkn ?? string.Empty;
         }
         var zone = config["Price:Nordpool:DefaultZone"] ?? "SE3";
@@ -73,7 +89,6 @@ internal class BatchRunner
             var fetched = await np.GetTodayTomorrowAsync(zone);
             rawToday = fetched.today; rawTomorrow = fetched.tomorrow;
             PriceMemory.Set(rawToday, rawTomorrow);
-            NordpoolPersistence.Save(zone, rawToday, rawTomorrow, config["Storage:Directory"] ?? "data");
         }
         catch (Exception ex)
         {
@@ -100,8 +115,7 @@ internal class BatchRunner
                 {
                     try { scheduleNode = JsonNode.Parse(dynamicSchedulePayload); } catch { /* ignorerar parse-fel */ }
                 }
-                // Prisschema ska inte sparas med tid i namnet längre
-                // Om du vill spara schema, använd prices-YYYYMMDD-ZON.json via NordpoolPersistence
+                // Price persistence is handled by NordpoolPriceHangfireJob via PriceRepository
             }
             catch (Exception ex)
             {
@@ -231,7 +245,7 @@ internal class BatchRunner
         if (!scheduleApplied)
         {
             // Try refresh if possible
-            var refreshed = await _daikinOAuthService.RefreshIfNeededAsync(config, userId);
+            var refreshed = await _daikinOAuthService.RefreshIfNeededAsync(userId);
             if (!string.IsNullOrEmpty(refreshed) && refreshed != accessToken)
             {
                 applyAttempts++;
@@ -259,18 +273,18 @@ internal class BatchRunner
     }
 
     // Helper method for fire-and-forget history save with error handling
-    private async Task SaveHistoryAsync(string userId, JsonObject payload, IConfiguration config)
+    private async Task SaveHistoryAsync(string userId, JsonObject payload, IConfiguration config, IServiceScopeFactory? scopeFactory)
     {
         try 
         {
-            // Read retention days from configuration with fallback to 7
-            int retentionDays = int.TryParse(config["Schedule:HistoryRetentionDays"], out var configuredRetention) 
-                && configuredRetention > 0 
-                && configuredRetention <= 365 
-                ? configuredRetention 
-                : 7;
-            
-            await ScheduleHistoryPersistence.SaveAsync(userId, payload, DateTimeOffset.UtcNow, retentionDays, StoragePaths.GetBaseDir(config));
+            if (scopeFactory == null)
+            {
+                Console.WriteLine($"[BatchRunner] History NOT saved: no scope factory (userId={userId})");
+                return;
+            }
+            using var scope = scopeFactory.CreateScope();
+            var historyRepo = scope.ServiceProvider.GetRequiredService<ScheduleHistoryRepository>();
+            await historyRepo.SaveAsync(userId, payload, DateTimeOffset.UtcNow);
             Console.WriteLine($"[BatchRunner] Saved schedule history for user {userId}");
         }
         catch (Exception ex)

@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.Http;
+using Prisstyrning.Data.Repositories;
 
 internal class DaikinOAuthService
 {
@@ -10,40 +11,34 @@ internal class DaikinOAuthService
     private static readonly object _lock = new();
     private static readonly Dictionary<string,string> _stateToVerifier = new();
 
-    public DaikinOAuthService(IHttpClientFactory httpClientFactory)
-    {
-        _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
-    }
+    private readonly IConfiguration _cfg;
+    private readonly DaikinTokenRepository _tokenRepo;
+
+    /// <summary>Result of the OAuth callback token exchange, including the OIDC subject if available.</summary>
+    public record CallbackResult(bool Success, string? Subject);
 
     private const string DefaultAuthEndpoint = "https://idp.onecta.daikineurope.com/v1/oidc/authorize"; // OIDC authorize
     private const string DefaultTokenEndpoint = "https://idp.onecta.daikineurope.com/v1/oidc/token";   // token
     private const string DefaultRevokeEndpoint = "https://idp.onecta.daikineurope.com/v1/oidc/revoke"; // revoke
     private const string DefaultIntrospectEndpoint = "https://idp.onecta.daikineurope.com/v1/oidc/introspect"; // introspect
 
-    private record TokenFile(string access_token, string refresh_token, DateTimeOffset expires_at_utc);
-
-    /// <summary>Result of the OAuth callback token exchange, including the OIDC subject if available.</summary>
-    public record CallbackResult(bool Success, string? Subject);
-
-    // Helper to derive a user specific token file path segment (sanitized)
-    private static string SanitizeUser(string? userId)
+    public DaikinOAuthService(IConfiguration cfg, DaikinTokenRepository tokenRepo, IHttpClientFactory httpClientFactory)
     {
-        if (string.IsNullOrWhiteSpace(userId)) return string.Empty; // global (legacy)
-        // keep only hex and dash to avoid path traversal
-        var clean = new string(userId.Where(c => char.IsLetterOrDigit(c) || c=='-' ).ToArray());
-        return clean.Length == 0 ? string.Empty : clean;
+        _cfg = cfg;
+        _tokenRepo = tokenRepo;
+        _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
     }
 
-    public static string GetAuthorizationUrl(IConfiguration cfg, HttpContext? httpContext = null)
+    public string GetAuthorizationUrl(HttpContext? httpContext = null)
     {
-        var clientId = cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
-        var redirectUri = ResolveRedirectUri(cfg, httpContext);
-        var includeOffline = (cfg["Daikin:IncludeOfflineAccess"] ?? "false").Equals("true", StringComparison.OrdinalIgnoreCase);
-        var scopeCfg = cfg["Daikin:Scope"];
+        var clientId = _cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
+        var redirectUri = ResolveRedirectUri(_cfg, httpContext);
+        var includeOffline = (_cfg["Daikin:IncludeOfflineAccess"] ?? "false").Equals("true", StringComparison.OrdinalIgnoreCase);
+        var scopeCfg = _cfg["Daikin:Scope"];
         var scope = string.IsNullOrWhiteSpace(scopeCfg) ? "openid onecta:basic.integration" : scopeCfg!;
         if (includeOffline && !scope.Split(' ',StringSplitOptions.RemoveEmptyEntries).Contains("offline_access"))
             scope += " offline_access";
-        var authEndpoint = cfg["Daikin:AuthEndpoint"] ?? DefaultAuthEndpoint;
+        var authEndpoint = _cfg["Daikin:AuthEndpoint"] ?? DefaultAuthEndpoint;
         var state = Guid.NewGuid().ToString("N");
         var nonce = Guid.NewGuid().ToString("N");
         var (codeChallenge, verifier) = CreatePkcePair();
@@ -54,22 +49,22 @@ internal class DaikinOAuthService
     }
 
     // Minimal variant utan state/PKCE/nonce – ENDAST för felsökning av 403.
-    public static string GetMinimalAuthorizationUrl(IConfiguration cfg, HttpContext? httpContext = null)
+    public string GetMinimalAuthorizationUrl(HttpContext? httpContext = null)
     {
-        var clientId = cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
-        var redirectUri = ResolveRedirectUri(cfg, httpContext);
-        var scopeCfg = cfg["Daikin:Scope"];
+        var clientId = _cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
+        var redirectUri = ResolveRedirectUri(_cfg, httpContext);
+        var scopeCfg = _cfg["Daikin:Scope"];
         var scope = string.IsNullOrWhiteSpace(scopeCfg) ? "openid onecta:basic.integration" : scopeCfg!;
         // OBS: inget state, ingen PKCE – använd ej i produktion.
-        var authEndpoint = cfg["Daikin:AuthEndpoint"] ?? DefaultAuthEndpoint;
+        var authEndpoint = _cfg["Daikin:AuthEndpoint"] ?? DefaultAuthEndpoint;
         var url = $"{authEndpoint}?response_type=code&client_id={Uri.EscapeDataString(clientId)}&redirect_uri={Uri.EscapeDataString(redirectUri)}&scope={Uri.EscapeDataString(scope)}";
         Console.WriteLine($"[DaikinOAuth][MIN] URL => {url}");
         return url;
     }
 
-    public async Task<bool> HandleCallbackAsync(IConfiguration cfg, string code, string state) => (await HandleCallbackWithSubjectAsync(cfg, code, state, userId: null)).Success;
-    public async Task<bool> HandleCallbackAsync(IConfiguration cfg, string code, string state, string? userId) => (await HandleCallbackWithSubjectAsync(cfg, code, state, userId)).Success;
-    public async Task<CallbackResult> HandleCallbackWithSubjectAsync(IConfiguration cfg, string code, string state, string? userId)
+    public async Task<bool> HandleCallbackAsync(string code, string state, HttpClient? httpClient = null) => (await HandleCallbackWithSubjectAsync(code, state, userId: null, httpClient)).Success;
+    public async Task<bool> HandleCallbackAsync(string code, string state, string? userId, HttpClient? httpClient = null) => (await HandleCallbackWithSubjectAsync(code, state, userId, httpClient)).Success;
+    public async Task<CallbackResult> HandleCallbackWithSubjectAsync(string code, string state, string? userId, HttpClient? httpClient = null)
     {
         string? verifier;
         lock(_lock)
@@ -77,10 +72,10 @@ internal class DaikinOAuthService
             if(!_stateToVerifier.TryGetValue(state, out verifier)) return new CallbackResult(false, null);
             _stateToVerifier.Remove(state);
         }
-    var clientId = cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
-    var redirectUri = ResolveRedirectUri(cfg, null);
-    var clientSecret = cfg["Daikin:ClientSecret"];
-    var tokenEndpoint = cfg["Daikin:TokenEndpoint"] ?? DefaultTokenEndpoint;
+    var clientId = _cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
+    var redirectUri = ResolveRedirectUri(_cfg, null);
+    var clientSecret = _cfg["Daikin:ClientSecret"];
+    var tokenEndpoint = _cfg["Daikin:TokenEndpoint"] ?? DefaultTokenEndpoint;
         var form = new Dictionary<string,string>{
             ["grant_type"]="authorization_code",
             ["code"] = code,
@@ -90,7 +85,7 @@ internal class DaikinOAuthService
         };
         if(!string.IsNullOrWhiteSpace(clientSecret))
             form["client_secret"] = clientSecret;
-        var http = _httpClientFactory.CreateClient("Daikin");
+        var http = httpClient ?? _httpClientFactory.CreateClient("Daikin");
         Console.WriteLine($"[DaikinOAuth] Exchanging code for tokens at {tokenEndpoint}");
         using var resp = await http.PostAsync(tokenEndpoint, new FormUrlEncodedContent(form));
         if(!resp.IsSuccessStatusCode)
@@ -107,43 +102,42 @@ internal class DaikinOAuthService
         var expiresIn = root.TryGetProperty("expires_in", out var ei) ? ei.GetInt32() : 3600;
         var expiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn - 30);
         var subject = ExtractSubjectFromIdToken(root, clientId);
-        SaveTokens(cfg, new TokenFile(access, refresh, expiresAt), userId);
+        await _tokenRepo.SaveAsync(userId ?? string.Empty, access, refresh, expiresAt);
         Console.WriteLine($"[DaikinOAuth] Token exchange OK expiresAt={expiresAt:O} refresh={(refresh?.Length>8?refresh[..8]+"...":"(none)")} hasSubject={subject != null}");
+        if (httpClient == null) http.Dispose();
         return new CallbackResult(true, subject);
     }
 
-    public static (string? accessToken, DateTimeOffset? expiresAt) TryGetValidAccessToken(IConfiguration cfg) => TryGetValidAccessToken(cfg, null);
-    public static (string? accessToken, DateTimeOffset? expiresAt) TryGetValidAccessToken(IConfiguration cfg, string? userId)
+    public async Task<(string? accessToken, DateTimeOffset? expiresAt)> TryGetValidAccessTokenAsync(string? userId = null)
     {
-        var tf = LoadTokens(cfg, userId);
+        var tf = await _tokenRepo.LoadAsync(userId ?? string.Empty);
         if(tf == null) return (null,null);
-        if(tf.expires_at_utc > DateTimeOffset.UtcNow.AddMinutes(1)) return (tf.access_token, tf.expires_at_utc);
-        return (null, tf.expires_at_utc);
+        if(tf.ExpiresAtUtc > DateTimeOffset.UtcNow.AddMinutes(1)) return (tf.AccessToken, tf.ExpiresAtUtc);
+        return (null, tf.ExpiresAtUtc);
     }
 
-    public async Task<string?> RefreshIfNeededAsync(IConfiguration cfg) => await RefreshIfNeededAsync(cfg, null);
-    public async Task<string?> RefreshIfNeededAsync(IConfiguration cfg, string? userId) => await RefreshIfNeededAsync(cfg, userId, TimeSpan.FromMinutes(1));
+    public async Task<string?> RefreshIfNeededAsync(string? userId = null, HttpClient? httpClient = null) => await RefreshIfNeededAsync(userId, TimeSpan.FromMinutes(1), httpClient);
 
     /// <summary>
     /// Refresh the access token if it will expire within the provided window.
     /// Default window in existing calls is 1 minute; callers can request a larger proactive window.
     /// </summary>
-    public async Task<string?> RefreshIfNeededAsync(IConfiguration cfg, string? userId, TimeSpan window)
+    public async Task<string?> RefreshIfNeededAsync(string? userId, TimeSpan window, HttpClient? httpClient = null)
     {
-        var existing = LoadTokens(cfg, userId);
+        var existing = await _tokenRepo.LoadAsync(userId ?? string.Empty);
         if (existing == null) return null;
-        if (existing.expires_at_utc > DateTimeOffset.UtcNow.Add(window)) return existing.access_token; // still valid enough
-        var clientId = cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
-        var clientSecret = cfg["Daikin:ClientSecret"];
-        var tokenEndpoint = cfg["Daikin:TokenEndpoint"] ?? DefaultTokenEndpoint;
+        if (existing.ExpiresAtUtc > DateTimeOffset.UtcNow.Add(window)) return existing.AccessToken; // still valid enough
+        var clientId = _cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
+        var clientSecret = _cfg["Daikin:ClientSecret"];
+        var tokenEndpoint = _cfg["Daikin:TokenEndpoint"] ?? DefaultTokenEndpoint;
         var form = new Dictionary<string,string>{
             ["grant_type"] = "refresh_token",
-            ["refresh_token"] = existing.refresh_token,
+            ["refresh_token"] = existing.RefreshToken,
             ["client_id"] = clientId
         };
         if(!string.IsNullOrWhiteSpace(clientSecret)) form["client_secret"] = clientSecret;
         
-        var http = _httpClientFactory.CreateClient("Daikin");
+        var http = httpClient ?? _httpClientFactory.CreateClient("Daikin");
         Console.WriteLine($"[DaikinOAuth] Refreshing token at {tokenEndpoint} (window={window})");
             var resp = await http.PostAsync(tokenEndpoint, new FormUrlEncodedContent(form));
             if(!resp.IsSuccessStatusCode)
@@ -156,47 +150,45 @@ internal class DaikinOAuthService
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
             var access = root.GetProperty("access_token").GetString()!;
-            var refresh = root.TryGetProperty("refresh_token", out var rEl)? rEl.GetString() ?? existing.refresh_token : existing.refresh_token;
+            var refresh = root.TryGetProperty("refresh_token", out var rEl)? rEl.GetString() ?? existing.RefreshToken : existing.RefreshToken;
             var expiresIn = root.TryGetProperty("expires_in", out var ei) ? ei.GetInt32() : 3600;
             var expiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn - 30);
-            SaveTokens(cfg, new TokenFile(access, refresh!, expiresAt), userId);
+            await _tokenRepo.SaveAsync(userId ?? string.Empty, access, refresh!, expiresAt);
             Console.WriteLine($"[DaikinOAuth] Refresh OK newExpiry={expiresAt:O}");
             return access;
     }
 
-    public static object Status(IConfiguration cfg) => Status(cfg, null);
-    public static object Status(IConfiguration cfg, string? userId)
+    public async Task<object> StatusAsync(string? userId = null)
     {
-        var t = LoadTokens(cfg, userId);
+        var t = await _tokenRepo.LoadAsync(userId ?? string.Empty);
         if(t == null) return new { authorized = false };
         return new {
             authorized = true,
-            expiresAtUtc = t.expires_at_utc,
-            expiresInSeconds = (int)Math.Max(0,(t.expires_at_utc - DateTimeOffset.UtcNow).TotalSeconds)
+            expiresAtUtc = t.ExpiresAtUtc,
+            expiresInSeconds = (int)Math.Max(0,(t.ExpiresAtUtc - DateTimeOffset.UtcNow).TotalSeconds)
         };
     }
 
-    public async Task<bool> RevokeAsync(IConfiguration cfg) => await RevokeAsync(cfg, null);
-    public async Task<bool> RevokeAsync(IConfiguration cfg, string? userId)
+    public async Task<bool> RevokeAsync(string? userId = null, HttpClient? httpClient = null)
     {
-        var t = LoadTokens(cfg, userId);
+        var t = await _tokenRepo.LoadAsync(userId ?? string.Empty);
         if (t == null) return false;
-        var clientId = cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
-        var clientSecret = cfg["Daikin:ClientSecret"];
-        var revokeEndpoint = cfg["Daikin:RevokeEndpoint"] ?? DefaultRevokeEndpoint;
+        var clientId = _cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
+        var clientSecret = _cfg["Daikin:ClientSecret"];
+        var revokeEndpoint = _cfg["Daikin:RevokeEndpoint"] ?? DefaultRevokeEndpoint;
         
-        var http = _httpClientFactory.CreateClient("Daikin");
-        var okAccess = await RevokeToken(http, revokeEndpoint, clientId, clientSecret, t.access_token, "access_token");
-        var okRefresh = await RevokeToken(http, revokeEndpoint, clientId, clientSecret, t.refresh_token, "refresh_token");
+        var http = httpClient ?? _httpClientFactory.CreateClient("Daikin");
+        var okAccess = await RevokeToken(http, revokeEndpoint, clientId, clientSecret, t.AccessToken, "access_token");
+        var okRefresh = await RevokeToken(http, revokeEndpoint, clientId, clientSecret, t.RefreshToken, "refresh_token");
         if(okAccess || okRefresh)
         {
             try 
             { 
-                File.Delete(TokenFilePath(cfg, userId)); 
+                await _tokenRepo.DeleteAsync(userId ?? string.Empty); 
             } 
             catch (Exception ex)
             {
-                Console.WriteLine($"[DaikinOAuth] Failed to delete token file: {ex.Message}");
+                Console.WriteLine($"[DaikinOAuth] Failed to delete token: {ex.Message}");
             }
         }
         return okAccess && okRefresh; // true only if both succeeded
@@ -215,16 +207,15 @@ internal class DaikinOAuthService
         return resp.IsSuccessStatusCode;
     }
 
-    public async Task<object?> IntrospectAsync(IConfiguration cfg, bool refresh=false) => await IntrospectAsync(cfg, null, refresh);
-    public async Task<object?> IntrospectAsync(IConfiguration cfg, string? userId, bool refresh=false)
+    public async Task<object?> IntrospectAsync(string? userId = null, bool refresh=false, HttpClient? httpClient = null)
     {
-        var t = LoadTokens(cfg, userId); if(t==null) return null;
-        var clientId = cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
-        var clientSecret = cfg["Daikin:ClientSecret"] ?? throw new InvalidOperationException("ClientSecret krävs för introspection");
-        var introspectEndpoint = cfg["Daikin:IntrospectEndpoint"] ?? DefaultIntrospectEndpoint;
-        var token = refresh ? t.refresh_token : t.access_token;
+        var t = await _tokenRepo.LoadAsync(userId ?? string.Empty); if(t==null) return null;
+        var clientId = _cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
+        var clientSecret = _cfg["Daikin:ClientSecret"] ?? throw new InvalidOperationException("ClientSecret krävs för introspection");
+        var introspectEndpoint = _cfg["Daikin:IntrospectEndpoint"] ?? DefaultIntrospectEndpoint;
+        var token = refresh ? t.RefreshToken : t.AccessToken;
         
-        var http = _httpClientFactory.CreateClient("Daikin");
+        var http = httpClient ?? _httpClientFactory.CreateClient("Daikin");
             var bytes = Encoding.ASCII.GetBytes(clientId+":"+clientSecret);
             http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", Convert.ToBase64String(bytes));
             var form = new Dictionary<string,string>{{"token", token}};
@@ -242,8 +233,11 @@ internal class DaikinOAuthService
             }
     }
 
-    public static string? GetAccessTokenUnsafe(IConfiguration cfg) => GetAccessTokenUnsafe(cfg, null);
-    public static string? GetAccessTokenUnsafe(IConfiguration cfg, string? userId) => LoadTokens(cfg, userId)?.access_token;
+    public async Task<string?> GetAccessTokenUnsafeAsync(string? userId = null)
+    {
+        var t = await _tokenRepo.LoadAsync(userId ?? string.Empty);
+        return t?.AccessToken;
+    }
 
     /// <summary>
     /// Derives a deterministic, browser-agnostic userId from the OIDC subject claim.
@@ -331,64 +325,33 @@ internal class DaikinOAuthService
     }
 
     /// <summary>
-    /// Migrates user data (tokens, settings, schedule history) from one userId directory to another.
+    /// Migrates user data (tokens, settings, schedule history) from one userId to another in the database.
     /// Used when remapping a browser-generated random userId to a deterministic Daikin-based userId.
-    /// If destination already exists, only moves files that don't exist in the destination.
     /// </summary>
-    public static void MigrateUserData(IConfiguration cfg, string fromUserId, string toUserId)
+    public async Task MigrateUserDataAsync(string fromUserId, string toUserId)
     {
         if (string.IsNullOrWhiteSpace(fromUserId) || string.IsNullOrWhiteSpace(toUserId)) return;
         if (fromUserId == toUserId) return;
 
-        var sanitizedFrom = SanitizeUser(fromUserId);
-        var sanitizedTo = SanitizeUser(toUserId);
-
-        // 1) Migrate token directory
-        var fromTokenDir = StoragePaths.GetUserTokenDir(sanitizedFrom, cfg);
-        var toTokenDir = StoragePaths.GetUserTokenDir(sanitizedTo, cfg);
-        MigratePerUserDirectory(fromTokenDir, toTokenDir);
-
-        // 2) Migrate schedule history directory
         try
         {
-            var historyBaseDir = StoragePaths.GetScheduleHistoryDir(cfg);
-            var fromHistoryDir = Path.Combine(historyBaseDir, sanitizedFrom);
-            var toHistoryDir = Path.Combine(historyBaseDir, sanitizedTo);
-            MigratePerUserDirectory(fromHistoryDir, toHistoryDir);
+            // Check if destination already has tokens; if not, copy from source
+            var existingTarget = await _tokenRepo.LoadAsync(toUserId);
+            if (existingTarget == null)
+            {
+                var source = await _tokenRepo.LoadAsync(fromUserId);
+                if (source != null)
+                {
+                    await _tokenRepo.SaveAsync(toUserId, source.AccessToken, source.RefreshToken, source.ExpiresAtUtc);
+                    await _tokenRepo.DeleteAsync(fromUserId);
+                }
+            }
+            Console.WriteLine($"[DaikinOAuth] Migrated user data from {fromUserId} to {toUserId}");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[DaikinOAuth] Schedule history migration failed: {ex.Message}");
+            Console.WriteLine($"[DaikinOAuth] User data migration failed: {ex.Message}");
         }
-
-        Console.WriteLine($"[DaikinOAuth] Migrated user data from {sanitizedFrom} to {sanitizedTo}");
-    }
-
-    /// <summary>
-    /// Migrates files from one per-user directory to another.
-    /// If the source directory does not exist, nothing happens.
-    /// If the destination exists, only files missing in the destination are moved.
-    /// </summary>
-    private static void MigratePerUserDirectory(string fromDir, string toDir)
-    {
-        if (!Directory.Exists(fromDir)) return;
-        Directory.CreateDirectory(toDir);
-        foreach (var srcFile in Directory.GetFiles(fromDir))
-        {
-            var destFile = Path.Combine(toDir, Path.GetFileName(srcFile));
-            if (!File.Exists(destFile))
-            {
-                try { File.Move(srcFile, destFile); }
-                catch (Exception ex) { Console.WriteLine($"[DaikinOAuth] Migration file move failed: {ex.Message}"); }
-            }
-        }
-        // Clean up the old directory if empty
-        try
-        {
-            if (Directory.GetFiles(fromDir).Length == 0 && Directory.GetDirectories(fromDir).Length == 0)
-                Directory.Delete(fromDir);
-        }
-        catch { }
     }
 
     private static (string codeChallenge, string verifier) CreatePkcePair()
@@ -403,8 +366,6 @@ internal class DaikinOAuthService
     }
 
     private static string Base64Url(string s) => s.Replace("+","-").Replace("/","_").Replace("=","");
-
-
 
     private static string ResolveRedirectUri(IConfiguration cfg, HttpContext? ctx)
     {
@@ -428,55 +389,4 @@ internal class DaikinOAuthService
         throw new InvalidOperationException("Daikin:RedirectUri saknas och kunde inte härledas (ange Daikin:RedirectUri eller PublicBaseUrl).");
     }
 
-    private static string TokenFilePath(IConfiguration cfg, string? userId)
-    {
-        var sanitized = SanitizeUser(userId);
-        string basePath;
-        if (!string.IsNullOrEmpty(sanitized))
-        {
-            basePath = Path.Combine(StoragePaths.GetUserTokenDir(sanitized, cfg), "daikin.json");
-        }
-        else
-        {
-            basePath = Path.Combine(StoragePaths.GetTokensDir(cfg), "daikin.json");
-        }
-        var dir = Path.GetDirectoryName(basePath)!;
-        Directory.CreateDirectory(dir);
-        return basePath;
-    }
-
-    private static async Task<TokenFile?> LoadTokensAsync(IConfiguration cfg, string? userId)
-    {
-        try
-        {
-            var path = TokenFilePath(cfg, userId);
-            if(!File.Exists(path)) return null;
-            var json = await File.ReadAllTextAsync(path);
-            return JsonSerializer.Deserialize<TokenFile>(json);
-        }
-        catch (Exception ex) 
-        { 
-            Console.WriteLine($"[DaikinOAuth] Failed to load tokens: {ex.Message}");
-            return null; 
-        }
-    }
-
-    private static TokenFile? LoadTokens(IConfiguration cfg, string? userId)
-    {
-        return LoadTokensAsync(cfg, userId).GetAwaiter().GetResult();
-    }
-
-    private static async Task SaveTokensAsync(IConfiguration cfg, TokenFile tf, string? userId)
-    {
-        var path = TokenFilePath(cfg, userId);
-        var tmp = path + ".tmp";
-        var json = JsonSerializer.Serialize(tf, new JsonSerializerOptions{WriteIndented=true});
-        await File.WriteAllTextAsync(tmp, json);
-        File.Move(tmp, path, true);
-    }
-
-    private static void SaveTokens(IConfiguration cfg, TokenFile tf, string? userId)
-    {
-        SaveTokensAsync(cfg, tf, userId).GetAwaiter().GetResult();
-    }
 }

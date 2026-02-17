@@ -1,10 +1,32 @@
 version: '3.9'
 services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: prisstyrning
+      POSTGRES_USER: prisstyrning
+      POSTGRES_PASSWORD: prisstyrning
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prisstyrning"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   prisstyrning:
     image: ghcr.io/your-org/prisstyrning:latest # ändra till korrekt owner
     container_name: prisstyrning
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
+      # PostgreSQL connection string
+      PRISSTYRNING_ConnectionStrings__DefaultConnection: "Host=postgres;Database=prisstyrning;Username=prisstyrning;Password=prisstyrning"
       # Hangfire dashboard password (Basic Auth)
       PRISSTYRNING_Hangfire__DashboardPassword: "CHANGE_ME_HANGFIRE_PASSWORD"
       # Nordpool (default zone & currency)
@@ -54,3 +76,6 @@ services:
       - ./data:/data
     ports:
       - "5000:5000"
+
+volumes:
+  pgdata:

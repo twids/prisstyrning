@@ -1,7 +1,11 @@
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Prisstyrning.Data;
+using Prisstyrning.Data.Repositories;
 using Prisstyrning.Tests.Fixtures;
 using Xunit;
 
@@ -10,8 +14,32 @@ namespace Prisstyrning.Tests.Integration;
 /// <summary>
 /// Integration tests for BatchRunner schedule generation and application
 /// </summary>
-public class BatchRunnerIntegrationTests
+public class BatchRunnerIntegrationTests : IDisposable
 {
+    private ServiceProvider? _serviceProvider;
+
+    public void Dispose()
+    {
+        _serviceProvider?.Dispose();
+    }
+
+    private IServiceScopeFactory BuildScopeFactory(IConfiguration cfg)
+    {
+        var dbName = Guid.NewGuid().ToString();
+        var services = new ServiceCollection();
+        services.AddDbContext<PrisstyrningDbContext>(o =>
+            o.UseInMemoryDatabase(dbName));
+        services.AddSingleton(cfg);
+        services.AddScoped<ScheduleHistoryRepository>();
+        services.AddScoped<UserSettingsRepository>();
+        _serviceProvider = services.BuildServiceProvider();
+
+        using var scope = _serviceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+        db.Database.EnsureCreated();
+
+        return _serviceProvider.GetRequiredService<IServiceScopeFactory>();
+    }
     [Fact]
     public async Task RunBatchAsync_WithValidPriceData_GeneratesSchedule()
     {
@@ -22,9 +50,6 @@ public class BatchRunnerIntegrationTests
         // Setup: Create price data
         var today = TestDataFactory.CreatePriceData(date);
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
-        NordpoolPersistence.Save("SE3", today, tomorrow, fs.NordpoolDir);
-        
-        // Also set in memory
         PriceMemory.Set(today, tomorrow);
         
         var batchRunner = MockServiceFactory.CreateMockBatchRunner();
@@ -116,13 +141,16 @@ public class BatchRunnerIntegrationTests
         var today = TestDataFactory.CreatePriceData(date);
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
         PriceMemory.Set(today, tomorrow);
+
+        var scopeFactory = BuildScopeFactory(cfg);
         
         var batchRunner = MockServiceFactory.CreateMockBatchRunner();
         var (generated, payload, message) = await batchRunner.RunBatchAsync(
             cfg, 
             userId: userId, 
             applySchedule: false, 
-            persist: true
+            persist: true,
+            scopeFactory: scopeFactory
         );
         
         Assert.True(generated);
@@ -131,9 +159,11 @@ public class BatchRunnerIntegrationTests
         // Fire-and-forget history save may still be in progress - give it a brief moment
         await Task.Delay(100);
         
-        // Verify history was saved
-        var historyFile = Path.Combine(fs.HistoryDir, userId, "history.json");
-        Assert.True(File.Exists(historyFile), "History file should exist after persist=true");
+        // Verify history was saved to database
+        using var scope = scopeFactory.CreateScope();
+        var historyRepo = scope.ServiceProvider.GetRequiredService<ScheduleHistoryRepository>();
+        var count = await historyRepo.CountAsync(userId);
+        Assert.True(count > 0, "History should be saved to DB after persist=true");
     }
 
     [Fact]
@@ -256,6 +286,8 @@ public class BatchRunnerIntegrationTests
         var today = TestDataFactory.CreatePriceData(date);
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
         PriceMemory.Set(today, tomorrow);
+
+        var scopeFactory = BuildScopeFactory(cfg);
         
         // Run with persist=true triggers fire-and-forget async save
         var batchRunner = MockServiceFactory.CreateMockBatchRunner();
@@ -263,7 +295,8 @@ public class BatchRunnerIntegrationTests
             cfg, 
             userId: userId, 
             applySchedule: false, 
-            persist: true
+            persist: true,
+            scopeFactory: scopeFactory
         );
         
         Assert.True(generated);
@@ -271,13 +304,11 @@ public class BatchRunnerIntegrationTests
         // Fire-and-forget history save may still be in progress - give it a brief moment
         await Task.Delay(100);
         
-        var historyFile = Path.Combine(fs.HistoryDir, userId, "history.json");
-        Assert.True(File.Exists(historyFile));
-        
-        var json = await File.ReadAllTextAsync(historyFile);
-        var historyArray = JsonNode.Parse(json) as JsonArray;
-        Assert.NotNull(historyArray);
-        Assert.NotEmpty(historyArray);
+        // Verify history was saved to database
+        using var scope = scopeFactory.CreateScope();
+        var historyRepo = scope.ServiceProvider.GetRequiredService<ScheduleHistoryRepository>();
+        var entries = await historyRepo.LoadAsync(userId);
+        Assert.NotEmpty(entries);
     }
 
     [Fact]
