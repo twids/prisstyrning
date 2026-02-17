@@ -16,10 +16,24 @@ internal static class BatchRunner
         return new { res.schedulePayload, res.generated, res.message };
     }
 
-    // Overload that uses user-specific settings from user.json and unified ScheduleAlgorithm
+    // Overload that uses user-specific settings from DB and unified ScheduleAlgorithm
     public static async Task<(bool generated, JsonNode? schedulePayload, string message)> RunBatchAsync(IConfiguration config, string? userId, bool applySchedule, bool persist, IServiceScopeFactory? scopeFactory = null, DaikinOAuthService? daikinOAuth = null)
     {
-        var settings = UserSettingsService.LoadScheduleSettings(config, userId);
+        UserScheduleSettings settings;
+        if (scopeFactory != null)
+        {
+            using var scope = scopeFactory.CreateScope();
+            var repo = scope.ServiceProvider.GetRequiredService<UserSettingsRepository>();
+            settings = await repo.LoadScheduleSettingsAsync(userId);
+        }
+        else
+        {
+            // Fall back to config defaults when no DI available
+            int ch = int.TryParse(config["Schedule:ComfortHours"], out var _ch) ? Math.Clamp(_ch, 1, 12) : 3;
+            double tp = double.TryParse(config["Schedule:TurnOffPercentile"], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var _tp) ? Math.Clamp(_tp, 0.5, 0.99) : 0.9;
+            int mcgh = int.TryParse(config["Schedule:MaxComfortGapHours"], out var _mcgh) ? Math.Clamp(_mcgh, 1, 72) : 28;
+            settings = new UserScheduleSettings(ch, tp, mcgh);
+        }
         int activationLimit = int.TryParse(config["Schedule:MaxActivationsPerDay"], out var mpd) ? Math.Clamp(mpd, 1, 24) : 4;
         var (generated, schedulePayload, message) = await RunBatchInternalAsync(config, new UserScheduleSettings(settings.ComfortHours, settings.TurnOffPercentile, settings.MaxComfortGapHours), activationLimit, applySchedule, persist, userId, daikinOAuth);
         

@@ -8,11 +8,12 @@ Price based DHW (domestic hot water) schedule generation for Daikin ONECTA using
 * **2-mode system**: Simplified from 3-mode (removed ECO) to eliminate unwanted heating on OFF→ECO transitions (see `MIGRATION.md`)
 * **12-hour window scheduling**: Automatically updates schedules twice daily (00:05 and 12:05) to effectively allow up to 8 changes per day by splitting into two 12-hour windows
 * **Comfort gap validation**: Configurable maximum hours between comfort periods (default 28h) to ensure regular hot water availability
+* **PostgreSQL persistence**: All data (user settings, prices, schedule history, OAuth tokens) stored in PostgreSQL via EF Core
 * Manual upload (PUT) of schedule to Daikin gateway (no auto-apply unless explicitly enabled)
 * Configuration via `appsettings*.json` and/or environment variables (env has highest precedence; optional `PRISSTYRNING_` prefix)
 * **Modern frontend**: React 18 + TypeScript + Material UI with dark theme, real-time updates, and responsive design
 * Multi-arch container build (linux/amd64 & linux/arm64) via GitHub Actions
-* **Testing**: 125+ passing backend tests covering persistence, jobs, API endpoints, and OAuth integration
+* **Testing**: 250+ passing backend tests covering repositories, jobs, API endpoints, and OAuth integration
 * See `ROADMAP.md` for planned improvements / technical debt
 
 ## Configuration
@@ -26,6 +27,7 @@ Double underscore `__` maps to nested sections (standard .NET config convention)
 ### Key settings
 | Section | Key | Environment variable | Description |
 |---------|-----|----------------------|-------------|
+| ConnectionStrings | DefaultConnection | `PRISSTYRNING_ConnectionStrings__DefaultConnection` | PostgreSQL connection string (required) |
 | Hangfire | DashboardPassword | `PRISSTYRNING_Hangfire__DashboardPassword` | Password for Hangfire dashboard (Basic Auth). If not set, dashboard is inaccessible. |
 | Price:Nordpool | DefaultZone | `PRISSTYRNING_Price__Nordpool__DefaultZone` | Default zone (e.g. SE3) |
 | Price:Nordpool | Currency | `PRISSTYRNING_Price__Nordpool__Currency` | Currency (e.g. SEK, EUR) |
@@ -67,13 +69,12 @@ Build image:
 docker build -t prisstyrning:local .
 ```
 
-Run container:
+Run container (requires a running PostgreSQL instance):
 ```bash
 docker run --rm -p 5000:5000 \
+  -e PRISSTYRNING_ConnectionStrings__DefaultConnection="Host=localhost;Database=prisstyrning;Username=prisstyrning;Password=prisstyrning" \
   -e PRISSTYRNING_Price__Nordpool__DefaultZone=SE3 \
   -e PRISSTYRNING_Price__Nordpool__Currency=SEK \
-  -e PRISSTYRNING_Storage__Directory=/data \
-  -v $(pwd)/data:/data \
   prisstyrning:local
 ```
 
@@ -82,25 +83,44 @@ Full example (see `docker-compose.example.yml` for latest & comments):
 ```yaml
 version: '3.9'
 services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: prisstyrning
+      POSTGRES_USER: prisstyrning
+      POSTGRES_PASSWORD: prisstyrning
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prisstyrning"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   prisstyrning:
     image: ghcr.io/twids/prisstyrning:latest
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
+      PRISSTYRNING_ConnectionStrings__DefaultConnection: "Host=postgres;Database=prisstyrning;Username=prisstyrning;Password=prisstyrning"
       PRISSTYRNING_Hangfire__DashboardPassword: CHANGE_ME
       PRISSTYRNING_Price__Nordpool__DefaultZone: SE3
       PRISSTYRNING_Price__Nordpool__Currency: SEK
       PRISSTYRNING_Daikin__ClientId: CHANGE_ME
       PRISSTYRNING_Daikin__ClientSecret: CHANGE_ME
       PRISSTYRNING_Daikin__RedirectUri: https://example.com/auth/daikin/callback
-      PRISSTYRNING_Daikin__ApplySchedule: "false" # keep false for transparency
+      PRISSTYRNING_Daikin__ApplySchedule: "false"
       PRISSTYRNING_Schedule__ComfortHours: "3"
       PRISSTYRNING_Schedule__TurnOffPercentile: "0.9"
-      PRISSTYRNING_Storage__Directory: /data
       PRISSTYRNING_PORT: "5000"
-    volumes:
-      - ./data:/data
     ports:
       - "5000:5000"
+
+volumes:
+  pgdata:
 ```
 Start:
 ```bash
@@ -119,14 +139,14 @@ The GitHub Actions pipeline enables `linux/amd64` and `linux/arm64` with QEMU em
 
 ## Build Verification
 All pull requests are automatically verified with GitHub Actions (`.github/workflows/pr-build-verification.yml`):
-* **Backend**: Restores NuGet packages, builds in Release configuration, runs 125+ tests
+* **Backend**: Restores NuGet packages, builds in Release configuration, runs 250+ tests
 * **Frontend**: Installs npm dependencies, builds React app with TypeScript and Vite
 * **Artifact Check**: Verifies build produces expected output (`Prisstyrning.dll` and `wwwroot/` assets)
 
 Pull requests cannot be merged until the build verification passes. This ensures code quality and prevents broken builds from entering the main branch.
 
 ## OAuth tokens
-After completing OAuth, tokens are persisted to `tokens/daikin.json` (if the volume is mounted). You may also inject `Daikin:AccessToken` / `Daikin:RefreshToken` directly for testing.
+After completing OAuth, tokens are persisted to the PostgreSQL database. You may also inject `Daikin:AccessToken` / `Daikin:RefreshToken` via environment variables for testing.
 
 ## Development
 
@@ -165,12 +185,16 @@ cd frontend && npm run dev
 * Status: `/api/status`
 
 ### Data Storage
-* Nordpool snapshots: `data/nordpool/<ZONE>/prices-*.json`
-* Schedule history: `data/schedule_history/<userId>/`
-* OAuth tokens: `data/tokens/<userId>/daikin.json`
+All application data is stored in PostgreSQL:
+* User settings (comfort hours, zone, percentiles)
+* Nordpool price snapshots (per zone and date)
+* Schedule history (per user)
+* OAuth tokens (Daikin access/refresh tokens)
+
+EF Core migrations are applied automatically on startup.
 
 ### Testing
-* Backend tests: `dotnet test --verbosity normal` (125+ tests)
+* Backend tests: `dotnet test --verbosity normal` (250+ tests)
 * Frontend: React components with TypeScript strict mode
 * See `Prisstyrning.Tests/README.md` for testing strategy
 

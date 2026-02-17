@@ -89,11 +89,17 @@ public class EndpointIntegrationTests
         using var fs = new TempFileSystem();
         var userId = "settings-test-user";
         var cfg = fs.GetTestConfig();
-        
-        // Test UserSettingsService directly (endpoint uses this)
-        var settings = UserSettingsService.LoadScheduleSettings(cfg, userId);
-        
-        // Should return defaults since no user.json exists
+
+        var options = new DbContextOptionsBuilder<PrisstyrningDbContext>()
+            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+            .Options;
+        var db = new PrisstyrningDbContext(options);
+        db.Database.EnsureCreated();
+        var repo = new UserSettingsRepository(db, cfg);
+
+        // Should return defaults since no user exists in DB
+        var settings = await repo.LoadScheduleSettingsAsync(userId);
+
         Assert.Equal(3, settings.ComfortHours);
         Assert.Equal(0.9, settings.TurnOffPercentile);
         Assert.Equal(28, settings.MaxComfortGapHours);
@@ -102,25 +108,29 @@ public class EndpointIntegrationTests
     [Fact]
     public async Task POST_UserSettings_ValidatesInput()
     {
-        using var fs = new TempFileSystem();
         var userId = "validation-test-user";
-        var userDir = Path.Combine(fs.TokensDir, userId);
-        Directory.CreateDirectory(userDir);
-        
-        // Test valid settings
-        var validSettings = new JsonObject
-        {
-            ["ComfortHours"] = 5,
-            ["TurnOffPercentile"] = 0.85,
-            ["MaxComfortGapHours"] = 36
-        };
-        
-        var userJsonPath = Path.Combine(userDir, "user.json");
-        await File.WriteAllTextAsync(userJsonPath, validSettings.ToJsonString());
-        
+        using var fs = new TempFileSystem();
         var cfg = fs.GetTestConfig();
-        var loaded = UserSettingsService.LoadScheduleSettings(cfg, userId);
-        
+
+        var options = new DbContextOptionsBuilder<PrisstyrningDbContext>()
+            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+            .Options;
+        var db = new PrisstyrningDbContext(options);
+        db.Database.EnsureCreated();
+
+        // Seed user settings in DB
+        db.UserSettings.Add(new Data.Entities.UserSettings
+        {
+            UserId = userId,
+            ComfortHours = 5,
+            TurnOffPercentile = 0.85,
+            MaxComfortGapHours = 36
+        });
+        await db.SaveChangesAsync();
+
+        var repo = new UserSettingsRepository(db, cfg);
+        var loaded = await repo.LoadScheduleSettingsAsync(userId);
+
         Assert.Equal(5, loaded.ComfortHours);
         Assert.Equal(0.85, loaded.TurnOffPercentile);
         Assert.Equal(36, loaded.MaxComfortGapHours);
@@ -129,27 +139,24 @@ public class EndpointIntegrationTests
     [Fact]
     public async Task GET_ScheduleHistory_ReturnsUserHistory()
     {
-        using var fs = new TempFileSystem();
         var userId = "history-test-user";
-        var cfg = fs.GetTestConfig();
-        var date = new DateTime(2026, 2, 7);
-        
-        // Create schedule and save history
-        var today = TestDataFactory.CreatePriceData(date);
-        var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
-        PriceMemory.Set(today, tomorrow);
-        
-        await BatchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: true);
-        
-        // Wait for async save
-        await Task.Delay(1000);
-        
-        // Load history (endpoint calls ScheduleHistoryPersistence.Load)
-        var history = ScheduleHistoryPersistence.Load(userId, fs.BaseDir);
-        
+
+        var options = new DbContextOptionsBuilder<PrisstyrningDbContext>()
+            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+            .Options;
+        var db = new PrisstyrningDbContext(options);
+        db.Database.EnsureCreated();
+        var repo = new ScheduleHistoryRepository(db);
+
+        // Save a history entry
+        var payload = new JsonObject { ["test"] = true };
+        await repo.SaveAsync(userId, payload, DateTimeOffset.UtcNow);
+
+        // Load and verify
+        var history = await repo.LoadAsync(userId);
+
         Assert.NotNull(history);
-        // Should have at least one entry if save succeeded
-        Assert.True(history.Count >= 0);
+        Assert.True(history.Count > 0);
     }
 
     [Fact]
@@ -265,33 +272,36 @@ public class EndpointIntegrationTests
     }
 
     [Fact]
-    public void GET_PricesZone_ReturnsUserZone()
+    public async Task GET_PricesZone_ReturnsUserZone()
     {
         using var fs = new TempFileSystem();
         var cfg = fs.GetTestConfig();
-        
-        // Test without user zone set (should return default)
-        var zone = UserSettingsService.GetUserZone(cfg, userId: "zone-test-user");
-        
-        // Should return default from config
+
+        var options = new DbContextOptionsBuilder<PrisstyrningDbContext>()
+            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+            .Options;
+        var db = new PrisstyrningDbContext(options);
+        db.Database.EnsureCreated();
+        var repo = new UserSettingsRepository(db, cfg);
+
+        // Test without user zone set (should return default from config)
+        var zone = await repo.GetUserZoneAsync("zone-test-user");
+
         Assert.NotNull(zone);
         Assert.Equal("SE3", zone);
     }
 
     [Fact]
-    public async Task POST_PricesZone_ValidatesZone()
+    public void POST_PricesZone_ValidatesZone()
     {
-        using var fs = new TempFileSystem();
-        var cfg = fs.GetTestConfig();
-        
-        // Test valid zone
-        Assert.True(UserSettingsService.IsValidZone("SE3"));
-        Assert.True(UserSettingsService.IsValidZone("NO5"));
-        Assert.True(UserSettingsService.IsValidZone("DK1"));
-        
+        // Test valid zones
+        Assert.True(UserSettingsRepository.IsValidZone("SE3"));
+        Assert.True(UserSettingsRepository.IsValidZone("NO5"));
+        Assert.True(UserSettingsRepository.IsValidZone("DK1"));
+
         // Test invalid zones
-        Assert.False(UserSettingsService.IsValidZone("INVALID"));
-        Assert.False(UserSettingsService.IsValidZone(""));
-        Assert.False(UserSettingsService.IsValidZone(null));
+        Assert.False(UserSettingsRepository.IsValidZone("INVALID"));
+        Assert.False(UserSettingsRepository.IsValidZone(""));
+        Assert.False(UserSettingsRepository.IsValidZone(null));
     }
 }

@@ -67,18 +67,9 @@ public class ScheduleUpdateJobTests : IDisposable
             db.SaveChanges();
         });
         
-        // Also write user.json for BatchRunner (still file-based)
-        var userDir = Path.Combine(fs.TokensDir, userId);
-        Directory.CreateDirectory(userDir);
-        File.WriteAllText(
-            Path.Combine(userDir, "user.json"),
-            "{\"AutoApplySchedule\":true,\"ComfortHours\":3}"
-        );
-        
         // Setup: Create price data
         var today = TestDataFactory.CreatePriceData(date);
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
-        NordpoolPersistence.Save("SE3", today, tomorrow, fs.NordpoolDir);
         PriceMemory.Set(today, tomorrow);
         
         var job = new ScheduleUpdateHangfireJob(cfg, scopeFactory);
@@ -131,14 +122,6 @@ public class ScheduleUpdateJobTests : IDisposable
             db.SaveChanges();
         });
         
-        // Also write user.json files for BatchRunner
-        var user1Dir = Path.Combine(fs.TokensDir, user1);
-        var user2Dir = Path.Combine(fs.TokensDir, user2);
-        Directory.CreateDirectory(user1Dir);
-        Directory.CreateDirectory(user2Dir);
-        File.WriteAllText(Path.Combine(user1Dir, "user.json"), "{\"AutoApplySchedule\":true,\"ComfortHours\":2}");
-        File.WriteAllText(Path.Combine(user2Dir, "user.json"), "{\"AutoApplySchedule\":true,\"ComfortHours\":4}");
-        
         // Setup price data
         var today = TestDataFactory.CreatePriceData(date);
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
@@ -178,14 +161,6 @@ public class ScheduleUpdateJobTests : IDisposable
             db.SaveChanges();
         });
         
-        // Bad user has corrupt file-based json, good user has valid
-        var badDir = Path.Combine(fs.TokensDir, badUser);
-        var goodDir = Path.Combine(fs.TokensDir, goodUser);
-        Directory.CreateDirectory(badDir);
-        Directory.CreateDirectory(goodDir);
-        File.WriteAllText(Path.Combine(badDir, "user.json"), "{ invalid json }");
-        File.WriteAllText(Path.Combine(goodDir, "user.json"), "{\"AutoApplySchedule\":true,\"ComfortHours\":3}");
-        
         var today = TestDataFactory.CreatePriceData(date);
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
         PriceMemory.Set(today, tomorrow);
@@ -217,11 +192,6 @@ public class ScheduleUpdateJobTests : IDisposable
             db.SaveChanges();
         });
         
-        // Write file for BatchRunner
-        var userDir = Path.Combine(fs.TokensDir, userNoAuto);
-        Directory.CreateDirectory(userDir);
-        File.WriteAllText(Path.Combine(userDir, "user.json"), "{\"AutoApplySchedule\":false,\"ComfortHours\":3}");
-        
         var today = TestDataFactory.CreatePriceData(date);
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
         PriceMemory.Set(today, tomorrow);
@@ -232,8 +202,11 @@ public class ScheduleUpdateJobTests : IDisposable
         await Task.Delay(500);
         
         // User without auto-apply should NOT have history saved
-        var historyFile = Path.Combine(fs.HistoryDir, userNoAuto, "history.json");
-        Assert.False(File.Exists(historyFile), 
-            "Users with AutoApplySchedule=false should be skipped");
+        using (var scope = scopeFactory.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+            var historyCount = await db.ScheduleHistory.CountAsync(h => h.UserId == userNoAuto);
+            Assert.Equal(0, historyCount);
+        }
     }
 }

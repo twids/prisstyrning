@@ -31,6 +31,7 @@ public class BatchRunnerIntegrationTests : IDisposable
             o.UseInMemoryDatabase(dbName));
         services.AddSingleton(cfg);
         services.AddScoped<ScheduleHistoryRepository>();
+        services.AddScoped<UserSettingsRepository>();
         _serviceProvider = services.BuildServiceProvider();
 
         using var scope = _serviceProvider.CreateScope();
@@ -49,9 +50,6 @@ public class BatchRunnerIntegrationTests : IDisposable
         // Setup: Create price data
         var today = TestDataFactory.CreatePriceData(date);
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
-        NordpoolPersistence.Save("SE3", today, tomorrow, fs.NordpoolDir);
-        
-        // Also set in memory
         PriceMemory.Set(today, tomorrow);
         
         var (generated, payload, message) = await BatchRunner.RunBatchAsync(
