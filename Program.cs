@@ -390,8 +390,18 @@ daikinAuthGroup.MapGet("/callback", async (IConfiguration cfg, HttpContext c, st
             // MigrateUserData moves token and settings files without overwriting existing ones.
             if (!string.IsNullOrEmpty(userId))
                 DaikinOAuthService.MigrateUserData(cfg, userId, stableUserId);
-            // Update the cookie to the deterministic userId
-            c.Response.Cookies.Append(UserCookieName, stableUserId, new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Lax, IsEssential = true, Expires = DateTimeOffset.UtcNow.AddYears(1) });
+            // Update the cookie to the deterministic userId, matching Secure behavior to the current request
+            c.Response.Cookies.Append(
+                UserCookieName,
+                stableUserId,
+                new CookieOptions
+                {
+                    HttpOnly = true,
+                    Secure = c.Request.IsHttps,
+                    SameSite = SameSiteMode.Lax,
+                    IsEssential = true,
+                    Expires = DateTimeOffset.UtcNow.AddYears(1)
+                });
             Console.WriteLine($"[DaikinOAuth][Callback] Remapped userId={userId} -> {stableUserId} (subject={result.Subject})");
         }
     }
