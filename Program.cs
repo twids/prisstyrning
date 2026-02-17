@@ -60,6 +60,7 @@ builder.Services.AddScoped<PriceRepository>();
 builder.Services.AddScoped<ScheduleHistoryRepository>();
 builder.Services.AddScoped<DaikinTokenRepository>();
 builder.Services.AddScoped<DaikinOAuthService>();
+builder.Services.AddHostedService<JsonMigrationService>();
 
 // Register job classes for dependency injection
 builder.Services.AddTransient<NordpoolPriceHangfireJob>();
