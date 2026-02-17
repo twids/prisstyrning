@@ -60,7 +60,7 @@ public class JsonMigrationService : IHostedService
                 if (existing != null)
                 {
                     Console.WriteLine($"[JsonMigration] UserSettings for '{userId}' already exists, skipping.");
-                    DeleteFile(filePath);
+                    BackupAndDeleteFile(filePath);
                     continue;
                 }
 
@@ -81,7 +81,7 @@ public class JsonMigrationService : IHostedService
                 db.UserSettings.Add(settings);
                 await db.SaveChangesAsync();
                 Console.WriteLine($"[JsonMigration] Migrated UserSettings for '{userId}'.");
-                DeleteFile(filePath);
+                BackupAndDeleteFile(filePath);
             }
             catch (Exception ex)
             {
@@ -124,7 +124,7 @@ public class JsonMigrationService : IHostedService
             if (existing != null)
             {
                 Console.WriteLine($"[JsonMigration] DaikinToken for '{userId}' already exists, skipping.");
-                DeleteFile(filePath);
+                BackupAndDeleteFile(filePath);
                 return;
             }
 
@@ -143,7 +143,7 @@ public class JsonMigrationService : IHostedService
             db.DaikinTokens.Add(token);
             await db.SaveChangesAsync();
             Console.WriteLine($"[JsonMigration] Migrated DaikinToken for '{userId}'.");
-            DeleteFile(filePath);
+            BackupAndDeleteFile(filePath);
         }
         catch (Exception ex)
         {
@@ -238,7 +238,7 @@ public class JsonMigrationService : IHostedService
             if (alreadyExists)
             {
                 Console.WriteLine($"[JsonMigration] PriceSnapshot for {zone}/{date} already exists, skipping.");
-                DeleteFile(filePath);
+                BackupAndDeleteFile(filePath);
                 return;
             }
 
@@ -262,7 +262,7 @@ public class JsonMigrationService : IHostedService
             db.PriceSnapshots.Add(snapshot);
             await db.SaveChangesAsync();
             Console.WriteLine($"[JsonMigration] Migrated PriceSnapshot {zone}/{date} from {Path.GetFileName(filePath)}.");
-            DeleteFile(filePath);
+            BackupAndDeleteFile(filePath);
         }
         catch (Exception ex)
         {
@@ -298,7 +298,7 @@ public class JsonMigrationService : IHostedService
                 if (existingCount > 0)
                 {
                     Console.WriteLine($"[JsonMigration] ScheduleHistory for '{userId}' already has entries, skipping.");
-                    DeleteFile(filePath);
+                    BackupAndDeleteFile(filePath);
                     continue;
                 }
 
@@ -322,7 +322,7 @@ public class JsonMigrationService : IHostedService
 
                 await db.SaveChangesAsync();
                 Console.WriteLine($"[JsonMigration] Migrated {entries.GetArrayLength()} ScheduleHistory entries for '{userId}'.");
-                DeleteFile(filePath);
+                BackupAndDeleteFile(filePath);
             }
             catch (Exception ex)
             {
@@ -333,10 +333,18 @@ public class JsonMigrationService : IHostedService
 
     // ─── Helpers ─────────────────────────────────────────────────────
 
-    private static void DeleteFile(string path)
+    private void BackupAndDeleteFile(string path)
     {
         try
         {
+            // Create backup before removing
+            var relativePath = Path.GetRelativePath(_baseDir, path);
+            var backupPath = Path.Combine(_baseDir, "migration-backup", relativePath);
+            var backupDir = Path.GetDirectoryName(backupPath);
+            if (backupDir != null) Directory.CreateDirectory(backupDir);
+            File.Copy(path, backupPath, overwrite: true);
+            Console.WriteLine($"[JsonMigration] Backed up '{relativePath}' to migration-backup/");
+
             File.Delete(path);
             // Try to clean up empty parent directory
             var dir = Path.GetDirectoryName(path);
@@ -347,7 +355,7 @@ public class JsonMigrationService : IHostedService
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[JsonMigration] Warning: could not delete '{path}': {ex.Message}");
+            Console.WriteLine($"[JsonMigration] Warning: could not backup/delete '{path}': {ex.Message}");
         }
     }
 
