@@ -272,7 +272,7 @@ internal static class DaikinOAuthService
         using var sha = SHA256.Create();
         var hash = sha.ComputeHash(Encoding.UTF8.GetBytes(subject));
         var hex = Convert.ToHexString(hash).ToLowerInvariant();
-        return $"daikin-{hex[..16]}"; // 16 hex chars = 64 bits - unique enough for practical use
+        return $"daikin-{hex[..32]}"; // 32 hex chars = 128 bits to keep collision probability negligible
     }
 
     /// <summary>
