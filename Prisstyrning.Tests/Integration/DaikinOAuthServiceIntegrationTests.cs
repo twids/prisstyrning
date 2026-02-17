@@ -511,7 +511,7 @@ public class DaikinOAuthServiceIntegrationTests
     [Fact]
     public void ExtractSubjectFromIdToken_ValidJwt_ExtractsSub()
     {
-        var idToken = CreateMockIdToken(new { sub = "test-subject-xyz", iss = "https://example.com" });
+        var idToken = CreateMockIdToken(new { sub = "test-subject-xyz", iss = "https://idp.onecta.daikineurope.com" });
         var json = JsonSerializer.Serialize(new { id_token = idToken });
         using var doc = JsonDocument.Parse(json);
         var subject = DaikinOAuthService.ExtractSubjectFromIdToken(doc.RootElement);
@@ -540,6 +540,64 @@ public class DaikinOAuthServiceIntegrationTests
     }
 
     [Fact]
+    public void ExtractSubjectFromIdToken_TwoPartJwt_ReturnsNull()
+    {
+        // JWT must have exactly 3 parts (header.payload.signature)
+        var header = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("{\"alg\":\"RS256\"}"));
+        var payload = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { sub = "test", iss = "https://idp.onecta.daikineurope.com" })));
+        var twoPartJwt = $"{header}.{payload}";
+        var json = JsonSerializer.Serialize(new { id_token = twoPartJwt });
+        using var doc = JsonDocument.Parse(json);
+        var subject = DaikinOAuthService.ExtractSubjectFromIdToken(doc.RootElement);
+
+        Assert.Null(subject);
+    }
+
+    [Fact]
+    public void ExtractSubjectFromIdToken_WrongIssuer_ReturnsNull()
+    {
+        var idToken = CreateMockIdToken(new { sub = "test-subject", iss = "https://evil-idp.example.com" });
+        var json = JsonSerializer.Serialize(new { id_token = idToken });
+        using var doc = JsonDocument.Parse(json);
+        var subject = DaikinOAuthService.ExtractSubjectFromIdToken(doc.RootElement);
+
+        Assert.Null(subject);
+    }
+
+    [Fact]
+    public void ExtractSubjectFromIdToken_MissingIssuer_ReturnsNull()
+    {
+        var idToken = CreateMockIdToken(new { sub = "test-subject" });
+        var json = JsonSerializer.Serialize(new { id_token = idToken });
+        using var doc = JsonDocument.Parse(json);
+        var subject = DaikinOAuthService.ExtractSubjectFromIdToken(doc.RootElement);
+
+        Assert.Null(subject);
+    }
+
+    [Fact]
+    public void ExtractSubjectFromIdToken_WrongAudience_ReturnsNull()
+    {
+        var idToken = CreateMockIdToken(new { sub = "test-subject", iss = "https://idp.onecta.daikineurope.com", aud = "wrong-client-id" });
+        var json = JsonSerializer.Serialize(new { id_token = idToken });
+        using var doc = JsonDocument.Parse(json);
+        var subject = DaikinOAuthService.ExtractSubjectFromIdToken(doc.RootElement, expectedClientId: "my-client-id");
+
+        Assert.Null(subject);
+    }
+
+    [Fact]
+    public void ExtractSubjectFromIdToken_CorrectAudience_ExtractsSub()
+    {
+        var idToken = CreateMockIdToken(new { sub = "test-subject", iss = "https://idp.onecta.daikineurope.com", aud = "my-client-id" });
+        var json = JsonSerializer.Serialize(new { id_token = idToken });
+        using var doc = JsonDocument.Parse(json);
+        var subject = DaikinOAuthService.ExtractSubjectFromIdToken(doc.RootElement, expectedClientId: "my-client-id");
+
+        Assert.Equal("test-subject", subject);
+    }
+
+    [Fact]
     public void MigrateUserData_MovesFilesToNewDirectory()
     {
         using var fs = new TempFileSystem();
@@ -551,13 +609,23 @@ public class DaikinOAuthServiceIntegrationTests
         File.WriteAllText(Path.Combine(oldDir, "daikin.json"), "{\"access_token\":\"abc\"}");
         File.WriteAllText(Path.Combine(oldDir, "user.json"), "{\"zone\":\"SE3\"}");
 
+        // Create schedule history under old userId
+        var oldHistoryDir = Path.Combine(fs.HistoryDir, "old-user-id");
+        Directory.CreateDirectory(oldHistoryDir);
+        File.WriteAllText(Path.Combine(oldHistoryDir, "history.json"), "[]");
+
         DaikinOAuthService.MigrateUserData(config, "old-user-id", "new-user-id");
 
         var newDir = Path.Combine(fs.TokensDir, "new-user-id");
         Assert.True(File.Exists(Path.Combine(newDir, "daikin.json")));
         Assert.True(File.Exists(Path.Combine(newDir, "user.json")));
-        // Old directory should be cleaned up
+        // Old token directory should be cleaned up
         Assert.False(Directory.Exists(oldDir));
+
+        // Schedule history should also be migrated
+        var newHistoryDir = Path.Combine(fs.HistoryDir, "new-user-id");
+        Assert.True(File.Exists(Path.Combine(newHistoryDir, "history.json")));
+        Assert.False(Directory.Exists(oldHistoryDir));
     }
 
     [Fact]
@@ -597,7 +665,7 @@ public class DaikinOAuthServiceIntegrationTests
         });
 
         var daikinSubject = "unique-daikin-subject-42";
-        var idToken = CreateMockIdToken(new { sub = daikinSubject });
+        var idToken = CreateMockIdToken(new { sub = daikinSubject, iss = "https://idp.onecta.daikineurope.com" });
 
         // Browser A
         var authUrl1 = DaikinOAuthService.GetAuthorizationUrl(config);

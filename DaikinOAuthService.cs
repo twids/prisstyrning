@@ -85,27 +85,32 @@ internal static class DaikinOAuthService
         if(!string.IsNullOrWhiteSpace(clientSecret))
             form["client_secret"] = clientSecret;
         var http = httpClient ?? new HttpClient();
-        Console.WriteLine($"[DaikinOAuth] Exchanging code for tokens at {tokenEndpoint}");
-        var resp = await http.PostAsync(tokenEndpoint, new FormUrlEncodedContent(form));
-        if(!resp.IsSuccessStatusCode)
+        try
         {
-            var body = await resp.Content.ReadAsStringAsync();
-            Console.WriteLine($"[DaikinOAuth][Error] Token exchange failed {(int)resp.StatusCode} {resp.StatusCode}");
-            if (httpClient == null) http.Dispose();
-            return new CallbackResult(false, null);
+            Console.WriteLine($"[DaikinOAuth] Exchanging code for tokens at {tokenEndpoint}");
+            using var resp = await http.PostAsync(tokenEndpoint, new FormUrlEncodedContent(form));
+            if(!resp.IsSuccessStatusCode)
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                Console.WriteLine($"[DaikinOAuth][Error] Token exchange failed {(int)resp.StatusCode} {resp.StatusCode}");
+                return new CallbackResult(false, null);
+            }
+            var json = await resp.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var access = root.GetProperty("access_token").GetString()!;
+            var refresh = root.GetProperty("refresh_token").GetString()!;
+            var expiresIn = root.TryGetProperty("expires_in", out var ei) ? ei.GetInt32() : 3600;
+            var expiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn - 30);
+            var subject = ExtractSubjectFromIdToken(root, clientId);
+            SaveTokens(cfg, new TokenFile(access, refresh, expiresAt), userId);
+            Console.WriteLine($"[DaikinOAuth] Token exchange OK expiresAt={expiresAt:O} refresh={(refresh?.Length>8?refresh[..8]+"...":"(none)")} hasSubject={subject != null}");
+            return new CallbackResult(true, subject);
         }
-        var json = await resp.Content.ReadAsStringAsync();
-        using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
-        var access = root.GetProperty("access_token").GetString()!;
-        var refresh = root.GetProperty("refresh_token").GetString()!;
-        var expiresIn = root.TryGetProperty("expires_in", out var ei) ? ei.GetInt32() : 3600;
-        var expiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn - 30);
-        var subject = ExtractSubjectFromIdToken(root);
-        SaveTokens(cfg, new TokenFile(access, refresh, expiresAt), userId);
-        Console.WriteLine($"[DaikinOAuth] Token exchange OK expiresAt={expiresAt:O} refresh={(refresh?.Length>8?refresh[..8]+"...":"(none)")} subject={(subject ?? "(none)")}");
-        if (httpClient == null) http.Dispose();
-        return new CallbackResult(true, subject);
+        finally
+        {
+            if (httpClient == null) http.Dispose();
+        }
     }
 
     public static (string? accessToken, DateTimeOffset? expiresAt) TryGetValidAccessToken(IConfiguration cfg) => TryGetValidAccessToken(cfg, null);
@@ -278,9 +283,11 @@ internal static class DaikinOAuthService
     /// <summary>
     /// Extracts the 'sub' (subject) claim from the OIDC id_token in the token response.
     /// The id_token is a JWT whose payload is base64url-encoded JSON.
-    /// We don't verify the signature because the token was just received over TLS from the trusted IDP.
+    /// We validate the JWT has the expected 3-part structure and that iss matches the
+    /// Daikin IDP. Full signature verification is not performed because the token was
+    /// just received over TLS from the trusted IDP during the authorization code exchange.
     /// </summary>
-    internal static string? ExtractSubjectFromIdToken(JsonElement tokenResponseRoot)
+    internal static string? ExtractSubjectFromIdToken(JsonElement tokenResponseRoot, string? expectedClientId = null)
     {
         try
         {
@@ -288,9 +295,9 @@ internal static class DaikinOAuthService
             var idToken = idTokenEl.GetString();
             if (string.IsNullOrWhiteSpace(idToken)) return null;
 
-            // JWT structure: header.payload.signature
+            // JWT must have exactly 3 parts: header.payload.signature
             var parts = idToken.Split('.');
-            if (parts.Length < 2) return null;
+            if (parts.Length != 3) return null;
 
             // Decode the payload (second part)
             var payload = parts[1];
@@ -303,7 +310,36 @@ internal static class DaikinOAuthService
             payload = payload.Replace('-', '+').Replace('_', '/');
             var bytes = Convert.FromBase64String(payload);
             using var payloadDoc = JsonDocument.Parse(bytes);
-            if (payloadDoc.RootElement.TryGetProperty("sub", out var subEl))
+            var root = payloadDoc.RootElement;
+
+            // Validate issuer - must be the Daikin OIDC IDP
+            if (root.TryGetProperty("iss", out var issEl))
+            {
+                var iss = issEl.GetString();
+                if (string.IsNullOrEmpty(iss) || !iss.Contains("daikineurope.com", StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine($"[DaikinOAuth] id_token issuer rejected");
+                    return null;
+                }
+            }
+            else
+            {
+                Console.WriteLine($"[DaikinOAuth] id_token missing 'iss' claim");
+                return null;
+            }
+
+            // Validate audience matches our client_id (if we know it)
+            if (!string.IsNullOrEmpty(expectedClientId) && root.TryGetProperty("aud", out var audEl))
+            {
+                var aud = audEl.ValueKind == JsonValueKind.String ? audEl.GetString() : null;
+                if (aud != null && aud != expectedClientId)
+                {
+                    Console.WriteLine($"[DaikinOAuth] id_token audience mismatch");
+                    return null;
+                }
+            }
+
+            if (root.TryGetProperty("sub", out var subEl))
             {
                 var sub = subEl.GetString();
                 if (!string.IsNullOrWhiteSpace(sub)) return sub;
@@ -317,7 +353,7 @@ internal static class DaikinOAuthService
     }
 
     /// <summary>
-    /// Migrates user data (tokens, settings) from one userId directory to another.
+    /// Migrates user data (tokens, settings, schedule history) from one userId directory to another.
     /// Used when remapping a browser-generated random userId to a deterministic Daikin-based userId.
     /// If destination already exists, only moves files that don't exist in the destination.
     /// </summary>
@@ -325,8 +361,38 @@ internal static class DaikinOAuthService
     {
         if (string.IsNullOrWhiteSpace(fromUserId) || string.IsNullOrWhiteSpace(toUserId)) return;
         if (fromUserId == toUserId) return;
-        var fromDir = StoragePaths.GetUserTokenDir(SanitizeUser(fromUserId), cfg);
-        var toDir = StoragePaths.GetUserTokenDir(SanitizeUser(toUserId), cfg);
+
+        var sanitizedFrom = SanitizeUser(fromUserId);
+        var sanitizedTo = SanitizeUser(toUserId);
+
+        // 1) Migrate token directory
+        var fromTokenDir = StoragePaths.GetUserTokenDir(sanitizedFrom, cfg);
+        var toTokenDir = StoragePaths.GetUserTokenDir(sanitizedTo, cfg);
+        MigratePerUserDirectory(fromTokenDir, toTokenDir);
+
+        // 2) Migrate schedule history directory
+        try
+        {
+            var historyBaseDir = StoragePaths.GetScheduleHistoryDir(cfg);
+            var fromHistoryDir = Path.Combine(historyBaseDir, sanitizedFrom);
+            var toHistoryDir = Path.Combine(historyBaseDir, sanitizedTo);
+            MigratePerUserDirectory(fromHistoryDir, toHistoryDir);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[DaikinOAuth] Schedule history migration failed: {ex.Message}");
+        }
+
+        Console.WriteLine($"[DaikinOAuth] Migrated user data from {sanitizedFrom} to {sanitizedTo}");
+    }
+
+    /// <summary>
+    /// Migrates files from one per-user directory to another.
+    /// If the source directory does not exist, nothing happens.
+    /// If the destination exists, only files missing in the destination are moved.
+    /// </summary>
+    private static void MigratePerUserDirectory(string fromDir, string toDir)
+    {
         if (!Directory.Exists(fromDir)) return;
         Directory.CreateDirectory(toDir);
         foreach (var srcFile in Directory.GetFiles(fromDir))
@@ -345,7 +411,6 @@ internal static class DaikinOAuthService
                 Directory.Delete(fromDir);
         }
         catch { }
-        Console.WriteLine($"[DaikinOAuth] Migrated user data from {fromUserId} to {toUserId}");
     }
 
     private static (string codeChallenge, string verifier) CreatePkcePair()

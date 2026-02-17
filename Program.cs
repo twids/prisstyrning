@@ -402,7 +402,7 @@ daikinAuthGroup.MapGet("/callback", async (IConfiguration cfg, HttpContext c, st
                     IsEssential = true,
                     Expires = DateTimeOffset.UtcNow.AddYears(1)
                 });
-            Console.WriteLine($"[DaikinOAuth][Callback] Remapped userId={userId} -> {stableUserId} (subject={result.Subject})");
+            Console.WriteLine($"[DaikinOAuth][Callback] Remapped userId={userId} -> {stableUserId}");
         }
     }
     // Secure redirect handling to avoid open redirect vulnerabilities.
