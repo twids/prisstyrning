@@ -123,8 +123,8 @@ public class BatchRunnerIntegrationTests
         Assert.True(generated);
         Assert.NotNull(payload);
         
-        // Give async save a moment to complete
-        await Task.Delay(500);
+        // Fire-and-forget history save may still be in progress - give it a brief moment
+        await Task.Delay(100);
         
         // Verify history was saved
         var historyFile = Path.Combine(fs.HistoryDir, userId, "history.json");
@@ -263,8 +263,8 @@ public class BatchRunnerIntegrationTests
         
         Assert.True(generated);
         
-        // Wait for async save to complete
-        await Task.Delay(1000);
+        // Fire-and-forget history save may still be in progress - give it a brief moment
+        await Task.Delay(100);
         
         var historyFile = Path.Combine(fs.HistoryDir, userId, "history.json");
         Assert.True(File.Exists(historyFile));
