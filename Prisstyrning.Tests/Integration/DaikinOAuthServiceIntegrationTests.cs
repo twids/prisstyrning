@@ -88,8 +88,9 @@ public class DaikinOAuthServiceIntegrationTests
                 token_type = "Bearer"
             }));
 
-        var mockHttpClient = new HttpClient(mockHandler);
-        var result = await DaikinOAuthService.HandleCallbackAsync(config, "auth-code-123", state, userId: "test-user", mockHttpClient);
+        var mockHttpFactory = MockServiceFactory.CreateMockHttpClientFactory(mockHandler);
+        var oauthService = MockServiceFactory.CreateMockDaikinOAuthService(mockHttpFactory);
+        var result = await oauthService.HandleCallbackAsync(config, "auth-code-123", state, userId: "test-user");
 
         Assert.True(result, "Token exchange should succeed");
         
@@ -117,7 +118,8 @@ public class DaikinOAuthServiceIntegrationTests
         _ = DaikinOAuthService.GetAuthorizationUrl(config);
 
         // Use wrong state
-        var result = await DaikinOAuthService.HandleCallbackAsync(config, "auth-code", "wrong-state", userId: "test-user");
+        var oauthService = MockServiceFactory.CreateMockDaikinOAuthService();
+        var result = await oauthService.HandleCallbackAsync(config, "auth-code", "wrong-state", userId: "test-user");
 
         Assert.False(result, "Should fail with invalid state");
     }
@@ -141,8 +143,9 @@ public class DaikinOAuthServiceIntegrationTests
             HttpStatusCode.BadRequest,
             JsonSerializer.Serialize(new { error = "invalid_grant" }));
 
-        var mockHttpClient = new HttpClient(mockHandler);
-        var result = await DaikinOAuthService.HandleCallbackAsync(config, "", state, userId: "test-user", mockHttpClient);
+        var mockHttpFactory = MockServiceFactory.CreateMockHttpClientFactory(mockHandler);
+        var oauthService = MockServiceFactory.CreateMockDaikinOAuthService(mockHttpFactory);
+        var result = await oauthService.HandleCallbackAsync(config, "", state, userId: "test-user");
 
         // With empty code, token endpoint should fail
         Assert.False(result);
@@ -181,8 +184,9 @@ public class DaikinOAuthServiceIntegrationTests
                 expires_in = 3600
             }));
 
-        var mockHttpClient = new HttpClient(mockHandler);
-        var result = await DaikinOAuthService.RefreshIfNeededAsync(config, "test-user", mockHttpClient);
+        var mockHttpFactory = MockServiceFactory.CreateMockHttpClientFactory(mockHandler);
+        var oauthService = MockServiceFactory.CreateMockDaikinOAuthService(mockHttpFactory);
+        var result = await oauthService.RefreshIfNeededAsync(config, "test-user");
 
         Assert.NotNull(result);
         Assert.Equal("new-access-token", result);
@@ -214,7 +218,8 @@ public class DaikinOAuthServiceIntegrationTests
         };
         await File.WriteAllTextAsync(tokenFile, JsonSerializer.Serialize(validToken));
 
-        var result = await DaikinOAuthService.RefreshIfNeededAsync(config, "test-user");
+        var oauthService = MockServiceFactory.CreateMockDaikinOAuthService();
+        var result = await oauthService.RefreshIfNeededAsync(config, "test-user");
 
         Assert.NotNull(result);
         Assert.Equal("current-token", result);
@@ -309,8 +314,9 @@ public class DaikinOAuthServiceIntegrationTests
             HttpStatusCode.OK,
             "{}");
 
-        var mockHttpClient = new HttpClient(mockHandler);
-        var result = await DaikinOAuthService.RevokeAsync(config, "test-user", mockHttpClient);
+        var mockHttpFactory = MockServiceFactory.CreateMockHttpClientFactory(mockHandler);
+        var oauthService = MockServiceFactory.CreateMockDaikinOAuthService(mockHttpFactory);
+        var result = await oauthService.RevokeAsync(config, "test-user");
 
         Assert.True(result);
         Assert.False(File.Exists(tokenFile), "Token file should be deleted after revocation");
@@ -350,8 +356,9 @@ public class DaikinOAuthServiceIntegrationTests
                 exp = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds()
             }));
 
-        var mockHttpClient = new HttpClient(mockHandler);
-        var result = await DaikinOAuthService.IntrospectAsync(config, "test-user", refresh: false, mockHttpClient);
+        var mockHttpFactory = MockServiceFactory.CreateMockHttpClientFactory(mockHandler);
+        var oauthService = MockServiceFactory.CreateMockDaikinOAuthService(mockHttpFactory);
+        var result = await oauthService.IntrospectAsync(config, "test-user", refresh: false);
 
         Assert.NotNull(result);
     }
@@ -449,8 +456,9 @@ public class DaikinOAuthServiceIntegrationTests
                 id_token = idToken
             }));
 
-        var mockHttpClient = new HttpClient(mockHandler);
-        var result = await DaikinOAuthService.HandleCallbackWithSubjectAsync(config, "auth-code-123", state, userId: "test-user", mockHttpClient);
+        var mockHttpFactory = MockServiceFactory.CreateMockHttpClientFactory(mockHandler);
+        var oauthService = MockServiceFactory.CreateMockDaikinOAuthService(mockHttpFactory);
+        var result = await oauthService.HandleCallbackWithSubjectAsync(config, "auth-code-123", state, userId: "test-user");
 
         Assert.True(result.Success);
         Assert.Equal("daikin-user-12345", result.Subject);
@@ -482,8 +490,9 @@ public class DaikinOAuthServiceIntegrationTests
                 // No id_token
             }));
 
-        var mockHttpClient = new HttpClient(mockHandler);
-        var result = await DaikinOAuthService.HandleCallbackWithSubjectAsync(config, "auth-code-123", state, userId: "test-user", mockHttpClient);
+        var mockHttpFactory = MockServiceFactory.CreateMockHttpClientFactory(mockHandler);
+        var oauthService = MockServiceFactory.CreateMockDaikinOAuthService(mockHttpFactory);
+        var result = await oauthService.HandleCallbackWithSubjectAsync(config, "auth-code-123", state, userId: "test-user");
 
         Assert.True(result.Success);
         Assert.Null(result.Subject);
@@ -682,7 +691,9 @@ public class DaikinOAuthServiceIntegrationTests
                 id_token = idToken
             }));
 
-        var result1 = await DaikinOAuthService.HandleCallbackWithSubjectAsync(config, "code-a", state1, "browser-a-guid", new HttpClient(mockHandler1));
+        var mockHttpFactory1 = MockServiceFactory.CreateMockHttpClientFactory(mockHandler1);
+        var oauthService1 = MockServiceFactory.CreateMockDaikinOAuthService(mockHttpFactory1);
+        var result1 = await oauthService1.HandleCallbackWithSubjectAsync(config, "code-a", state1, "browser-a-guid");
 
         // Browser B
         var authUrl2 = DaikinOAuthService.GetAuthorizationUrl(config);
@@ -699,7 +710,9 @@ public class DaikinOAuthServiceIntegrationTests
                 id_token = idToken
             }));
 
-        var result2 = await DaikinOAuthService.HandleCallbackWithSubjectAsync(config, "code-b", state2, "browser-b-guid", new HttpClient(mockHandler2));
+        var mockHttpFactory2 = MockServiceFactory.CreateMockHttpClientFactory(mockHandler2);
+        var oauthService2 = MockServiceFactory.CreateMockDaikinOAuthService(mockHttpFactory2);
+        var result2 = await oauthService2.HandleCallbackWithSubjectAsync(config, "code-b", state2, "browser-b-guid");
 
         // Both should succeed and return the same subject
         Assert.True(result1.Success);

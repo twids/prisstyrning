@@ -8,14 +8,16 @@ namespace Prisstyrning.Jobs;
 /// Hangfire job that periodically scans token files and refreshes them proactively
 /// so that normal requests rarely encounter an expired access token.
 /// </summary>
-public class DaikinTokenRefreshHangfireJob
+internal class DaikinTokenRefreshHangfireJob
 {
     private readonly IConfiguration _cfg;
+    private readonly DaikinOAuthService _daikinOAuthService;
     private readonly TimeSpan _refreshWindow;
 
-    public DaikinTokenRefreshHangfireJob(IConfiguration cfg)
+    public DaikinTokenRefreshHangfireJob(IConfiguration cfg, DaikinOAuthService daikinOAuthService)
     {
         _cfg = cfg;
+        _daikinOAuthService = daikinOAuthService;
         // Allow override via config; default: refresh if < 5 min remains
         _refreshWindow = TimeSpan.FromMinutes(ParseInt(cfg["Daikin:ProactiveRefreshWindowMinutes"], 5));
     }
@@ -57,7 +59,7 @@ public class DaikinTokenRefreshHangfireJob
                     userId = userFolder; // Already sanitized when created
                 }
                 var before = remaining;
-                var access = await DaikinOAuthService.RefreshIfNeededAsync(_cfg, userId);
+                var access = await _daikinOAuthService.RefreshIfNeededAsync(_cfg, userId);
                 if (access != null)
                 {
                     Console.WriteLine($"[DaikinTokenRefreshHangfireJob] Refreshed token file={file} user={(userId ?? "(global)")} beforeRemaining={(int)before.TotalSeconds}s");

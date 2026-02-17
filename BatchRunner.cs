@@ -6,16 +6,25 @@ internal enum HourState { None, Comfort, Eco, TurnOff }
 internal record ClassifiedHour(int Hour, decimal Price, HourState State);
 internal record GeneratedSegments(List<(int hour,string state)> Segments);
 
-internal static class BatchRunner
+internal class BatchRunner
 {
-    public static async Task<object> GenerateSchedulePreview(IConfiguration config)
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly DaikinOAuthService _daikinOAuthService;
+
+    public BatchRunner(IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuthService)
+    {
+        _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
+        _daikinOAuthService = daikinOAuthService ?? throw new ArgumentNullException(nameof(daikinOAuthService));
+    }
+
+    public async Task<object> GenerateSchedulePreview(IConfiguration config)
     {
         var res = await RunBatchAsync(config, null, applySchedule:false, persist:false);
         return new { res.schedulePayload, res.generated, res.message };
     }
 
     // Overload that uses user-specific settings from user.json and unified ScheduleAlgorithm
-    public static async Task<(bool generated, JsonNode? schedulePayload, string message)> RunBatchAsync(IConfiguration config, string? userId, bool applySchedule, bool persist)
+    public async Task<(bool generated, JsonNode? schedulePayload, string message)> RunBatchAsync(IConfiguration config, string? userId, bool applySchedule, bool persist)
     {
         var settings = UserSettingsService.LoadScheduleSettings(config, userId);
         int activationLimit = int.TryParse(config["Schedule:MaxActivationsPerDay"], out var mpd) ? Math.Clamp(mpd, 1, 24) : 4;
@@ -44,14 +53,14 @@ internal static class BatchRunner
     }
 
     // Returnerar schedulePayload som JsonNode istället för sträng för att API-responsen ska ha ett inbäddat JSON-objekt
-    private static async Task<(bool generated, JsonNode? schedulePayload, string message)> RunBatchInternalAsync(IConfiguration config, UserSettingsService.UserScheduleSettings settings, int activationLimit, bool applySchedule, bool persist, string? userId)
+    private async Task<(bool generated, JsonNode? schedulePayload, string message)> RunBatchInternalAsync(IConfiguration config, UserSettingsService.UserScheduleSettings settings, int activationLimit, bool applySchedule, bool persist, string? userId)
     {
         var environment = config["ASPNETCORE_ENVIRONMENT"] ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production";
         var accessToken = config["Daikin:AccessToken"] ?? string.Empty;
         if (string.IsNullOrWhiteSpace(accessToken))
         {
             var (tkn, _) = DaikinOAuthService.TryGetValidAccessToken(config, userId);
-            if (tkn == null) tkn = await DaikinOAuthService.RefreshIfNeededAsync(config, userId);
+            if (tkn == null) tkn = await _daikinOAuthService.RefreshIfNeededAsync(config, userId);
             accessToken = tkn ?? string.Empty;
         }
         var zone = config["Price:Nordpool:DefaultZone"] ?? "SE3";
@@ -60,7 +69,7 @@ internal static class BatchRunner
         JsonArray? rawToday = null; JsonArray? rawTomorrow = null;
         try
         {
-            var np = new NordpoolClient(currency);
+            var np = new NordpoolClient(_httpClientFactory.CreateClient("Nordpool"), currency);
             var fetched = await np.GetTodayTomorrowAsync(zone);
             rawToday = fetched.today; rawTomorrow = fetched.tomorrow;
             PriceMemory.Set(rawToday, rawTomorrow);
@@ -111,7 +120,7 @@ internal static class BatchRunner
                 bool log = (config["Daikin:Http:Log"] ?? config["Daikin:HttpLog"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
                 bool logBody = (config["Daikin:Http:LogBody"] ?? config["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
                 int.TryParse(config["Daikin:Http:BodySnippetLength"], out var snipLen);
-                var daikin = new DaikinApiClient(token, log, logBody, snipLen == 0 ? null : snipLen);
+                var daikin = new DaikinApiClient(_httpClientFactory.CreateClient("Daikin"), token, log, logBody, snipLen == 0 ? null : snipLen);
                 // Overrides via config (optional)
                 var overrideSite = config["Daikin:SiteId"];
                 var overrideDevice = config["Daikin:DeviceId"];
@@ -222,7 +231,7 @@ internal static class BatchRunner
         if (!scheduleApplied)
         {
             // Try refresh if possible
-            var refreshed = await DaikinOAuthService.RefreshIfNeededAsync(config, userId);
+            var refreshed = await _daikinOAuthService.RefreshIfNeededAsync(config, userId);
             if (!string.IsNullOrEmpty(refreshed) && refreshed != accessToken)
             {
                 applyAttempts++;
@@ -250,7 +259,7 @@ internal static class BatchRunner
     }
 
     // Helper method for fire-and-forget history save with error handling
-    private static async Task SaveHistoryAsync(string userId, JsonObject payload, IConfiguration config)
+    private async Task SaveHistoryAsync(string userId, JsonObject payload, IConfiguration config)
     {
         try 
         {
