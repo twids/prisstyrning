@@ -9,13 +9,15 @@ namespace Prisstyrning.Jobs;
 /// This job fetches/prerenders data without auto-applying schedules.
 /// Can also be triggered manually from Hangfire dashboard if needed.
 /// </summary>
-public class InitialBatchHangfireJob
+internal class InitialBatchHangfireJob
 {
     private readonly IConfiguration _cfg;
+    private readonly BatchRunner _batchRunner;
 
-    public InitialBatchHangfireJob(IConfiguration cfg)
+    public InitialBatchHangfireJob(IConfiguration cfg, BatchRunner batchRunner)
     {
         _cfg = cfg;
+        _batchRunner = batchRunner;
     }
 
     [DisplayName("Daily Batch - Fetch and Prerender Data (14:30)")]
@@ -24,7 +26,7 @@ public class InitialBatchHangfireJob
         try
         {
             Console.WriteLine("[InitialBatchHangfireJob] Running initial batch (persist + prerender, no auto apply)");
-            await BatchRunner.RunBatchAsync(_cfg, null, applySchedule: false, persist: true);
+            await _batchRunner.RunBatchAsync(_cfg, null, applySchedule: false, persist: true);
             Console.WriteLine("[InitialBatchHangfireJob] Initial batch completed");
         }
         catch (Exception ex)

@@ -37,7 +37,8 @@ public class DaikinTokenRefreshJobTests
         await File.WriteAllTextAsync(tokenFile, 
             tokenData.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
         
-        var job = new DaikinTokenRefreshHangfireJob(cfg);
+        var daikinOAuthService = MockServiceFactory.CreateMockDaikinOAuthService();
+        var job = new DaikinTokenRefreshHangfireJob(cfg, daikinOAuthService);
         
         // Note: Without actual OAuth server, this will fail to refresh
         // but the job should handle it gracefully
@@ -73,7 +74,8 @@ public class DaikinTokenRefreshJobTests
         var originalContent = tokenData.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(tokenFile, originalContent);
         
-        var job = new DaikinTokenRefreshHangfireJob(cfg);
+        var daikinOAuthService = MockServiceFactory.CreateMockDaikinOAuthService();
+        var job = new DaikinTokenRefreshHangfireJob(cfg, daikinOAuthService);
         await job.ExecuteAsync();
         
         // Token file should remain unchanged (no refresh needed)
@@ -107,7 +109,8 @@ public class DaikinTokenRefreshJobTests
             );
         }
         
-        var job = new DaikinTokenRefreshHangfireJob(cfg);
+        var daikinOAuthService = MockServiceFactory.CreateMockDaikinOAuthService();
+        var job = new DaikinTokenRefreshHangfireJob(cfg, daikinOAuthService);
         await job.ExecuteAsync();
         
         // All token files should still exist (scanned but not refreshed)
@@ -148,7 +151,8 @@ public class DaikinTokenRefreshJobTests
             validToken.ToJsonString()
         );
         
-        var job = new DaikinTokenRefreshHangfireJob(cfg);
+        var daikinOAuthService = MockServiceFactory.CreateMockDaikinOAuthService();
+        var job = new DaikinTokenRefreshHangfireJob(cfg, daikinOAuthService);
         
         // Should not throw despite corrupt token file
         await job.ExecuteAsync();
