@@ -70,6 +70,10 @@ public class BatchRunnerIntegrationTests
         using var fs = new TempFileSystem();
         
         var mockHandler = new MockHttpMessageHandler();
+        // Nordpool price mock (required for schedule generation)
+        var priceArray = TestDataFactory.CreateElprisetResponse();
+        mockHandler.AddRoute("elprisetjustnu.se", HttpStatusCode.OK, priceArray);
+        // Daikin API mocks
         mockHandler.AddRoute("api.onecta.daikineurope.com", HttpStatusCode.OK, 
             @"[{""id"":""site-123""}]");
         mockHandler.AddRoute("devices", HttpStatusCode.OK, 
@@ -88,7 +92,8 @@ public class BatchRunnerIntegrationTests
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
         PriceMemory.Set(today, tomorrow);
         
-        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
+        var mockHttpFactory = MockServiceFactory.CreateMockHttpClientFactory(mockHandler);
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner(mockHttpFactory);
         var (generated, payload, message) = await batchRunner.RunBatchAsync(
             cfg, 
             userId: "test-user", 

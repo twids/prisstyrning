@@ -140,6 +140,24 @@ public static class TestDataFactory
     }
 
     /// <summary>
+    /// Creates a JSON string matching the elprisetjustnu.se API response format.
+    /// </summary>
+    public static string CreateElprisetResponse(DateTime? date = null)
+    {
+        var d = date ?? DateTime.UtcNow.Date;
+        var items = new System.Text.Json.Nodes.JsonArray();
+        for (int h = 0; h < 24; h++)
+        {
+            items.Add(new JsonObject
+            {
+                ["time_start"] = d.AddHours(h).ToString("o"),
+                ["SEK_per_kWh"] = 0.5m + (h * 0.02m)
+            });
+        }
+        return items.ToJsonString();
+    }
+
+    /// <summary>
     /// Creates a schedule history entry with timestamp.
     /// </summary>
     public static JsonObject CreateHistoryEntry(DateTimeOffset timestamp, JsonObject schedulePayload)
