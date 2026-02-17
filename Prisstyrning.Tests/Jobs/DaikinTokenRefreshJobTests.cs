@@ -32,6 +32,7 @@ public class DaikinTokenRefreshJobTests
         services.AddSingleton<IConfiguration>(config);
         services.AddScoped<PrisstyrningDbContext>(sp => new PrisstyrningDbContext(sp.GetRequiredService<DbContextOptions<PrisstyrningDbContext>>()));
         services.AddScoped<DaikinTokenRepository>();
+        services.AddSingleton<IHttpClientFactory>(MockServiceFactory.CreateMockHttpClientFactory());
         services.AddScoped<DaikinOAuthService>();
         var sp = services.BuildServiceProvider();
         return (sp.GetRequiredService<IServiceScopeFactory>(), db, tokenRepo);

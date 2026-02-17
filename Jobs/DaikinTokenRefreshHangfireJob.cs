@@ -10,7 +10,7 @@ namespace Prisstyrning.Jobs;
 /// Hangfire job that periodically scans token records and refreshes them proactively
 /// so that normal requests rarely encounter an expired access token.
 /// </summary>
-public class DaikinTokenRefreshHangfireJob
+internal class DaikinTokenRefreshHangfireJob
 {
     private readonly IConfiguration _cfg;
     private readonly IServiceScopeFactory _scopeFactory;

@@ -10,7 +10,7 @@ namespace Prisstyrning.Jobs;
 /// <summary>
 /// Hangfire job that generates and applies schedules for users with auto-apply enabled
 /// </summary>
-public class ScheduleUpdateHangfireJob
+internal class ScheduleUpdateHangfireJob
 {
     private readonly IConfiguration _cfg;
     private readonly IServiceScopeFactory _scopeFactory;
@@ -49,7 +49,8 @@ public class ScheduleUpdateHangfireJob
             {
                 using var scope = _scopeFactory.CreateScope();
                 var daikinOAuth = scope.ServiceProvider.GetRequiredService<DaikinOAuthService>();
-                var (generated, schedulePayload, message) = await BatchRunner.RunBatchAsync(_cfg, userId, applySchedule: true, persist: true, _scopeFactory, daikinOAuth);
+                var batchRunner = scope.ServiceProvider.GetRequiredService<BatchRunner>();
+                var (generated, schedulePayload, message) = await batchRunner.RunBatchAsync(_cfg, userId, applySchedule: true, persist: true, _scopeFactory);
                 Console.WriteLine($"[ScheduleUpdateHangfireJob] user={userId} generated={generated} message={message}");
                 processedCount++;
             }

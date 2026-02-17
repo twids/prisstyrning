@@ -23,7 +23,8 @@ public class EndpointIntegrationTests
         var db = new PrisstyrningDbContext(options);
         db.Database.EnsureCreated();
         var tokenRepo = new DaikinTokenRepository(db);
-        return new DaikinOAuthService(config, tokenRepo);
+        var httpFactory = MockServiceFactory.CreateMockHttpClientFactory();
+        return new DaikinOAuthService(config, tokenRepo, httpFactory);
     }
 
     [Fact]
@@ -39,7 +40,8 @@ public class EndpointIntegrationTests
         PriceMemory.Set(today, tomorrow);
         
         // Test the underlying BatchRunner logic (endpoint calls this)
-        var result = await BatchRunner.GenerateSchedulePreview(cfg);
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
+        var result = await batchRunner.GenerateSchedulePreview(cfg);
         
         Assert.NotNull(result);
         
@@ -72,7 +74,8 @@ public class EndpointIntegrationTests
         PriceMemory.Set(today, tomorrow);
         
         // Test apply logic (would fail without real Daikin API)
-        var (generated, payload, message) = await BatchRunner.RunBatchAsync(
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
+        var (generated, payload, message) = await batchRunner.RunBatchAsync(
             cfg, 
             userId: "test-user", 
             applySchedule: true, 
@@ -141,6 +144,7 @@ public class EndpointIntegrationTests
     {
         var userId = "history-test-user";
 
+
         var options = new DbContextOptionsBuilder<PrisstyrningDbContext>()
             .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
             .Options;
@@ -154,6 +158,7 @@ public class EndpointIntegrationTests
 
         // Load and verify
         var history = await repo.LoadAsync(userId);
+
 
         Assert.NotNull(history);
         Assert.True(history.Count > 0);
@@ -245,7 +250,8 @@ public class EndpointIntegrationTests
         db.Database.EnsureCreated();
         var tokenRepo = new DaikinTokenRepository(db);
         await tokenRepo.SaveAsync(userId, "expired-token", "refresh-123", DateTimeOffset.UtcNow.AddMinutes(-10));
-        var service = new DaikinOAuthService(cfg, tokenRepo);
+        var httpFactory = MockServiceFactory.CreateMockHttpClientFactory();
+        var service = new DaikinOAuthService(cfg, tokenRepo, httpFactory);
         
         // Test refresh logic (will fail without real OAuth server)
         var refreshedToken = await service.RefreshIfNeededAsync(userId);

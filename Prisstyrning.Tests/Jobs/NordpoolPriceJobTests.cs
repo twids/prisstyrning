@@ -31,6 +31,7 @@ public class NordpoolPriceJobTests : IDisposable
             o.UseInMemoryDatabase(dbName));
         services.AddSingleton(cfg);
         services.AddScoped<UserSettingsRepository>();
+        services.AddScoped<PriceRepository>();
         _serviceProvider = services.BuildServiceProvider();
 
         if (seed != null)
@@ -61,7 +62,8 @@ public class NordpoolPriceJobTests : IDisposable
             db.SaveChanges();
         });
         
-        var job = new NordpoolPriceHangfireJob(cfg, scopeFactory);
+        var mockHttpFactory = MockServiceFactory.CreateMockHttpClientFactory();
+        var job = new NordpoolPriceHangfireJob(cfg, scopeFactory, mockHttpFactory);
         
         // Note: Will attempt to fetch real data and may fail
         // The test verifies the job completes without crashing
@@ -93,7 +95,8 @@ public class NordpoolPriceJobTests : IDisposable
         Assert.NotNull(beforeToday);
 
         var scopeFactory = BuildScopeFactory(cfg);
-        var job = new NordpoolPriceHangfireJob(cfg, scopeFactory);
+        var mockHttpFactory = MockServiceFactory.CreateMockHttpClientFactory();
+        var job = new NordpoolPriceHangfireJob(cfg, scopeFactory, mockHttpFactory);
         
         // Execute job (will attempt real fetch, may fail)
         try
@@ -118,7 +121,8 @@ public class NordpoolPriceJobTests : IDisposable
         var cfg = fs.GetTestConfig();
 
         var scopeFactory = BuildScopeFactory(cfg);
-        var job = new NordpoolPriceHangfireJob(cfg, scopeFactory);
+        var mockHttpFactory = MockServiceFactory.CreateMockHttpClientFactory();
+        var job = new NordpoolPriceHangfireJob(cfg, scopeFactory, mockHttpFactory);
         
         // Attempt to execute job
         try

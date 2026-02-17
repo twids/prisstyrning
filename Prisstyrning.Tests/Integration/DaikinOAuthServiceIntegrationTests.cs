@@ -23,7 +23,7 @@ public class DaikinOAuthServiceIntegrationTests
         var db = new PrisstyrningDbContext(options);
         db.Database.EnsureCreated();
         var tokenRepo = new DaikinTokenRepository(db);
-        return (new DaikinOAuthService(config, tokenRepo), tokenRepo, db);
+        return (new DaikinOAuthService(config, tokenRepo, MockServiceFactory.CreateMockHttpClientFactory()), tokenRepo, db);
     }
 
     [Fact]
@@ -404,6 +404,318 @@ public class DaikinOAuthServiceIntegrationTests
             Assert.Equal("user1-token", token1Result);
             Assert.Equal("user2-token", token2Result);
         }
+    }
+
+    [Fact]
+    public async Task HandleCallbackWithSubjectAsync_ExtractsSubjectFromIdToken()
+    {
+        using var fs = new TempFileSystem();
+        var config = fs.GetTestConfig(new Dictionary<string, string?>
+        {
+            ["Daikin:ClientId"] = "test-client-id",
+            ["Daikin:ClientSecret"] = "test-secret",
+            ["Daikin:RedirectUri"] = "http://localhost:5000/callback"
+        });
+
+        var (service, _, db) = CreateService(config);
+        using (db)
+        {
+        var authUrl = service.GetAuthorizationUrl();
+        var state = ExtractParameter(authUrl, "state");
+
+        // Create a mock id_token (JWT) with a 'sub' claim
+        var idToken = CreateMockIdToken(new { sub = "daikin-user-12345", iss = "https://idp.onecta.daikineurope.com" });
+
+        var mockHandler = new MockHttpMessageHandler();
+        mockHandler.AddRoute("idp.onecta.daikineurope.com/v1/oidc/token",
+            HttpStatusCode.OK,
+            JsonSerializer.Serialize(new
+            {
+                access_token = "test-access-token",
+                refresh_token = "test-refresh-token",
+                expires_in = 3600,
+                token_type = "Bearer",
+                id_token = idToken
+            }));
+
+        var mockHttpClient = new HttpClient(mockHandler);
+        var result = await service.HandleCallbackWithSubjectAsync("auth-code-123", state, userId: "test-user", mockHttpClient);
+
+        Assert.True(result.Success);
+        Assert.Equal("daikin-user-12345", result.Subject);
+        }
+    }
+
+    [Fact]
+    public async Task HandleCallbackWithSubjectAsync_ReturnsNullSubject_WhenNoIdToken()
+    {
+        using var fs = new TempFileSystem();
+        var config = fs.GetTestConfig(new Dictionary<string, string?>
+        {
+            ["Daikin:ClientId"] = "test-client-id",
+            ["Daikin:ClientSecret"] = "test-secret",
+            ["Daikin:RedirectUri"] = "http://localhost:5000/callback"
+        });
+
+        var (service, _, db) = CreateService(config);
+        using (db)
+        {
+        var authUrl = service.GetAuthorizationUrl();
+        var state = ExtractParameter(authUrl, "state");
+
+        var mockHandler = new MockHttpMessageHandler();
+        mockHandler.AddRoute("idp.onecta.daikineurope.com/v1/oidc/token",
+            HttpStatusCode.OK,
+            JsonSerializer.Serialize(new
+            {
+                access_token = "test-access-token",
+                refresh_token = "test-refresh-token",
+                expires_in = 3600,
+                token_type = "Bearer"
+                // No id_token
+            }));
+
+        var mockHttpClient = new HttpClient(mockHandler);
+        var result = await service.HandleCallbackWithSubjectAsync("auth-code-123", state, userId: "test-user", mockHttpClient);
+
+        Assert.True(result.Success);
+        Assert.Null(result.Subject);
+        }
+    }
+
+    [Fact]
+    public void DeriveUserId_ReturnsDeterministicValue()
+    {
+        var userId1 = DaikinOAuthService.DeriveUserId("daikin-user-12345");
+        var userId2 = DaikinOAuthService.DeriveUserId("daikin-user-12345");
+
+        Assert.Equal(userId1, userId2);
+        Assert.StartsWith("daikin-", userId1);
+    }
+
+    [Fact]
+    public void DeriveUserId_DifferentSubjects_ProduceDifferentIds()
+    {
+        var userId1 = DaikinOAuthService.DeriveUserId("user-A");
+        var userId2 = DaikinOAuthService.DeriveUserId("user-B");
+
+        Assert.NotEqual(userId1, userId2);
+    }
+
+    [Fact]
+    public void ExtractSubjectFromIdToken_ValidJwt_ExtractsSub()
+    {
+        var idToken = CreateMockIdToken(new { sub = "test-subject-xyz", iss = "https://idp.onecta.daikineurope.com" });
+        var json = JsonSerializer.Serialize(new { id_token = idToken });
+        using var doc = JsonDocument.Parse(json);
+        var subject = DaikinOAuthService.ExtractSubjectFromIdToken(doc.RootElement);
+
+        Assert.Equal("test-subject-xyz", subject);
+    }
+
+    [Fact]
+    public void ExtractSubjectFromIdToken_MissingIdToken_ReturnsNull()
+    {
+        var json = JsonSerializer.Serialize(new { access_token = "abc" });
+        using var doc = JsonDocument.Parse(json);
+        var subject = DaikinOAuthService.ExtractSubjectFromIdToken(doc.RootElement);
+
+        Assert.Null(subject);
+    }
+
+    [Fact]
+    public void ExtractSubjectFromIdToken_InvalidJwt_ReturnsNull()
+    {
+        var json = JsonSerializer.Serialize(new { id_token = "not-a-valid-jwt" });
+        using var doc = JsonDocument.Parse(json);
+        var subject = DaikinOAuthService.ExtractSubjectFromIdToken(doc.RootElement);
+
+        Assert.Null(subject);
+    }
+
+    [Fact]
+    public void ExtractSubjectFromIdToken_TwoPartJwt_ReturnsNull()
+    {
+        // JWT must have exactly 3 parts (header.payload.signature)
+        var header = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("{\"alg\":\"RS256\"}"));
+        var payload = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { sub = "test", iss = "https://idp.onecta.daikineurope.com" })));
+        var twoPartJwt = $"{header}.{payload}";
+        var json = JsonSerializer.Serialize(new { id_token = twoPartJwt });
+        using var doc = JsonDocument.Parse(json);
+        var subject = DaikinOAuthService.ExtractSubjectFromIdToken(doc.RootElement);
+
+        Assert.Null(subject);
+    }
+
+    [Fact]
+    public void ExtractSubjectFromIdToken_WrongIssuer_ReturnsNull()
+    {
+        var idToken = CreateMockIdToken(new { sub = "test-subject", iss = "https://evil-idp.example.com" });
+        var json = JsonSerializer.Serialize(new { id_token = idToken });
+        using var doc = JsonDocument.Parse(json);
+        var subject = DaikinOAuthService.ExtractSubjectFromIdToken(doc.RootElement);
+
+        Assert.Null(subject);
+    }
+
+    [Fact]
+    public void ExtractSubjectFromIdToken_MissingIssuer_ReturnsNull()
+    {
+        var idToken = CreateMockIdToken(new { sub = "test-subject" });
+        var json = JsonSerializer.Serialize(new { id_token = idToken });
+        using var doc = JsonDocument.Parse(json);
+        var subject = DaikinOAuthService.ExtractSubjectFromIdToken(doc.RootElement);
+
+        Assert.Null(subject);
+    }
+
+    [Fact]
+    public void ExtractSubjectFromIdToken_WrongAudience_ReturnsNull()
+    {
+        var idToken = CreateMockIdToken(new { sub = "test-subject", iss = "https://idp.onecta.daikineurope.com", aud = "wrong-client-id" });
+        var json = JsonSerializer.Serialize(new { id_token = idToken });
+        using var doc = JsonDocument.Parse(json);
+        var subject = DaikinOAuthService.ExtractSubjectFromIdToken(doc.RootElement, expectedClientId: "my-client-id");
+
+        Assert.Null(subject);
+    }
+
+    [Fact]
+    public void ExtractSubjectFromIdToken_CorrectAudience_ExtractsSub()
+    {
+        var idToken = CreateMockIdToken(new { sub = "test-subject", iss = "https://idp.onecta.daikineurope.com", aud = "my-client-id" });
+        var json = JsonSerializer.Serialize(new { id_token = idToken });
+        using var doc = JsonDocument.Parse(json);
+        var subject = DaikinOAuthService.ExtractSubjectFromIdToken(doc.RootElement, expectedClientId: "my-client-id");
+
+        Assert.Equal("test-subject", subject);
+    }
+
+    [Fact]
+    public async Task MigrateUserData_MovesTokensToNewUserId()
+    {
+        using var fs = new TempFileSystem();
+        var config = fs.GetTestConfig();
+
+        var (migService, tokenRepo, migDb) = CreateService(config);
+        using (migDb)
+        {
+            // Seed a token under old userId
+            await tokenRepo.SaveAsync("old-user-id", "abc", "refresh-abc", DateTimeOffset.UtcNow.AddHours(1));
+
+            await migService.MigrateUserDataAsync("old-user-id", "new-user-id");
+
+            // Token should exist under new userId
+            var newToken = await tokenRepo.LoadAsync("new-user-id");
+            Assert.NotNull(newToken);
+            Assert.Equal("abc", newToken!.AccessToken);
+
+            // Old userId should be deleted
+            var oldToken = await tokenRepo.LoadAsync("old-user-id");
+            Assert.Null(oldToken);
+        }
+    }
+
+    [Fact]
+    public async Task MigrateUserData_DoesNotOverwriteExistingTokens()
+    {
+        using var fs = new TempFileSystem();
+        var config = fs.GetTestConfig();
+
+        var (migService2, tokenRepo2, migDb2) = CreateService(config);
+        using (migDb2)
+        {
+            // Seed tokens under both old and new userId
+            await tokenRepo2.SaveAsync("old-user", "old-access", "old-refresh", DateTimeOffset.UtcNow.AddHours(1));
+            await tokenRepo2.SaveAsync("new-user", "existing-access", "existing-refresh", DateTimeOffset.UtcNow.AddHours(1));
+
+            await migService2.MigrateUserDataAsync("old-user", "new-user");
+
+            // Existing token should NOT be overwritten
+            var newToken = await tokenRepo2.LoadAsync("new-user");
+            Assert.NotNull(newToken);
+            Assert.Equal("existing-access", newToken!.AccessToken);
+        }
+    }
+
+    [Fact]
+    public async Task HandleCallbackWithSubjectAsync_SameDaikinUser_SameStableUserId()
+    {
+        // Simulate two different browsers (different random userIds) authenticating
+        // with the same Daikin account - they should derive the same stable userId
+        using var fs = new TempFileSystem();
+        var config = fs.GetTestConfig(new Dictionary<string, string?>
+        {
+            ["Daikin:ClientId"] = "test-client-id",
+            ["Daikin:ClientSecret"] = "test-secret",
+            ["Daikin:RedirectUri"] = "http://localhost:5000/callback"
+        });
+
+        var daikinSubject = "unique-daikin-subject-42";
+        var idToken = CreateMockIdToken(new { sub = daikinSubject, iss = "https://idp.onecta.daikineurope.com" });
+
+        var (service, _, db) = CreateService(config);
+        using (db)
+        {
+        // Browser A
+        var authUrl1 = service.GetAuthorizationUrl();
+        var state1 = ExtractParameter(authUrl1, "state");
+
+        var mockHandler1 = new MockHttpMessageHandler();
+        mockHandler1.AddRoute("idp.onecta.daikineurope.com/v1/oidc/token",
+            HttpStatusCode.OK,
+            JsonSerializer.Serialize(new
+            {
+                access_token = "token-a",
+                refresh_token = "refresh-a",
+                expires_in = 3600,
+                id_token = idToken
+            }));
+
+        var mockHttpClient1 = new HttpClient(mockHandler1);
+        var result1 = await service.HandleCallbackWithSubjectAsync("code-a", state1, "browser-a-guid", mockHttpClient1);
+
+        // Browser B
+        var authUrl2 = service.GetAuthorizationUrl();
+        var state2 = ExtractParameter(authUrl2, "state");
+
+        var mockHandler2 = new MockHttpMessageHandler();
+        mockHandler2.AddRoute("idp.onecta.daikineurope.com/v1/oidc/token",
+            HttpStatusCode.OK,
+            JsonSerializer.Serialize(new
+            {
+                access_token = "token-b",
+                refresh_token = "refresh-b",
+                expires_in = 3600,
+                id_token = idToken
+            }));
+
+        var mockHttpClient2 = new HttpClient(mockHandler2);
+        var result2 = await service.HandleCallbackWithSubjectAsync("code-b", state2, "browser-b-guid", mockHttpClient2);
+
+        // Both should succeed and return the same subject
+        Assert.True(result1.Success);
+        Assert.True(result2.Success);
+        Assert.Equal(daikinSubject, result1.Subject);
+        Assert.Equal(daikinSubject, result2.Subject);
+
+        // DeriveUserId should produce the same result for both
+        var stableId1 = DaikinOAuthService.DeriveUserId(result1.Subject!);
+        var stableId2 = DaikinOAuthService.DeriveUserId(result2.Subject!);
+        Assert.Equal(stableId1, stableId2);
+        }
+    }
+
+    // Helper: Create a mock JWT id_token with the given payload claims (no real signature)
+    private static string CreateMockIdToken(object payloadClaims)
+    {
+        var header = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("{\"alg\":\"RS256\",\"typ\":\"JWT\"}"));
+        var payload = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payloadClaims)));
+        var signature = "mock-signature";
+        // Convert to base64url
+        header = header.Replace("+", "-").Replace("/", "_").Replace("=", "");
+        payload = payload.Replace("+", "-").Replace("/", "_").Replace("=", "");
+        return $"{header}.{payload}.{signature}";
     }
 
     // Helper method to extract query parameter from URL

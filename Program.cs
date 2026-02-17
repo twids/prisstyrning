@@ -48,6 +48,36 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 builder.Services.AddDbContext<PrisstyrningDbContext>(options =>
     options.UseNpgsql(connectionString));
 
+// Configure HttpClientFactory with named clients
+builder.Services.AddHttpClient("Nordpool", client =>
+{
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0");
+    client.DefaultRequestHeaders.Accept.ParseAdd("application/json, */*;q=0.8");
+    client.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en-US,en;q=0.8");
+})
+.ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AutomaticDecompression = System.Net.DecompressionMethods.All
+});
+
+builder.Services.AddHttpClient("Daikin", client =>
+{
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0");
+});
+
+builder.Services.AddHttpClient("HomeAssistant", client =>
+{
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0");
+});
+
+builder.Services.AddHttpClient("Entsoe", client =>
+{
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0");
+});
+
+// Register application services
+builder.Services.AddScoped<BatchRunner>();
+
 // Configure Hangfire with in-memory storage
 builder.Services.AddHangfire(config => config
     .UseInMemoryStorage());
@@ -95,7 +125,7 @@ using (var scope = app.Services.CreateScope())
 var hangfirePassword = builder.Configuration["Hangfire:DashboardPassword"];
 app.UseHangfireDashboard("/hangfire", new DashboardOptions
 {
-    Authorization = new[] { new HangfirePasswordAuthorizationFilter(hangfirePassword) }
+    Authorization = new[] { new HangfirePasswordAuthorizationFilter(hangfirePassword, builder.Configuration) }
 });
 
 // Schedule recurring jobs
@@ -251,7 +281,7 @@ pricesGroup.MapGet("/latest", () =>
 });
 
 // Diagnostic endpoint for Nordpool fetch debugging
-app.MapGet("/api/prices/_debug/fetch", async (HttpContext ctx, IConfiguration cfg, UserSettingsRepository settingsRepo) =>
+app.MapGet("/api/prices/_debug/fetch", async (IHttpClientFactory httpClientFactory, HttpContext ctx, IConfiguration cfg, UserSettingsRepository settingsRepo) =>
 {
     var userId = GetUserId(ctx);
     var zone = await settingsRepo.GetUserZoneAsync(userId) ?? "SE3";
@@ -259,17 +289,17 @@ app.MapGet("/api/prices/_debug/fetch", async (HttpContext ctx, IConfiguration cf
     DateTime date = DateTime.TryParse(dateStr, out var d) ? d : DateTime.Today;
     var currency = cfg["Price:Nordpool:Currency"] ?? "SEK";
     var pageId = cfg["Price:Nordpool:PageId"];
-    var client = new NordpoolClient(currency, pageId);
+    var client = new NordpoolClient(httpClientFactory.CreateClient("Nordpool"), currency, pageId);
     var (prices, attempts) = await client.GetDailyPricesDetailedAsync(date, zone);
     return Results.Json(new { date = date.ToString("yyyy-MM-dd"), zone, priceCount = prices.Count, prices, attempts, currency, pageId, userId });
 });
-app.MapGet("/api/prices/_debug/raw", (HttpContext ctx, IConfiguration cfg) =>
+app.MapGet("/api/prices/_debug/raw", (IHttpClientFactory httpClientFactory, HttpContext ctx, IConfiguration cfg) =>
 {
     var dateStr = ctx.Request.Query["date"].FirstOrDefault();
     DateTime date = DateTime.TryParse(dateStr, out var d) ? d : DateTime.Today;
     var currency = cfg["Price:Nordpool:Currency"] ?? "SEK";
     var pageId = cfg["Price:Nordpool:PageId"];
-    var client = new NordpoolClient(currency, pageId);
+    var client = new NordpoolClient(httpClientFactory.CreateClient("Nordpool"), currency, pageId);
     return client.GetRawCandidateResponsesAsync(date);
 });
 pricesGroup.MapGet("/memory", () =>
@@ -355,7 +385,32 @@ daikinAuthGroup.MapGet("/callback", async (DaikinOAuthService daikinOAuth, IConf
     var userId = GetUserId(c);
     if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state))
         return Results.BadRequest(new { error = "Missing code/state" });
-    var ok = await daikinOAuth.HandleCallbackAsync(code, state, userId);
+    var result = await daikinOAuth.HandleCallbackWithSubjectAsync(code, state, userId);
+    var ok = result.Success;
+    // If we got a stable OIDC subject, remap the user to a deterministic userId
+    if (ok && !string.IsNullOrEmpty(result.Subject))
+    {
+        var stableUserId = DaikinOAuthService.DeriveUserId(result.Subject);
+        if (userId != stableUserId)
+        {
+            // Migrate data from the old browser-random userId to the deterministic one.
+            if (!string.IsNullOrEmpty(userId))
+                await daikinOAuth.MigrateUserDataAsync(userId, stableUserId);
+            // Update the cookie to the deterministic userId
+            c.Response.Cookies.Append(
+                UserCookieName,
+                stableUserId,
+                new CookieOptions
+                {
+                    HttpOnly = true,
+                    Secure = c.Request.IsHttps,
+                    SameSite = SameSiteMode.Lax,
+                    IsEssential = true,
+                    Expires = DateTimeOffset.UtcNow.AddYears(1)
+                });
+            Console.WriteLine($"[DaikinOAuth][Callback] Remapped userId={userId} -> {stableUserId}");
+        }
+    }
     // Secure redirect handling to avoid open redirect vulnerabilities.
     var configured = cfg["Daikin:PostAuthRedirect"];
     string finalBase;
@@ -446,31 +501,232 @@ daikinAuthGroup.MapGet("/introspect", async (DaikinOAuthService daikinOAuth, Htt
 
 // Schedule preview/apply
 var scheduleGroup = app.MapGroup("/api/schedule").WithTags("Schedule");
-scheduleGroup.MapGet("/preview", async (HttpContext c, UserSettingsRepository settingsRepo, IServiceScopeFactory scopeFactory) => {
+scheduleGroup.MapGet("/preview", async (HttpContext c, UserSettingsRepository settingsRepo, BatchRunner batchRunner, IServiceScopeFactory scopeFactory) => {
     var cfg = (IConfiguration)builder.Configuration;
     var userId = GetUserId(c);
     
     // Use BatchRunner to generate schedule and handle history persistence
-    var (generated, schedulePayload, message) = await BatchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: true, scopeFactory);
+    var (generated, schedulePayload, message) = await batchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: true, scopeFactory);
     var zone = await settingsRepo.GetUserZoneAsync(userId);
     
     return Results.Json(new { schedulePayload, generated, message, zone });
 });
-scheduleGroup.MapPost("/apply", async (HttpContext ctx, IServiceScopeFactory scopeFactory) => await HandleApplyScheduleAsync(ctx, builder.Configuration, scopeFactory));
+scheduleGroup.MapPost("/apply", async (BatchRunner batchRunner, HttpContext ctx, IServiceScopeFactory scopeFactory) => await HandleApplyScheduleAsync(batchRunner, ctx, builder.Configuration, scopeFactory));
 
-// Move this method to top-level scope (outside of any endpoint/lambda)
+// Admin group
+var adminGroup = app.MapGroup("/api/admin").WithTags("Admin");
+
+bool IsAdminRequest(HttpContext ctx, IConfiguration cfg)
+{
+    var userId = GetUserId(ctx);
+    var password = ctx.Request.Headers["X-Admin-Password"].FirstOrDefault();
+    var (isAdmin, _) = AdminService.CheckAdminAccess(cfg, userId, password);
+    return isAdmin;
+}
+
+static bool IsValidUserId(string? userId)
+{
+    if (string.IsNullOrWhiteSpace(userId) || userId.Length > 100)
+        return false;
+    return userId.All(c => char.IsLetterOrDigit(c) || c == '-' || c == '_');
+}
+
+adminGroup.MapGet("/status", (IConfiguration cfg, HttpContext c) =>
+{
+    var userId = GetUserId(c);
+    var isAdmin = IsAdminRequest(c, cfg);
+    return Results.Json(new { isAdmin, userId });
+});
+
+adminGroup.MapPost("/login", async (IConfiguration cfg, HttpContext c) =>
+{
+    var userId = GetUserId(c);
+    var configuredPassword = cfg["Admin:Password"];
+    if (string.IsNullOrEmpty(configuredPassword))
+        return Results.Json(new { error = "No admin password configured" }, statusCode: 403);
+
+    var password = c.Request.Headers["X-Admin-Password"].FirstOrDefault();
+    if (string.IsNullOrEmpty(password) || password != configuredPassword)
+        return Results.Json(new { error = "Invalid admin password" }, statusCode: 401);
+
+    if (!string.IsNullOrEmpty(userId))
+        await AdminService.GrantAdmin(cfg, userId);
+
+    return Results.Json(new { granted = true, userId });
+});
+
+adminGroup.MapGet("/users", async (IConfiguration cfg, HttpContext c, UserSettingsRepository settingsRepo, DaikinTokenRepository tokenRepo, ScheduleHistoryRepository historyRepo) =>
+{
+    if (!IsAdminRequest(c, cfg))
+        return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
+
+    var currentUserId = GetUserId(c);
+
+    // Get all known user IDs from DB (tokens + settings + history)
+    var tokenUserIds = await tokenRepo.GetAllUserIdsAsync();
+    var userIds = new HashSet<string>(tokenUserIds);
+
+    var adminUserIds = AdminService.GetAdminUserIds(cfg);
+    var hangfireUserIds = AdminService.GetHangfireUserIds(cfg);
+    var users = new List<object>();
+
+    foreach (var uid in userIds)
+    {
+        var settings = settingsRepo.LoadScheduleSettings(uid);
+        var zone = settingsRepo.GetUserZone(uid);
+        var token = await tokenRepo.LoadAsync(uid);
+        var daikinAuthorized = token != null;
+        string? daikinExpiresAtUtc = token?.ExpiresAtUtc.ToString("o");
+
+        var historyCount = await historyRepo.CountAsync(uid);
+        var hasScheduleHistory = historyCount > 0;
+        int? scheduleCount = hasScheduleHistory ? historyCount : null;
+        string? lastScheduleDate = null;
+        if (hasScheduleHistory)
+        {
+            var entries = await historyRepo.LoadAsync(uid);
+            lastScheduleDate = entries.FirstOrDefault()?.Timestamp.ToString("o");
+        }
+
+        users.Add(new
+        {
+            userId = uid,
+            settings = new { settings.ComfortHours, settings.TurnOffPercentile, settings.MaxComfortGapHours },
+            zone,
+            daikinAuthorized,
+            daikinExpiresAtUtc,
+            hasScheduleHistory,
+            scheduleCount,
+            lastScheduleDate,
+            isAdmin = adminUserIds.Contains(uid),
+            hasHangfireAccess = hangfireUserIds.Contains(uid),
+            isCurrentUser = uid == currentUserId
+        });
+    }
+
+    return Results.Json(new { users });
+});
+
+adminGroup.MapPost("/users/{userId}/grant", async (IConfiguration cfg, HttpContext c, string userId) =>
+{
+    if (!IsAdminRequest(c, cfg))
+        return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
+
+    if (!IsValidUserId(userId))
+        return Results.Json(new { error = "Invalid user ID" }, statusCode: 400);
+
+    await AdminService.GrantAdmin(cfg, userId);
+    return Results.Json(new { granted = true, userId });
+});
+
+adminGroup.MapDelete("/users/{userId}/grant", async (IConfiguration cfg, HttpContext c, string userId) =>
+{
+    if (!IsAdminRequest(c, cfg))
+        return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
+
+    if (!IsValidUserId(userId))
+        return Results.Json(new { error = "Invalid user ID" }, statusCode: 400);
+
+    var currentUserId = GetUserId(c);
+    if (userId == currentUserId)
+        return Results.Json(new { error = "Cannot revoke your own admin access" }, statusCode: 400);
+
+    await AdminService.RevokeAdmin(cfg, userId);
+    return Results.Json(new { revoked = true, userId });
+});
+
+adminGroup.MapPost("/users/{userId}/hangfire", async (IConfiguration cfg, HttpContext c, string userId) =>
+{
+    if (!IsAdminRequest(c, cfg))
+        return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
+
+    if (!IsValidUserId(userId))
+        return Results.Json(new { error = "Invalid user ID" }, statusCode: 400);
+
+    await AdminService.GrantHangfireAccess(cfg, userId);
+    return Results.Json(new { granted = true, userId });
+});
+
+adminGroup.MapDelete("/users/{userId}/hangfire", async (IConfiguration cfg, HttpContext c, string userId) =>
+{
+    if (!IsAdminRequest(c, cfg))
+        return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
+
+    if (!IsValidUserId(userId))
+        return Results.Json(new { error = "Invalid user ID" }, statusCode: 400);
+
+    await AdminService.RevokeHangfireAccess(cfg, userId);
+    return Results.Json(new { revoked = true, userId });
+});
+
+adminGroup.MapDelete("/users/{userId}", async (IConfiguration cfg, HttpContext c, string userId, DaikinTokenRepository tokenRepo, ScheduleHistoryRepository historyRepo) =>
+{
+    if (!IsAdminRequest(c, cfg))
+        return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
+
+    if (!IsValidUserId(userId))
+        return Results.Json(new { error = "Invalid user ID" }, statusCode: 400);
+
+    var currentUserId = GetUserId(c);
+    if (userId == currentUserId)
+        return Results.Json(new { error = "Cannot delete your own user" }, statusCode: 400);
+
+    var deleted = false;
+    var warnings = new List<string>();
+
+    // Delete tokens from database
+    try
+    {
+        await tokenRepo.DeleteAsync(userId);
+        deleted = true;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[Admin] Failed to delete tokens for user {userId}: {ex.Message}");
+        warnings.Add("Failed to delete tokens");
+    }
+
+    // Delete schedule history from database
+    try
+    {
+        var historyDeleted = await historyRepo.DeleteAllOlderThanAsync(DateTimeOffset.MinValue);
+        deleted = true;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[Admin] Failed to delete schedule history for user {userId}: {ex.Message}");
+        warnings.Add("Failed to delete schedule history");
+    }
+
+    // Remove from admin.json if present
+    try
+    {
+        await AdminService.RevokeAdmin(cfg, userId);
+        await AdminService.RevokeHangfireAccess(cfg, userId);
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[Admin] Failed to update admin.json for user {userId}: {ex.Message}");
+        warnings.Add("Failed to update admin configuration");
+    }
+
+    if (!deleted)
+        return Results.Json(new { error = "User not found" }, statusCode: 404);
+
+    return Results.Json(new { deleted = true, userId, warnings });
+});
 
 // Daikin data group
 var daikinGroup = app.MapGroup("/api/daikin").WithTags("Daikin");
 // Simple proxy for sites (needed by frontend Sites button) – user-scoped
 // Extracted method for /apply endpoint logic
-async Task<IResult> HandleApplyScheduleAsync(HttpContext ctx, IConfiguration configuration, IServiceScopeFactory scopeFactory)
+async Task<IResult> HandleApplyScheduleAsync(BatchRunner batchRunner, HttpContext ctx, IConfiguration configuration, IServiceScopeFactory scopeFactory)
 {
     var userId = GetUserId(ctx);
-    var result = await BatchRunner.RunBatchAsync(configuration, userId, applySchedule: false, persist: true, scopeFactory);
+    var result = await batchRunner.RunBatchAsync(configuration, userId, applySchedule: false, persist: true, scopeFactory);
     return Results.Json(new { generated = result.generated, schedulePayload = result.schedulePayload, message = result.message });
 }
-daikinGroup.MapGet("/sites", async (DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext c) =>
+daikinGroup.MapGet("/sites", async (IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext c) =>
 {
     var userId = GetUserId(c);
     var (token, _) = await daikinOAuth.TryGetValidAccessTokenAsync(userId);
@@ -482,7 +738,7 @@ daikinGroup.MapGet("/sites", async (DaikinOAuthService daikinOAuth, IConfigurati
     bool logBody = (cfg["Daikin:Http:LogBody"] ?? cfg["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
     int.TryParse(cfg["Daikin:Http:BodySnippetLength"], out var bodyLen);
     var baseApi = cfg["Daikin:ApiBaseUrl"];
-    var client = new DaikinApiClient(token, log, logBody, bodyLen == 0 ? null : bodyLen, baseApi);
+    var client = new DaikinApiClient(httpClientFactory.CreateClient("Daikin"), token, log, logBody, bodyLen == 0 ? null : bodyLen, baseApi);
         var sitesJson = await client.GetSitesAsync();
         return Results.Content(sitesJson, "application/json");
     }
@@ -492,7 +748,7 @@ daikinGroup.MapGet("/sites", async (DaikinOAuthService daikinOAuth, IConfigurati
     }
 });
 // Simplified current schedule via gateway-devices
-daikinGroup.MapGet("/gateway/schedule", async (DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext ctx) =>
+daikinGroup.MapGet("/gateway/schedule", async (IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext ctx) =>
 {
     var deviceId = ctx.Request.Query["deviceId"].FirstOrDefault();
     var embeddedIdQuery = ctx.Request.Query["embeddedId"].FirstOrDefault();
@@ -504,7 +760,7 @@ daikinGroup.MapGet("/gateway/schedule", async (DaikinOAuthService daikinOAuth, I
     try
     {
     var baseApi = cfg["Daikin:ApiBaseUrl"];
-    var client = new DaikinApiClient(token, log:true, baseApiOverride:baseApi);
+    var client = new DaikinApiClient(httpClientFactory.CreateClient("Daikin"), token, log:true, baseApiOverride:baseApi);
     var json = await client.GetDevicesCachedAsync("_ignored", TimeSpan.FromSeconds(10));
         if (string.IsNullOrWhiteSpace(json)) return Results.Json(new { status="error", error="Empty gateway-devices" });
         using var doc = JsonDocument.Parse(json);
@@ -638,7 +894,7 @@ daikinGroup.MapGet("/gateway/schedule", async (DaikinOAuthService daikinOAuth, I
         return Results.Json(new { status="error", error=ex.Message });
     }
 });
-daikinGroup.MapGet("/devices", async (DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext c, string? siteId) =>
+daikinGroup.MapGet("/devices", async (IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext c, string? siteId) =>
 {
     var userId = GetUserId(c);
     var (token, _) = await daikinOAuth.TryGetValidAccessTokenAsync(userId);
@@ -650,7 +906,7 @@ daikinGroup.MapGet("/devices", async (DaikinOAuthService daikinOAuth, IConfigura
     bool logBody = (cfg["Daikin:Http:LogBody"] ?? cfg["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
     int.TryParse(cfg["Daikin:Http:BodySnippetLength"], out var bodyLen);
     var baseApi = cfg["Daikin:ApiBaseUrl"];
-    var client = new DaikinApiClient(token, log, logBody, bodyLen == 0 ? null : bodyLen, baseApi);
+    var client = new DaikinApiClient(httpClientFactory.CreateClient("Daikin"), token, log, logBody, bodyLen == 0 ? null : bodyLen, baseApi);
         if (string.IsNullOrWhiteSpace(siteId))
         {
             var sitesJson = await client.GetSitesAsync();
@@ -664,7 +920,7 @@ daikinGroup.MapGet("/devices", async (DaikinOAuthService daikinOAuth, IConfigura
     catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
 // Simplified gateway devices proxy: return raw array from Daikin
-daikinGroup.MapGet("/gateway", async (DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext c) =>
+daikinGroup.MapGet("/gateway", async (IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext c) =>
 {
     var userId = GetUserId(c);
     var (token, _) = await daikinOAuth.TryGetValidAccessTokenAsync(userId);
@@ -676,7 +932,7 @@ daikinGroup.MapGet("/gateway", async (DaikinOAuthService daikinOAuth, IConfigura
     bool logBody = (cfg["Daikin:Http:LogBody"] ?? cfg["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
     int.TryParse(cfg["Daikin:Http:BodySnippetLength"], out var bodyLen);
     var baseApi = cfg["Daikin:ApiBaseUrl"];
-    var client = new DaikinApiClient(token, log, logBody, bodyLen == 0 ? null : bodyLen, baseApi);
+    var client = new DaikinApiClient(httpClientFactory.CreateClient("Daikin"), token, log, logBody, bodyLen == 0 ? null : bodyLen, baseApi);
         var devicesJson = await client.GetDevicesAsync("_ignored");
         return Results.Content(devicesJson, "application/json");
     }
@@ -688,7 +944,7 @@ daikinGroup.MapGet("/gateway", async (DaikinOAuthService daikinOAuth, IConfigura
 
 
 // PUT (upload) a schedule payload to a gateway device management point + optionally activate a scheduleId (mode auto-detect if omitted or 'auto')
-daikinGroup.MapPost("/gateway/schedule/put", async (DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext ctx, ScheduleHistoryRepository historyRepo) =>
+daikinGroup.MapPost("/gateway/schedule/put", async (IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext ctx, ScheduleHistoryRepository historyRepo) =>
 {
     var userId = GetUserId(ctx);
     var (token, _) = await daikinOAuth.TryGetValidAccessTokenAsync(userId);
@@ -714,7 +970,7 @@ daikinGroup.MapPost("/gateway/schedule/put", async (DaikinOAuthService daikinOAu
     bool logBody = (cfg["Daikin:Http:LogBody"] ?? cfg["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
     int.TryParse(cfg["Daikin:Http:BodySnippetLength"], out var bodyLen);
     var baseApi = cfg["Daikin:ApiBaseUrl"];
-    var client = new DaikinApiClient(token, log, logBody, bodyLen == 0 ? null : bodyLen, baseApi);
+    var client = new DaikinApiClient(httpClientFactory.CreateClient("Daikin"), token, log, logBody, bodyLen == 0 ? null : bodyLen, baseApi);
 
         string modeUsed = requestedMode;
         if (modeUsed == "auto" || string.IsNullOrWhiteSpace(modeUsed))
@@ -826,17 +1082,33 @@ await app.RunAsync();
 public class HangfirePasswordAuthorizationFilter : IDashboardAuthorizationFilter
 {
     private readonly string? _password;
+    private readonly IConfiguration _cfg;
 
-    public HangfirePasswordAuthorizationFilter(string? password)
+    public HangfirePasswordAuthorizationFilter(string? password, IConfiguration cfg)
     {
         _password = password;
+        _cfg = cfg;
     }
 
     public bool Authorize(DashboardContext context)
     {
         var httpContext = context.GetHttpContext();
 
-        // If no password is configured, deny access
+        // Check 1: Cookie-based access via admin.json hangfireUserIds
+        // Note: must match UserCookieName constant in top-level statements
+        var userId = httpContext.Request.Cookies["ps_user"];
+        // Validate cookie value using shared validation logic
+        if (AdminService.IsValidUserId(userId))
+        {
+            if (AdminService.HasHangfireAccess(_cfg, userId))
+                return true;
+
+            // Check 2: Also allow admins
+            if (AdminService.IsAdmin(_cfg, userId))
+                return true;
+        }
+
+        // Check 3: Original Basic Auth password check
         if (string.IsNullOrWhiteSpace(_password))
         {
             httpContext.Response.StatusCode = 401;
@@ -844,7 +1116,6 @@ public class HangfirePasswordAuthorizationFilter : IDashboardAuthorizationFilter
             return false;
         }
 
-        // Check for Authorization header with Basic authentication
         var authHeader = httpContext.Request.Headers["Authorization"].ToString();
         if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
         {
@@ -855,14 +1126,12 @@ public class HangfirePasswordAuthorizationFilter : IDashboardAuthorizationFilter
 
         try
         {
-            // Decode the Base64-encoded credentials
             var encodedCredentials = authHeader.Substring(6).Trim();
             var decodedCredentials = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encodedCredentials));
             var parts = decodedCredentials.Split(':', 2);
 
             if (parts.Length == 2)
             {
-                // Username can be anything, only password is checked
                 var providedPassword = parts[1];
                 if (providedPassword == _password)
                 {

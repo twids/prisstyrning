@@ -52,7 +52,8 @@ public class BatchRunnerIntegrationTests : IDisposable
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
         PriceMemory.Set(today, tomorrow);
         
-        var (generated, payload, message) = await BatchRunner.RunBatchAsync(
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
+        var (generated, payload, message) = await batchRunner.RunBatchAsync(
             cfg, 
             userId: "test-user", 
             applySchedule: false, 
@@ -76,7 +77,8 @@ public class BatchRunnerIntegrationTests : IDisposable
         PriceMemory.Set(today, tomorrow);
         
         // No token provided, applySchedule=true should be ignored
-        var (generated, payload, message) = await BatchRunner.RunBatchAsync(
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
+        var (generated, payload, message) = await batchRunner.RunBatchAsync(
             cfg, 
             userId: "test-user", 
             applySchedule: true, // This should be skipped
@@ -93,6 +95,10 @@ public class BatchRunnerIntegrationTests : IDisposable
         using var fs = new TempFileSystem();
         
         var mockHandler = new MockHttpMessageHandler();
+        // Nordpool price mock (required for schedule generation)
+        var priceArray = TestDataFactory.CreateElprisetResponse();
+        mockHandler.AddRoute("elprisetjustnu.se", HttpStatusCode.OK, priceArray);
+        // Daikin API mocks
         mockHandler.AddRoute("api.onecta.daikineurope.com", HttpStatusCode.OK, 
             @"[{""id"":""site-123""}]");
         mockHandler.AddRoute("devices", HttpStatusCode.OK, 
@@ -111,7 +117,9 @@ public class BatchRunnerIntegrationTests : IDisposable
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
         PriceMemory.Set(today, tomorrow);
         
-        var (generated, payload, message) = await BatchRunner.RunBatchAsync(
+        var mockHttpFactory = MockServiceFactory.CreateMockHttpClientFactory(mockHandler);
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner(mockHttpFactory);
+        var (generated, payload, message) = await batchRunner.RunBatchAsync(
             cfg, 
             userId: "test-user", 
             applySchedule: true, 
@@ -136,7 +144,8 @@ public class BatchRunnerIntegrationTests : IDisposable
 
         var scopeFactory = BuildScopeFactory(cfg);
         
-        var (generated, payload, message) = await BatchRunner.RunBatchAsync(
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
+        var (generated, payload, message) = await batchRunner.RunBatchAsync(
             cfg, 
             userId: userId, 
             applySchedule: false, 
@@ -147,8 +156,8 @@ public class BatchRunnerIntegrationTests : IDisposable
         Assert.True(generated);
         Assert.NotNull(payload);
         
-        // Give async save a moment to complete
-        await Task.Delay(500);
+        // Fire-and-forget history save may still be in progress - give it a brief moment
+        await Task.Delay(100);
         
         // Verify history was saved to database
         using var scope = scopeFactory.CreateScope();
@@ -168,7 +177,8 @@ public class BatchRunnerIntegrationTests : IDisposable
         
         // No price data available - BatchRunner will try to fetch from Nordpool
         // In test environment, this may or may not succeed
-        var (generated, payload, message) = await BatchRunner.RunBatchAsync(
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
+        var (generated, payload, message) = await batchRunner.RunBatchAsync(
             cfg, 
             userId: "test-user", 
             applySchedule: false, 
@@ -191,7 +201,8 @@ public class BatchRunnerIntegrationTests : IDisposable
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
         PriceMemory.Set(today, tomorrow);
         
-        var result = await BatchRunner.GenerateSchedulePreview(cfg);
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
+        var result = await batchRunner.GenerateSchedulePreview(cfg);
         
         Assert.NotNull(result);
         
@@ -222,7 +233,8 @@ public class BatchRunnerIntegrationTests : IDisposable
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
         PriceMemory.Set(today, tomorrow);
         
-        var (generated, payload, message) = await BatchRunner.RunBatchAsync(
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
+        var (generated, payload, message) = await batchRunner.RunBatchAsync(
             cfg, 
             userId: userId, 
             applySchedule: false, 
@@ -250,10 +262,11 @@ public class BatchRunnerIntegrationTests : IDisposable
         var tomorrow = TestDataFactory.CreatePriceData(date.AddDays(1));
         PriceMemory.Set(today, tomorrow);
         
-        var (gen1, payload1, msg1) = await BatchRunner.RunBatchAsync(
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
+        var (gen1, payload1, _) = await batchRunner.RunBatchAsync(
             cfg, userId: user1, applySchedule: false, persist: false);
         
-        var (gen2, payload2, msg2) = await BatchRunner.RunBatchAsync(
+        var (gen2, payload2, _) = await batchRunner.RunBatchAsync(
             cfg, userId: user2, applySchedule: false, persist: false);
         
         Assert.True(gen1);
@@ -277,7 +290,8 @@ public class BatchRunnerIntegrationTests : IDisposable
         var scopeFactory = BuildScopeFactory(cfg);
         
         // Run with persist=true triggers fire-and-forget async save
-        var (generated, payload, message) = await BatchRunner.RunBatchAsync(
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
+        var (generated, payload, message) = await batchRunner.RunBatchAsync(
             cfg, 
             userId: userId, 
             applySchedule: false, 
@@ -287,8 +301,8 @@ public class BatchRunnerIntegrationTests : IDisposable
         
         Assert.True(generated);
         
-        // Wait for async save to complete
-        await Task.Delay(1000);
+        // Fire-and-forget history save may still be in progress - give it a brief moment
+        await Task.Delay(100);
         
         // Verify history was saved to database
         using var scope = scopeFactory.CreateScope();
@@ -306,7 +320,8 @@ public class BatchRunnerIntegrationTests : IDisposable
         // Set empty arrays (ScheduleAlgorithm should handle this)
         PriceMemory.Set(new JsonArray(), new JsonArray());
         
-        var (generated, payload, message) = await BatchRunner.RunBatchAsync(
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
+        var (generated, payload, message) = await batchRunner.RunBatchAsync(
             cfg,
             userId: "test-user", 
             applySchedule: false, 

@@ -9,15 +9,17 @@ namespace Prisstyrning.Jobs;
 /// <summary>
 /// Hangfire job that fetches Nordpool electricity prices for all configured zones
 /// </summary>
-public class NordpoolPriceHangfireJob
+internal class NordpoolPriceHangfireJob
 {
     private readonly IConfiguration _cfg;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IHttpClientFactory _httpClientFactory;
 
-    public NordpoolPriceHangfireJob(IConfiguration cfg, IServiceScopeFactory scopeFactory)
+    public NordpoolPriceHangfireJob(IConfiguration cfg, IServiceScopeFactory scopeFactory, IHttpClientFactory httpClientFactory)
     {
         _cfg = cfg;
         _scopeFactory = scopeFactory;
+        _httpClientFactory = httpClientFactory;
     }
 
     [DisableConcurrentExecution(60)] // Prevent overlapping executions with 60s timeout
@@ -43,7 +45,7 @@ public class NordpoolPriceHangfireJob
         catch { }
 
         Console.WriteLine($"[NordpoolPriceHangfireJob] fetching zones={string.Join(',', zones)} currency={currency}");
-        var client = new NordpoolClient(currency, page);
+        var client = new NordpoolClient(_httpClientFactory.CreateClient("Nordpool"), currency, page);
         
         foreach (var zone in zones)
         {

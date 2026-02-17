@@ -9,19 +9,17 @@ internal class NordpoolClient
     private readonly string? _pageId; // configurable page id (default 10)
     private readonly bool _allowFallback;
     private readonly string? _apiKey;
-    public NordpoolClient(string? currency = null, string? pageId = null, bool allowFallback = true, string? apiKey = null, HttpClient? httpClient = null)
+    public NordpoolClient(HttpClient httpClient, string? currency = null, string? pageId = null, bool allowFallback = true, string? apiKey = null)
     {
+        _http = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _currency = string.IsNullOrWhiteSpace(currency) ? "SEK" : currency!;
         _pageId = string.IsNullOrWhiteSpace(pageId) ? null : pageId.Trim();
         _allowFallback = allowFallback;
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey.Trim();
-        _http = httpClient ?? new HttpClient(new HttpClientHandler{ AutomaticDecompression = System.Net.DecompressionMethods.All });
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0 (+https://example.local)");
-        _http.DefaultRequestHeaders.Accept.ParseAdd("application/json, */*;q=0.8");
-        _http.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en-US,en;q=0.8");
-    try { _http.DefaultRequestHeaders.Referrer = new Uri("https://www.nordpoolgroup.com/en/market-data/"); } catch { }
-    if (!_http.DefaultRequestHeaders.Contains("Origin")) _http.DefaultRequestHeaders.Add("Origin", "https://www.nordpoolgroup.com");
-        if (_apiKey != null && !_http.DefaultRequestHeaders.Contains("x-api-key")) _http.DefaultRequestHeaders.Add("x-api-key", _apiKey);
+        // Note: Most headers configured via IHttpClientFactory in Program.cs
+        // Only add instance-specific x-api-key header if provided
+        if (_apiKey != null && !_http.DefaultRequestHeaders.Contains("x-api-key"))
+            _http.DefaultRequestHeaders.Add("x-api-key", _apiKey);
     }
 
     private string BuildElprisetUrl(DateTime date, string zone)

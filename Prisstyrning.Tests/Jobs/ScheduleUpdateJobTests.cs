@@ -30,10 +30,12 @@ public class ScheduleUpdateJobTests : IDisposable
         services.AddDbContext<PrisstyrningDbContext>(o =>
             o.UseInMemoryDatabase(dbName));
         services.AddSingleton(cfg);
+        services.AddSingleton<IHttpClientFactory>(MockServiceFactory.CreateMockHttpClientFactory());
         services.AddScoped<UserSettingsRepository>();
         services.AddScoped<ScheduleHistoryRepository>();
         services.AddScoped<DaikinTokenRepository>();
         services.AddScoped<DaikinOAuthService>();
+        services.AddScoped<BatchRunner>();
         _serviceProvider = services.BuildServiceProvider();
 
         if (seed != null)
@@ -75,8 +77,8 @@ public class ScheduleUpdateJobTests : IDisposable
         var job = new ScheduleUpdateHangfireJob(cfg, scopeFactory);
         await job.ExecuteAsync();
         
-        // Give async operations time to complete
-        await Task.Delay(1000);
+        // Fire-and-forget history save may still be in progress - give it a brief moment
+        await Task.Delay(100);
         
         // Verify: History was saved to DB (persist=true in RunBatchAsync)
         using (var scope = scopeFactory.CreateScope())
@@ -130,7 +132,8 @@ public class ScheduleUpdateJobTests : IDisposable
         var job = new ScheduleUpdateHangfireJob(cfg, scopeFactory);
         await job.ExecuteAsync();
         
-        await Task.Delay(1500);
+        // Fire-and-forget history save may still be in progress - give it a brief moment
+        await Task.Delay(100);
         
         // Both users should have history in DB
         using (var scope = scopeFactory.CreateScope())
@@ -170,8 +173,6 @@ public class ScheduleUpdateJobTests : IDisposable
         // Should not throw despite corrupt user data
         await job.ExecuteAsync();
         
-        await Task.Delay(1000);
-        
         // Good user should still be processed
         Assert.True(true, "Job completed without crashing");
     }
@@ -199,7 +200,8 @@ public class ScheduleUpdateJobTests : IDisposable
         var job = new ScheduleUpdateHangfireJob(cfg, scopeFactory);
         await job.ExecuteAsync();
         
-        await Task.Delay(500);
+        // Fire-and-forget history save may still be in progress - give it a brief moment  
+        await Task.Delay(100);
         
         // User without auto-apply should NOT have history saved
         using (var scope = scopeFactory.CreateScope())
