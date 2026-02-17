@@ -32,6 +32,8 @@ public class ScheduleUpdateJobTests : IDisposable
         services.AddSingleton(cfg);
         services.AddScoped<UserSettingsRepository>();
         services.AddScoped<ScheduleHistoryRepository>();
+        services.AddScoped<DaikinTokenRepository>();
+        services.AddScoped<DaikinOAuthService>();
         _serviceProvider = services.BuildServiceProvider();
 
         if (seed != null)

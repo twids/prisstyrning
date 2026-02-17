@@ -1,5 +1,9 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Prisstyrning.Data;
+using Prisstyrning.Data.Repositories;
 using Prisstyrning.Tests.Fixtures;
 using Xunit;
 
@@ -11,6 +15,17 @@ namespace Prisstyrning.Tests.Api;
 /// </summary>
 public class EndpointIntegrationTests
 {
+    private static DaikinOAuthService CreateService(IConfiguration config)
+    {
+        var options = new DbContextOptionsBuilder<PrisstyrningDbContext>()
+            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+            .Options;
+        var db = new PrisstyrningDbContext(options);
+        db.Database.EnsureCreated();
+        var tokenRepo = new DaikinTokenRepository(db);
+        return new DaikinOAuthService(config, tokenRepo);
+    }
+
     [Fact]
     public async Task GET_SchedulePreview_ReturnsValidSchedule()
     {
@@ -170,7 +185,8 @@ public class EndpointIntegrationTests
         });
         
         // Test DaikinOAuthService.GetAuthorizationUrl
-        var authUrl = DaikinOAuthService.GetAuthorizationUrl(cfg, httpContext: null);
+        var service = CreateService(cfg);
+        var authUrl = service.GetAuthorizationUrl(httpContext: null);
         
         Assert.NotNull(authUrl);
         Assert.Contains("authorize", authUrl.ToLower());
@@ -191,8 +207,8 @@ public class EndpointIntegrationTests
         
         // Note: Without real OAuth server, this will fail
         // Test verifies the method signature and error handling
-        var success = await DaikinOAuthService.HandleCallbackAsync(
-            cfg, 
+        var service = CreateService(cfg);
+        var success = await service.HandleCallbackAsync(
             code: "invalid-code", 
             state: "test-state", 
             userId: "callback-test-user"
@@ -207,19 +223,6 @@ public class EndpointIntegrationTests
     {
         using var fs = new TempFileSystem();
         var userId = "refresh-test-user";
-        var userDir = Path.Combine(fs.TokensDir, userId);
-        Directory.CreateDirectory(userDir);
-        
-        // Create expired token
-        var tokenData = new JsonObject
-        {
-            ["access_token"] = "expired-token",
-            ["refresh_token"] = "refresh-123",
-            ["expires_at_utc"] = DateTimeOffset.UtcNow.AddMinutes(-10).ToString("o")
-        };
-        
-        var tokenFile = Path.Combine(userDir, "daikin.json");
-        await File.WriteAllTextAsync(tokenFile, tokenData.ToJsonString());
         
         var cfg = fs.GetTestConfig(new Dictionary<string, string?>
         {
@@ -227,8 +230,18 @@ public class EndpointIntegrationTests
             ["Daikin:ClientSecret"] = "test-client-secret"
         });
         
+        // Create service and store an expired token in the DB
+        var options = new DbContextOptionsBuilder<PrisstyrningDbContext>()
+            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+            .Options;
+        var db = new PrisstyrningDbContext(options);
+        db.Database.EnsureCreated();
+        var tokenRepo = new DaikinTokenRepository(db);
+        await tokenRepo.SaveAsync(userId, "expired-token", "refresh-123", DateTimeOffset.UtcNow.AddMinutes(-10));
+        var service = new DaikinOAuthService(cfg, tokenRepo);
+        
         // Test refresh logic (will fail without real OAuth server)
-        var refreshedToken = await DaikinOAuthService.RefreshIfNeededAsync(cfg, userId);
+        var refreshedToken = await service.RefreshIfNeededAsync(userId);
         
         // Should return null if refresh fails (no crash)
         Assert.True(refreshedToken == null || !string.IsNullOrEmpty(refreshedToken));

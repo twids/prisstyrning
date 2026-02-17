@@ -47,7 +47,9 @@ public class ScheduleUpdateHangfireJob
             Console.WriteLine($"[ScheduleUpdateHangfireJob] Processing user {userId}");
             try
             {
-                var (generated, schedulePayload, message) = await BatchRunner.RunBatchAsync(_cfg, userId, applySchedule: true, persist: true, _scopeFactory);
+                using var scope = _scopeFactory.CreateScope();
+                var daikinOAuth = scope.ServiceProvider.GetRequiredService<DaikinOAuthService>();
+                var (generated, schedulePayload, message) = await BatchRunner.RunBatchAsync(_cfg, userId, applySchedule: true, persist: true, _scopeFactory, daikinOAuth);
                 Console.WriteLine($"[ScheduleUpdateHangfireJob] user={userId} generated={generated} message={message}");
                 processedCount++;
             }

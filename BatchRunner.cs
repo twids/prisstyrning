@@ -10,18 +10,18 @@ internal record GeneratedSegments(List<(int hour,string state)> Segments);
 
 internal static class BatchRunner
 {
-    public static async Task<object> GenerateSchedulePreview(IConfiguration config, IServiceScopeFactory? scopeFactory = null)
+    public static async Task<object> GenerateSchedulePreview(IConfiguration config, IServiceScopeFactory? scopeFactory = null, DaikinOAuthService? daikinOAuth = null)
     {
-        var res = await RunBatchAsync(config, null, applySchedule:false, persist:false, scopeFactory);
+        var res = await RunBatchAsync(config, null, applySchedule:false, persist:false, scopeFactory, daikinOAuth);
         return new { res.schedulePayload, res.generated, res.message };
     }
 
     // Overload that uses user-specific settings from user.json and unified ScheduleAlgorithm
-    public static async Task<(bool generated, JsonNode? schedulePayload, string message)> RunBatchAsync(IConfiguration config, string? userId, bool applySchedule, bool persist, IServiceScopeFactory? scopeFactory = null)
+    public static async Task<(bool generated, JsonNode? schedulePayload, string message)> RunBatchAsync(IConfiguration config, string? userId, bool applySchedule, bool persist, IServiceScopeFactory? scopeFactory = null, DaikinOAuthService? daikinOAuth = null)
     {
         var settings = UserSettingsService.LoadScheduleSettings(config, userId);
         int activationLimit = int.TryParse(config["Schedule:MaxActivationsPerDay"], out var mpd) ? Math.Clamp(mpd, 1, 24) : 4;
-        var (generated, schedulePayload, message) = await RunBatchInternalAsync(config, new UserScheduleSettings(settings.ComfortHours, settings.TurnOffPercentile, settings.MaxComfortGapHours), activationLimit, applySchedule, persist, userId);
+        var (generated, schedulePayload, message) = await RunBatchInternalAsync(config, new UserScheduleSettings(settings.ComfortHours, settings.TurnOffPercentile, settings.MaxComfortGapHours), activationLimit, applySchedule, persist, userId, daikinOAuth);
         
         // Enhanced logging for history persistence
         if (!persist)
@@ -46,15 +46,18 @@ internal static class BatchRunner
     }
 
     // Returnerar schedulePayload som JsonNode istället för sträng för att API-responsen ska ha ett inbäddat JSON-objekt
-    private static async Task<(bool generated, JsonNode? schedulePayload, string message)> RunBatchInternalAsync(IConfiguration config, UserScheduleSettings settings, int activationLimit, bool applySchedule, bool persist, string? userId)
+    private static async Task<(bool generated, JsonNode? schedulePayload, string message)> RunBatchInternalAsync(IConfiguration config, UserScheduleSettings settings, int activationLimit, bool applySchedule, bool persist, string? userId, DaikinOAuthService? daikinOAuth = null)
     {
         var environment = config["ASPNETCORE_ENVIRONMENT"] ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production";
         var accessToken = config["Daikin:AccessToken"] ?? string.Empty;
         if (string.IsNullOrWhiteSpace(accessToken))
         {
-            var (tkn, _) = DaikinOAuthService.TryGetValidAccessToken(config, userId);
-            if (tkn == null) tkn = await DaikinOAuthService.RefreshIfNeededAsync(config, userId);
-            accessToken = tkn ?? string.Empty;
+            if (daikinOAuth != null)
+            {
+                var (tkn, _) = await daikinOAuth.TryGetValidAccessTokenAsync(userId);
+                if (tkn == null) tkn = await daikinOAuth.RefreshIfNeededAsync(userId);
+                accessToken = tkn ?? string.Empty;
+            }
         }
         var zone = config["Price:Nordpool:DefaultZone"] ?? "SE3";
         var currency = config["Price:Nordpool:Currency"] ?? "SEK";
@@ -222,7 +225,7 @@ internal static class BatchRunner
         if (!scheduleApplied)
         {
             // Try refresh if possible
-            var refreshed = await DaikinOAuthService.RefreshIfNeededAsync(config, userId);
+            var refreshed = daikinOAuth != null ? await daikinOAuth.RefreshIfNeededAsync(userId) : null;
             if (!string.IsNullOrEmpty(refreshed) && refreshed != accessToken)
             {
                 applyAttempts++;

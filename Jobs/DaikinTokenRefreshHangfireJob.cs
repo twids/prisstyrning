@@ -1,21 +1,25 @@
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using System.Text.Json;
 using Hangfire;
+using Prisstyrning.Data.Repositories;
 
 namespace Prisstyrning.Jobs;
 
 /// <summary>
-/// Hangfire job that periodically scans token files and refreshes them proactively
+/// Hangfire job that periodically scans token records and refreshes them proactively
 /// so that normal requests rarely encounter an expired access token.
 /// </summary>
 public class DaikinTokenRefreshHangfireJob
 {
     private readonly IConfiguration _cfg;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly TimeSpan _refreshWindow;
 
-    public DaikinTokenRefreshHangfireJob(IConfiguration cfg)
+    public DaikinTokenRefreshHangfireJob(IConfiguration cfg, IServiceScopeFactory scopeFactory)
     {
         _cfg = cfg;
+        _scopeFactory = scopeFactory;
         // Allow override via config; default: refresh if < 5 min remains
         _refreshWindow = TimeSpan.FromMinutes(ParseInt(cfg["Daikin:ProactiveRefreshWindowMinutes"], 5));
     }
@@ -25,47 +29,33 @@ public class DaikinTokenRefreshHangfireJob
     {
         Console.WriteLine($"[DaikinTokenRefreshHangfireJob] Starting scan with window={_refreshWindow}");
         
-        var tokenDir = StoragePaths.GetTokensDir(_cfg);
-        if (!Directory.Exists(tokenDir)) return;
+        using var scope = _scopeFactory.CreateScope();
+        var tokenRepo = scope.ServiceProvider.GetRequiredService<DaikinTokenRepository>();
+        var daikinOAuth = scope.ServiceProvider.GetRequiredService<DaikinOAuthService>();
+        
+        var userIds = await tokenRepo.GetAllUserIdsAsync();
+        if (!userIds.Any()) return;
 
-        // Find all daikin.json files (root and subdirectories)
-        var files = Directory.EnumerateFiles(tokenDir, "daikin.json", SearchOption.AllDirectories)
-            .Take(200) // safety cap
-            .ToList();
-        if (!files.Any()) return;
-
-        foreach (var file in files)
+        foreach (var userId in userIds)
         {
             try
             {
-                var json = await File.ReadAllTextAsync(file);
-                using var doc = JsonDocument.Parse(json);
-                if (!doc.RootElement.TryGetProperty("expires_at_utc", out var expProp)) continue;
-                if (!DateTimeOffset.TryParse(expProp.GetString(), out var expiresAt)) continue;
-                var remaining = expiresAt - DateTimeOffset.UtcNow;
-                if (remaining > _refreshWindow) continue; // still plenty of time
+                var token = await tokenRepo.LoadAsync(userId);
+                if (token == null) continue;
+                
+                var remaining = token.ExpiresAtUtc - DateTimeOffset.UtcNow;
+                if (remaining > _refreshWindow) continue;
 
-                // Derive userId from directory name (if nested). The DaikinOAuthService already knows how to map; we mimic its per-user dir scheme.
-                string? userId = null;
-                var dir = Path.GetDirectoryName(file)!;
-                // if parent isn't the base tokens directory, treat directory name as userId
-                var parent = Path.GetFullPath(tokenDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-                var dirFull = Path.GetFullPath(dir);
-                if (!string.Equals(dirFull, parent, StringComparison.OrdinalIgnoreCase))
-                {
-                    var userFolder = Path.GetFileName(dirFull);
-                    userId = userFolder; // Already sanitized when created
-                }
                 var before = remaining;
-                var access = await DaikinOAuthService.RefreshIfNeededAsync(_cfg, userId);
+                var access = await daikinOAuth.RefreshIfNeededAsync(userId, _refreshWindow);
                 if (access != null)
                 {
-                    Console.WriteLine($"[DaikinTokenRefreshHangfireJob] Refreshed token file={file} user={(userId ?? "(global)")} beforeRemaining={(int)before.TotalSeconds}s");
+                    Console.WriteLine($"[DaikinTokenRefreshHangfireJob] Refreshed token user={userId} beforeRemaining={(int)before.TotalSeconds}s");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[DaikinTokenRefreshHangfireJob][Warn] file={file} {ex.Message}");
+                Console.WriteLine($"[DaikinTokenRefreshHangfireJob][Warn] userId={userId} {ex.Message}");
             }
         }
     }
