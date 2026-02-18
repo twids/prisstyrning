@@ -15,7 +15,7 @@ public class DaikinTokenRepository
     /// <summary>
     /// Upsert a Daikin token by userId.
     /// </summary>
-    public async Task SaveAsync(string userId, string accessToken, string refreshToken, DateTimeOffset expiresAtUtc)
+    public async Task SaveAsync(string userId, string accessToken, string refreshToken, DateTimeOffset expiresAtUtc, string? daikinSubject = null)
     {
         var existing = await _db.DaikinTokens.FindAsync(userId);
 
@@ -24,6 +24,8 @@ public class DaikinTokenRepository
             existing.AccessToken = accessToken;
             existing.RefreshToken = refreshToken;
             existing.ExpiresAtUtc = expiresAtUtc;
+            if (daikinSubject != null)
+                existing.DaikinSubject = daikinSubject;
         }
         else
         {
@@ -32,7 +34,8 @@ public class DaikinTokenRepository
                 UserId = userId,
                 AccessToken = accessToken,
                 RefreshToken = refreshToken,
-                ExpiresAtUtc = expiresAtUtc
+                ExpiresAtUtc = expiresAtUtc,
+                DaikinSubject = daikinSubject
             });
         }
 
