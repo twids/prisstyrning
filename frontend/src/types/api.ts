@@ -119,6 +119,7 @@ export interface AdminUser {
   zone: string;
   daikinAuthorized: boolean;
   daikinExpiresAtUtc: string | null;
+  daikinSubject: string | null;
   hasScheduleHistory: boolean;
   scheduleCount: number | null;
   lastScheduleDate: string | null;

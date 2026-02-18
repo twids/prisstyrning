@@ -577,6 +577,7 @@ adminGroup.MapGet("/users", async (IConfiguration cfg, HttpContext c, UserSettin
         var token = await tokenRepo.LoadAsync(uid);
         var daikinAuthorized = token != null;
         string? daikinExpiresAtUtc = token?.ExpiresAtUtc.ToString("o");
+        string? daikinSubject = token?.DaikinSubject;
 
         var historyCount = await historyRepo.CountAsync(uid);
         var hasScheduleHistory = historyCount > 0;
@@ -595,6 +596,7 @@ adminGroup.MapGet("/users", async (IConfiguration cfg, HttpContext c, UserSettin
             zone,
             daikinAuthorized,
             daikinExpiresAtUtc,
+            daikinSubject,
             hasScheduleHistory,
             scheduleCount,
             lastScheduleDate,

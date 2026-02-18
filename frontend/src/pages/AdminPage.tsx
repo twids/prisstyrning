@@ -198,6 +198,7 @@ export default function AdminPage() {
                 <TableCell>Zon</TableCell>
                 <TableCell>Inställningar</TableCell>
                 <TableCell>Daikin</TableCell>
+                <TableCell>Daikin Subject</TableCell>
                 <TableCell>Schema</TableCell>
                 <TableCell>Admin</TableCell>
                 <TableCell>Hangfire</TableCell>
@@ -211,8 +212,8 @@ export default function AdminPage() {
                   <TableCell>
                     <Stack direction="row" alignItems="center" spacing={1}>
                       <Tooltip title={user.userId}>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                          {user.userId.length > 8 ? `${user.userId.slice(0, 8)}…` : user.userId}
+                        <Typography variant="body2" sx={{ fontFamily: 'monospace', cursor: 'pointer', userSelect: 'all' }}>
+                          {user.userId}
                         </Typography>
                       </Tooltip>
                       {user.isCurrentUser && <Chip label="Du" color="primary" size="small" />}
@@ -233,6 +234,17 @@ export default function AdminPage() {
                       <Tooltip title="Ej auktoriserad">
                         <CancelIcon color="error" fontSize="small" />
                       </Tooltip>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {user.daikinSubject ? (
+                      <Tooltip title={user.daikinSubject}>
+                        <Typography variant="body2" sx={{ fontFamily: 'monospace', cursor: 'pointer', userSelect: 'all', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {user.daikinSubject}
+                        </Typography>
+                      </Tooltip>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">—</Typography>
                     )}
                   </TableCell>
                   <TableCell>
@@ -303,7 +315,7 @@ export default function AdminPage() {
               ))}
               {users.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={9} align="center">
+                  <TableCell colSpan={10} align="center">
                     <Typography variant="body2" color="text.secondary">Inga användare</Typography>
                   </TableCell>
                 </TableRow>

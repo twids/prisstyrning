@@ -102,7 +102,7 @@ internal class DaikinOAuthService
         var expiresIn = root.TryGetProperty("expires_in", out var ei) ? ei.GetInt32() : 3600;
         var expiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn - 30);
         var subject = ExtractSubjectFromIdToken(root, clientId);
-        await _tokenRepo.SaveAsync(userId ?? string.Empty, access, refresh, expiresAt);
+        await _tokenRepo.SaveAsync(userId ?? string.Empty, access, refresh, expiresAt, subject);
         Console.WriteLine($"[DaikinOAuth] Token exchange OK expiresAt={expiresAt:O} refresh={(refresh?.Length>8?refresh[..8]+"...":"(none)")} hasSubject={subject != null}");
         if (httpClient == null) http.Dispose();
         return new CallbackResult(true, subject);
