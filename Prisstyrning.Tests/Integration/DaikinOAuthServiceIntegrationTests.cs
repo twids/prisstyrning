@@ -503,7 +503,7 @@ public class DaikinOAuthServiceIntegrationTests
     }
 
     [Fact]
-    public void ExtractSubjectFromIdToken_ValidJwt_ExtractsSub()
+    public void ExtractSubjectFromIdToken_WithDaikinIssuer_ReturnsSubject()
     {
         var idToken = CreateMockIdToken(new { sub = "test-subject-xyz", iss = "https://idp.onecta.daikineurope.com" });
         var json = JsonSerializer.Serialize(new { id_token = idToken });
@@ -548,7 +548,23 @@ public class DaikinOAuthServiceIntegrationTests
     }
 
     [Fact]
-    public void ExtractSubjectFromIdToken_WrongIssuer_ReturnsNull()
+    public void ExtractSubjectFromIdToken_WithAlternateIssuerButMatchingAud_ReturnsSubject()
+    {
+        var idToken = CreateMockIdToken(new
+        {
+            sub = "test-subject",
+            iss = "https://login.example-cognito.com/oauth2",
+            aud = "my-client-id"
+        });
+        var json = JsonSerializer.Serialize(new { id_token = idToken });
+        using var doc = JsonDocument.Parse(json);
+        var subject = DaikinOAuthService.ExtractSubjectFromIdToken(doc.RootElement, expectedClientId: "my-client-id");
+
+        Assert.Equal("test-subject", subject);
+    }
+
+    [Fact]
+    public void ExtractSubjectFromIdToken_WithAlternateIssuerAndNoAud_ReturnsNull()
     {
         var idToken = CreateMockIdToken(new { sub = "test-subject", iss = "https://evil-idp.example.com" });
         var json = JsonSerializer.Serialize(new { id_token = idToken });
@@ -559,12 +575,39 @@ public class DaikinOAuthServiceIntegrationTests
     }
 
     [Fact]
-    public void ExtractSubjectFromIdToken_MissingIssuer_ReturnsNull()
+    public void ExtractSubjectFromIdToken_WithWrongIssuer_ReturnsNull()
+    {
+        var idToken = CreateMockIdToken(new
+        {
+            sub = "test-subject",
+            iss = "https://evil-idp.example.com",
+            aud = "wrong-client-id"
+        });
+        var json = JsonSerializer.Serialize(new { id_token = idToken });
+        using var doc = JsonDocument.Parse(json);
+        var subject = DaikinOAuthService.ExtractSubjectFromIdToken(doc.RootElement, expectedClientId: "my-client-id");
+
+        Assert.Null(subject);
+    }
+
+    [Fact]
+    public void ExtractSubjectFromIdToken_WithMissingIssuerButMatchingAud_ReturnsSubject()
+    {
+        var idToken = CreateMockIdToken(new { sub = "test-subject", aud = "my-client-id" });
+        var json = JsonSerializer.Serialize(new { id_token = idToken });
+        using var doc = JsonDocument.Parse(json);
+        var subject = DaikinOAuthService.ExtractSubjectFromIdToken(doc.RootElement, expectedClientId: "my-client-id");
+
+        Assert.Equal("test-subject", subject);
+    }
+
+    [Fact]
+    public void ExtractSubjectFromIdToken_WithMissingIssuer_ReturnsNull()
     {
         var idToken = CreateMockIdToken(new { sub = "test-subject" });
         var json = JsonSerializer.Serialize(new { id_token = idToken });
         using var doc = JsonDocument.Parse(json);
-        var subject = DaikinOAuthService.ExtractSubjectFromIdToken(doc.RootElement);
+        var subject = DaikinOAuthService.ExtractSubjectFromIdToken(doc.RootElement, expectedClientId: "my-client-id");
 
         Assert.Null(subject);
     }

@@ -284,31 +284,78 @@ internal class DaikinOAuthService
             using var payloadDoc = JsonDocument.Parse(bytes);
             var root = payloadDoc.RootElement;
 
-            // Validate issuer - must be the Daikin OIDC IDP
+            static string RedactIssuerHost(string? issuer)
+            {
+                if (string.IsNullOrWhiteSpace(issuer)) return "(missing)";
+                if (Uri.TryCreate(issuer, UriKind.Absolute, out var uri) && !string.IsNullOrWhiteSpace(uri.Host))
+                    return uri.Host;
+                return "(non-url format)";
+            }
+
+            // Validate issuer - prefer Daikin IDP, but be lenient to avoid silently breaking dedup
+            var issuerHost = "(missing)";
+            var issuerTrusted = false;
             if (root.TryGetProperty("iss", out var issEl))
             {
                 var iss = issEl.GetString();
-                if (string.IsNullOrEmpty(iss) || !iss.Contains("daikineurope.com", StringComparison.OrdinalIgnoreCase))
+                issuerHost = RedactIssuerHost(iss);
+                if (!string.IsNullOrWhiteSpace(iss))
                 {
-                    Console.WriteLine($"[DaikinOAuth] id_token issuer rejected");
-                    return null;
+                    issuerTrusted = iss.Contains("daikin", StringComparison.OrdinalIgnoreCase);
+                    if (!issuerTrusted)
+                        Console.WriteLine($"[DaikinOAuth] id_token issuer not Daikin: {issuerHost}");
+                }
+                else
+                {
+                    Console.WriteLine("[DaikinOAuth] id_token has empty 'iss' claim, proceeding with aud check");
                 }
             }
             else
             {
-                Console.WriteLine($"[DaikinOAuth] id_token missing 'iss' claim");
-                return null;
+                Console.WriteLine("[DaikinOAuth] id_token missing 'iss' claim, proceeding with aud check");
             }
 
             // Validate audience matches our client_id (if we know it)
+            var audienceMatches = false;
             if (!string.IsNullOrEmpty(expectedClientId) && root.TryGetProperty("aud", out var audEl))
             {
-                var aud = audEl.ValueKind == JsonValueKind.String ? audEl.GetString() : null;
-                if (aud != null && aud != expectedClientId)
+                if (audEl.ValueKind == JsonValueKind.String)
                 {
-                    Console.WriteLine($"[DaikinOAuth] id_token audience mismatch");
-                    return null;
+                    var aud = audEl.GetString();
+                    if (aud == expectedClientId)
+                    {
+                        audienceMatches = true;
+                    }
+                    else if (!string.IsNullOrEmpty(aud))
+                    {
+                        Console.WriteLine("[DaikinOAuth] id_token audience mismatch");
+                        return null; // Wrong audience — definitely not meant for us
+                    }
                 }
+                else if (audEl.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var audEntry in audEl.EnumerateArray())
+                    {
+                        if (audEntry.ValueKind == JsonValueKind.String && audEntry.GetString() == expectedClientId)
+                        {
+                            audienceMatches = true;
+                            break;
+                        }
+                    }
+
+                    if (!audienceMatches)
+                    {
+                        Console.WriteLine("[DaikinOAuth] id_token audience mismatch");
+                        return null;
+                    }
+                }
+            }
+
+            // Accept the token if issuer is trusted OR audience matches
+            if (!issuerTrusted && !audienceMatches)
+            {
+                Console.WriteLine($"[DaikinOAuth] id_token rejected: untrusted issuer and audience not verified (issuerHost={issuerHost})");
+                return null;
             }
 
             if (root.TryGetProperty("sub", out var subEl))
