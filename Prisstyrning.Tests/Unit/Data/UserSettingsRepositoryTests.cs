@@ -442,4 +442,155 @@ public class UserSettingsRepositoryTests : IDisposable
     }
 
     #endregion
+
+    #region Flexible Scheduling Fields
+
+    [Fact]
+    public async Task LoadScheduleSettingsAsync_MissingUser_ReturnsFlexibleDefaults()
+    {
+        var repo = CreateRepo();
+        var settings = await repo.LoadScheduleSettingsAsync("nonexistent-user");
+
+        Assert.Equal("Classic", settings.SchedulingMode);
+        Assert.Equal(24, settings.EcoIntervalHours);
+        Assert.Equal(12, settings.EcoFlexibilityHours);
+        Assert.Equal(21, settings.ComfortIntervalDays);
+        Assert.Equal(7, settings.ComfortFlexibilityDays);
+        Assert.Equal(0.10, settings.ComfortEarlyPercentile);
+    }
+
+    [Fact]
+    public async Task LoadScheduleSettingsAsync_SavedFlexibleValues_ReturnsUserValues()
+    {
+        _db.UserSettings.Add(new UserSettings
+        {
+            UserId = "flex-user",
+            ComfortHours = 3,
+            TurnOffPercentile = 0.9,
+            MaxComfortGapHours = 28,
+            SchedulingMode = "Flexible",
+            EcoIntervalHours = 18,
+            EcoFlexibilityHours = 6,
+            ComfortIntervalDays = 30,
+            ComfortFlexibilityDays = 14,
+            ComfortEarlyPercentile = 0.20
+        });
+        await _db.SaveChangesAsync();
+
+        var repo = CreateRepo();
+        var settings = await repo.LoadScheduleSettingsAsync("flex-user");
+
+        Assert.Equal("Flexible", settings.SchedulingMode);
+        Assert.Equal(18, settings.EcoIntervalHours);
+        Assert.Equal(6, settings.EcoFlexibilityHours);
+        Assert.Equal(30, settings.ComfortIntervalDays);
+        Assert.Equal(14, settings.ComfortFlexibilityDays);
+        Assert.Equal(0.20, settings.ComfortEarlyPercentile);
+    }
+
+    [Fact]
+    public async Task LoadScheduleSettingsAsync_ClampsFlexibleValuesTooHigh()
+    {
+        _db.UserSettings.Add(new UserSettings
+        {
+            UserId = "flex-high",
+            SchedulingMode = "Flexible",
+            EcoIntervalHours = 100,    // > 36
+            EcoFlexibilityHours = 50,  // > 18
+            ComfortIntervalDays = 200, // > 90
+            ComfortFlexibilityDays = 60, // > 30
+            ComfortEarlyPercentile = 0.90 // > 0.50
+        });
+        await _db.SaveChangesAsync();
+
+        var repo = CreateRepo();
+        var settings = await repo.LoadScheduleSettingsAsync("flex-high");
+
+        Assert.Equal(36, settings.EcoIntervalHours);
+        Assert.Equal(18, settings.EcoFlexibilityHours);
+        Assert.Equal(90, settings.ComfortIntervalDays);
+        Assert.Equal(30, settings.ComfortFlexibilityDays);
+        Assert.Equal(0.50, settings.ComfortEarlyPercentile);
+    }
+
+    [Fact]
+    public async Task LoadScheduleSettingsAsync_ClampsFlexibleValuesTooLow()
+    {
+        _db.UserSettings.Add(new UserSettings
+        {
+            UserId = "flex-low",
+            SchedulingMode = "Flexible",
+            EcoIntervalHours = 1,       // < 6
+            EcoFlexibilityHours = 0,    // < 1
+            ComfortIntervalDays = 2,    // < 7
+            ComfortFlexibilityDays = 0, // < 1
+            ComfortEarlyPercentile = 0.001 // < 0.01
+        });
+        await _db.SaveChangesAsync();
+
+        var repo = CreateRepo();
+        var settings = await repo.LoadScheduleSettingsAsync("flex-low");
+
+        Assert.Equal(6, settings.EcoIntervalHours);
+        Assert.Equal(1, settings.EcoFlexibilityHours);
+        Assert.Equal(7, settings.ComfortIntervalDays);
+        Assert.Equal(1, settings.ComfortFlexibilityDays);
+        Assert.Equal(0.01, settings.ComfortEarlyPercentile);
+    }
+
+    [Fact]
+    public async Task LoadScheduleSettingsAsync_InvalidSchedulingMode_DefaultsToClassic()
+    {
+        _db.UserSettings.Add(new UserSettings
+        {
+            UserId = "bad-mode",
+            SchedulingMode = "InvalidMode"
+        });
+        await _db.SaveChangesAsync();
+
+        var repo = CreateRepo();
+        var settings = await repo.LoadScheduleSettingsAsync("bad-mode");
+
+        Assert.Equal("Classic", settings.SchedulingMode);
+    }
+
+    [Fact]
+    public async Task SaveSettingsAsync_WithFlexibleFields_SavesAll()
+    {
+        var repo = CreateRepo();
+        await repo.SaveSettingsAsync("flex-save", 5, 0.8, true, 30,
+            schedulingMode: "Flexible",
+            ecoIntervalHours: 18,
+            ecoFlexibilityHours: 8,
+            comfortIntervalDays: 28,
+            comfortFlexibilityDays: 10,
+            comfortEarlyPercentile: 0.15);
+
+        var entity = await _db.UserSettings.FindAsync("flex-save");
+        Assert.NotNull(entity);
+        Assert.Equal("Flexible", entity.SchedulingMode);
+        Assert.Equal(18, entity.EcoIntervalHours);
+        Assert.Equal(8, entity.EcoFlexibilityHours);
+        Assert.Equal(28, entity.ComfortIntervalDays);
+        Assert.Equal(10, entity.ComfortFlexibilityDays);
+        Assert.Equal(0.15, entity.ComfortEarlyPercentile);
+    }
+
+    [Fact]
+    public async Task SaveSettingsAsync_WithoutFlexibleFields_KeepsDefaults()
+    {
+        var repo = CreateRepo();
+        await repo.SaveSettingsAsync("classic-save", 5, 0.8, true, 30);
+
+        var entity = await _db.UserSettings.FindAsync("classic-save");
+        Assert.NotNull(entity);
+        Assert.Equal("Classic", entity.SchedulingMode);
+        Assert.Equal(24, entity.EcoIntervalHours);
+        Assert.Equal(12, entity.EcoFlexibilityHours);
+        Assert.Equal(21, entity.ComfortIntervalDays);
+        Assert.Equal(7, entity.ComfortFlexibilityDays);
+        Assert.Equal(0.10, entity.ComfortEarlyPercentile);
+    }
+
+    #endregion
 }

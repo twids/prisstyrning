@@ -64,6 +64,26 @@ namespace Prisstyrning.Data.Migrations
                     b.ToTable("DaikinTokens");
                 });
 
+            modelBuilder.Entity("Prisstyrning.Data.Entities.FlexibleScheduleState", b =>
+                {
+                    b.Property<string>("UserId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTimeOffset?>("LastComfortRunUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("LastEcoRunUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("NextScheduledComfortUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("UserId");
+
+                    b.ToTable("FlexibleScheduleStates");
+                });
+
             modelBuilder.Entity("Prisstyrning.Data.Entities.PriceSnapshot", b =>
                 {
                     b.Property<int>("Id")
@@ -134,11 +154,33 @@ namespace Prisstyrning.Data.Migrations
                     b.Property<bool>("AutoApplySchedule")
                         .HasColumnType("boolean");
 
+                    b.Property<double>("ComfortEarlyPercentile")
+                        .HasColumnType("double precision");
+
+                    b.Property<int>("ComfortFlexibilityDays")
+                        .HasColumnType("integer");
+
                     b.Property<int>("ComfortHours")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ComfortIntervalDays")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("EcoFlexibilityHours")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("EcoIntervalHours")
                         .HasColumnType("integer");
 
                     b.Property<int>("MaxComfortGapHours")
                         .HasColumnType("integer");
+
+                    b.Property<string>("SchedulingMode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasDefaultValue("Classic");
 
                     b.Property<double>("TurnOffPercentile")
                         .HasColumnType("double precision");

@@ -12,6 +12,7 @@ public class PrisstyrningDbContext : DbContext
     public DbSet<PriceSnapshot> PriceSnapshots => Set<PriceSnapshot>();
     public DbSet<ScheduleHistoryEntry> ScheduleHistory => Set<ScheduleHistoryEntry>();
     public DbSet<DaikinToken> DaikinTokens => Set<DaikinToken>();
+    public DbSet<FlexibleScheduleState> FlexibleScheduleStates => Set<FlexibleScheduleState>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -21,6 +22,14 @@ public class PrisstyrningDbContext : DbContext
             e.HasKey(x => x.UserId);
             e.Property(x => x.UserId).HasMaxLength(100);
             e.Property(x => x.Zone).HasMaxLength(10).HasDefaultValue("SE3");
+            e.Property(x => x.SchedulingMode).HasMaxLength(20).HasDefaultValue("Classic");
+        });
+
+        // FlexibleScheduleState
+        modelBuilder.Entity<FlexibleScheduleState>(e =>
+        {
+            e.HasKey(x => x.UserId);
+            e.Property(x => x.UserId).HasMaxLength(100);
         });
 
         // AdminRole
