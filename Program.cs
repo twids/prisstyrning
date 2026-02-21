@@ -206,7 +206,7 @@ app.MapPost("/api/user/settings", async (HttpContext ctx, UserSettingsRepository
     { if (!int.TryParse(rawMcgh, out maxComfortGapHours) || maxComfortGapHours < 1 || maxComfortGapHours > 72) { errors.Add("MaxComfortGapHours must be an integer between 1 and 72"); maxComfortGapHours = 28; } }
     if (errors.Count > 0) return Results.BadRequest(new { error = "Validation failed", errors });
     await settingsRepo.SaveSettingsAsync(userId, comfortHours, turnOffPercentile, autoApplySchedule, maxComfortGapHours);
-    return Results.Ok(new { saved = true });
+    return Results.Json(new { ComfortHours = comfortHours, TurnOffPercentile = turnOffPercentile, AutoApplySchedule = autoApplySchedule, MaxComfortGapHours = maxComfortGapHours });
 });
 
 // Preload price memory from database
@@ -505,8 +505,8 @@ scheduleGroup.MapGet("/preview", async (HttpContext c, UserSettingsRepository se
     var cfg = (IConfiguration)builder.Configuration;
     var userId = GetUserId(c);
     
-    // Use BatchRunner to generate schedule and handle history persistence
-    var (generated, schedulePayload, message) = await batchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: true, scopeFactory);
+    // Preview should NOT persist to history - only apply should persist
+    var (generated, schedulePayload, message) = await batchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: false, scopeFactory);
     var zone = await settingsRepo.GetUserZoneAsync(userId);
     
     return Results.Json(new { schedulePayload, generated, message, zone });
@@ -962,8 +962,8 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IHttpClientFactory httpClien
     string requestedMode = body["mode"]?.ToString() ?? "auto"; // 'auto' triggers detection
         JsonNode? schedulePayloadNode = body["schedulePayload"];
         string? activateScheduleId = body["activateScheduleId"]?.ToString();
-        if (string.IsNullOrWhiteSpace(gatewayDeviceId) || string.IsNullOrWhiteSpace(embeddedId) || schedulePayloadNode == null)
-            return Results.BadRequest(new { error = "gatewayDeviceId, embeddedId och schedulePayload krävs" });
+        if (schedulePayloadNode == null)
+            return Results.BadRequest(new { error = "schedulePayload is required" });
 
         // Serialize schedule payload exactly as provided
         var schedulePayloadJson = schedulePayloadNode.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
@@ -974,13 +974,93 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IHttpClientFactory httpClien
     var baseApi = cfg["Daikin:ApiBaseUrl"];
     var client = new DaikinApiClient(httpClientFactory.CreateClient("Daikin"), token, log, logBody, bodyLen == 0 ? null : bodyLen, baseApi);
 
+        // Auto-detect device IDs if not provided
+        string? siteId = null;
+        if (string.IsNullOrWhiteSpace(gatewayDeviceId) || string.IsNullOrWhiteSpace(embeddedId))
+        {
+            // Check for config overrides
+            var overrideSite = cfg["Daikin:SiteId"];
+            var overrideDevice = cfg["Daikin:DeviceId"];
+            var overrideEmbedded = cfg["Daikin:ManagementPointEmbeddedId"];
+
+            string? detectedSite = null;
+            string? detectedDevice = null;
+            string? detectedEmbedded = null;
+
+            // Detect site
+            if (!string.IsNullOrWhiteSpace(overrideSite))
+                detectedSite = overrideSite;
+            else
+            {
+                var sitesJson = await client.GetSitesAsync();
+                detectedSite = DeviceAutoDetection.GetFirstSiteId(sitesJson);
+                if (detectedSite != null)
+                    Console.WriteLine($"[SchedulePut] Auto-detected site: {detectedSite}");
+            }
+
+            if (detectedSite == null)
+                return Results.BadRequest(new { error = "Could not auto-detect site. No Daikin sites found." });
+
+            siteId = detectedSite;
+
+            // Detect device
+            if (!string.IsNullOrWhiteSpace(overrideDevice))
+                detectedDevice = overrideDevice;
+            else
+            {
+                var devicesJson = await client.GetDevicesAsync(detectedSite);
+                var (deviceId, deviceJsonRaw) = DeviceAutoDetection.GetFirstDevice(devicesJson);
+                detectedDevice = deviceId;
+                
+                // Also detect embedded ID from the device
+                if (!string.IsNullOrWhiteSpace(overrideEmbedded))
+                    detectedEmbedded = overrideEmbedded;
+                else if (deviceJsonRaw != null)
+                {
+                    detectedEmbedded = DeviceAutoDetection.FindDhwEmbeddedId(deviceJsonRaw);
+                    if (detectedEmbedded != null)
+                        Console.WriteLine($"[SchedulePut] Auto-detected DHW embeddedId: {detectedEmbedded}");
+                }
+                
+                if (detectedDevice != null)
+                    Console.WriteLine($"[SchedulePut] Auto-detected device: {detectedDevice}");
+            }
+
+            if (detectedDevice == null)
+                return Results.BadRequest(new { error = "Could not auto-detect device. No Daikin devices found." });
+
+            if (detectedEmbedded == null)
+                return Results.BadRequest(new { error = "Could not auto-detect DHW management point. No domesticHotWaterTank found on device." });
+
+            // Use detected values if not provided in request
+            gatewayDeviceId ??= detectedDevice;
+            embeddedId ??= detectedEmbedded;
+        }
+
         string modeUsed = requestedMode;
         if (modeUsed == "auto" || string.IsNullOrWhiteSpace(modeUsed))
         {
-            // Fetch devices to detect mode
+            // Fetch devices to detect mode (need site ID)
+            if (siteId == null)
+            {
+                // If we didn't auto-detect above, we need to get the site
+                var overrideSite = cfg["Daikin:SiteId"];
+                if (!string.IsNullOrWhiteSpace(overrideSite))
+                    siteId = overrideSite;
+                else
+                {
+                    var sitesJson = await client.GetSitesAsync();
+                    using var siteDoc = JsonDocument.Parse(sitesJson);
+                    if (siteDoc.RootElement.ValueKind == JsonValueKind.Array && siteDoc.RootElement.GetArrayLength() > 0)
+                    {
+                        siteId = siteDoc.RootElement[0].GetProperty("id").GetString();
+                    }
+                }
+            }
+
             try
             {
-                var devicesJson = await client.GetDevicesAsync("_ignored");
+                var devicesJson = siteId != null ? await client.GetDevicesAsync(siteId) : "[]";
                 using var doc = JsonDocument.Parse(devicesJson);
                 if (doc.RootElement.ValueKind==JsonValueKind.Array)
                 {
