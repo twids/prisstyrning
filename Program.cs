@@ -179,7 +179,7 @@ app.MapGet("/api/user/settings", async (HttpContext ctx, UserSettingsRepository 
         TurnOffPercentile = entity.TurnOffPercentile, 
         AutoApplySchedule = entity.AutoApplySchedule, 
         MaxComfortGapHours = entity.MaxComfortGapHours 
-    });
+    }, new JsonSerializerOptions { PropertyNamingPolicy = null });
 });
 
 app.MapPost("/api/user/settings", async (HttpContext ctx, UserSettingsRepository settingsRepo) =>
