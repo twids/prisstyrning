@@ -592,7 +592,7 @@ public class DaikinOAuthServiceIntegrationTests
     }
 
     [Fact]
-    public async Task MigrateUserData_MovesTokensToNewUserId()
+    public async Task MigrateUserDataAsync_WhenTargetNotExists_CopiesToTarget()
     {
         using var fs = new TempFileSystem();
         var config = fs.GetTestConfig();
@@ -617,7 +617,7 @@ public class DaikinOAuthServiceIntegrationTests
     }
 
     [Fact]
-    public async Task MigrateUserData_DoesNotOverwriteExistingTokens()
+    public async Task MigrateUserDataAsync_WhenTargetExists_OverwritesWithSourceTokens()
     {
         using var fs = new TempFileSystem();
         var config = fs.GetTestConfig();
@@ -631,10 +631,85 @@ public class DaikinOAuthServiceIntegrationTests
 
             await migService2.MigrateUserDataAsync("old-user", "new-user");
 
-            // Existing token should NOT be overwritten
+            // Existing token should be overwritten with source token
             var newToken = await tokenRepo2.LoadAsync("new-user");
             Assert.NotNull(newToken);
-            Assert.Equal("existing-access", newToken!.AccessToken);
+            Assert.Equal("old-access", newToken!.AccessToken);
+            Assert.Equal("old-refresh", newToken.RefreshToken);
+
+            // Source should be deleted
+            var oldToken = await tokenRepo2.LoadAsync("old-user");
+            Assert.Null(oldToken);
+        }
+    }
+
+    [Fact]
+    public async Task MigrateUserDataAsync_PreservesDaikinSubject()
+    {
+        using var fs = new TempFileSystem();
+        var config = fs.GetTestConfig();
+
+        var (service, tokenRepo, db) = CreateService(config);
+        using (db)
+        {
+            await tokenRepo.SaveAsync(
+                "source-user",
+                "source-access",
+                "source-refresh",
+                DateTimeOffset.UtcNow.AddHours(1),
+                daikinSubject: "daikin-subject-123");
+
+            await service.MigrateUserDataAsync("source-user", "target-user");
+
+            var target = await tokenRepo.LoadAsync("target-user");
+            Assert.NotNull(target);
+            Assert.Equal("daikin-subject-123", target!.DaikinSubject);
+        }
+    }
+
+    [Fact]
+    public async Task FindByDaikinSubjectAsync_ReturnsExistingToken()
+    {
+        using var fs = new TempFileSystem();
+        var config = fs.GetTestConfig();
+
+        var (_, tokenRepo, db) = CreateService(config);
+        using (db)
+        {
+            await tokenRepo.SaveAsync(
+                "subject-user",
+                "subject-access",
+                "subject-refresh",
+                DateTimeOffset.UtcNow.AddHours(1),
+                daikinSubject: "find-me-subject");
+
+            var token = await tokenRepo.FindByDaikinSubjectAsync("find-me-subject");
+
+            Assert.NotNull(token);
+            Assert.Equal("subject-user", token!.UserId);
+            Assert.Equal("find-me-subject", token.DaikinSubject);
+        }
+    }
+
+    [Fact]
+    public async Task FindByDaikinSubjectAsync_ReturnsNullWhenNotFound()
+    {
+        using var fs = new TempFileSystem();
+        var config = fs.GetTestConfig();
+
+        var (_, tokenRepo, db) = CreateService(config);
+        using (db)
+        {
+            await tokenRepo.SaveAsync(
+                "subject-user",
+                "subject-access",
+                "subject-refresh",
+                DateTimeOffset.UtcNow.AddHours(1),
+                daikinSubject: "existing-subject");
+
+            var token = await tokenRepo.FindByDaikinSubjectAsync("missing-subject");
+
+            Assert.Null(token);
         }
     }
 

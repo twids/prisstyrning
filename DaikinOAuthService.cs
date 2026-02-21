@@ -335,18 +335,25 @@ internal class DaikinOAuthService
 
         try
         {
-            // Check if destination already has tokens; if not, copy from source
-            var existingTarget = await _tokenRepo.LoadAsync(toUserId);
-            if (existingTarget == null)
+            var source = await _tokenRepo.LoadAsync(fromUserId);
+            if (source == null)
             {
-                var source = await _tokenRepo.LoadAsync(fromUserId);
-                if (source != null)
-                {
-                    await _tokenRepo.SaveAsync(toUserId, source.AccessToken, source.RefreshToken, source.ExpiresAtUtc);
-                    await _tokenRepo.DeleteAsync(fromUserId);
-                }
+                Console.WriteLine($"[DaikinOAuth] No source token found for migration from {fromUserId} to {toUserId}");
+                return;
             }
-            Console.WriteLine($"[DaikinOAuth] Migrated user data from {fromUserId} to {toUserId}");
+
+            var existingTarget = await _tokenRepo.LoadAsync(toUserId);
+            var mode = existingTarget == null ? "fresh" : "overwrite";
+
+            await _tokenRepo.SaveAsync(
+                toUserId,
+                source.AccessToken,
+                source.RefreshToken,
+                source.ExpiresAtUtc,
+                source.DaikinSubject);
+
+            await _tokenRepo.DeleteAsync(fromUserId);
+            Console.WriteLine($"[DaikinOAuth] Migrated user data from {fromUserId} to {toUserId} ({mode})");
         }
         catch (Exception ex)
         {

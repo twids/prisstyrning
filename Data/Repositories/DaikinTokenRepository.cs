@@ -51,6 +51,15 @@ public class DaikinTokenRepository
     }
 
     /// <summary>
+    /// Load a token by Daikin OIDC subject, or null if not found.
+    /// </summary>
+    public async Task<DaikinToken?> FindByDaikinSubjectAsync(string daikinSubject)
+    {
+        return await _db.DaikinTokens
+            .FirstOrDefaultAsync(t => t.DaikinSubject == daikinSubject);
+    }
+
+    /// <summary>
     /// Delete a token by userId. Does not throw if not found.
     /// </summary>
     public async Task DeleteAsync(string userId)
