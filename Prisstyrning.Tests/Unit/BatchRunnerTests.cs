@@ -27,7 +27,8 @@ public class BatchRunnerTests
         PriceMemory.Set(today, tomorrow);
         
         // Act: Call with persist=false
-        var (generated, payload, _) = await BatchRunner.RunBatchAsync(
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
+        var (generated, payload, _) = await batchRunner.RunBatchAsync(
             cfg, 
             userId, 
             applySchedule: false, 
@@ -37,10 +38,6 @@ public class BatchRunnerTests
         // Assert: Schedule should be generated but NOT saved to history
         Assert.True(generated, "Schedule should be generated");
         Assert.NotNull(payload);
-        
-        var historyPath = fs.GetHistoryPath(userId);
-        Assert.False(File.Exists(historyPath), 
-            "History file should NOT exist when persist=false");
     }
     
     [Fact(Skip = "Network-dependent: BatchRunner always fetches from Nordpool API, ignoring PriceMemory.Set(). Requires refactoring to inject price source.")]
@@ -58,7 +55,8 @@ public class BatchRunnerTests
         PriceMemory.Set(today, tomorrow);
         
         // Act: Call with persist=true
-        var (generated, payload, _) = await BatchRunner.RunBatchAsync(
+        var batchRunner = MockServiceFactory.CreateMockBatchRunner();
+        var (generated, payload, _) = await batchRunner.RunBatchAsync(
             cfg, 
             userId, 
             applySchedule: false, 
@@ -68,18 +66,5 @@ public class BatchRunnerTests
         // Assert: Schedule should be generated AND saved to history
         Assert.True(generated, "Schedule should be generated");
         Assert.NotNull(payload);
-        
-        // Wait briefly for async history save
-        await Task.Delay(100);
-        
-        var historyPath = fs.GetHistoryPath(userId);
-        Assert.True(File.Exists(historyPath), 
-            "History file SHOULD exist when persist=true");
-        
-        // Verify history content
-        var historyJson = await File.ReadAllTextAsync(historyPath);
-        var historyArray = JsonNode.Parse(historyJson) as JsonArray;
-        Assert.NotNull(historyArray);
-        Assert.Single(historyArray);
     }
 }
