@@ -284,31 +284,86 @@ internal class DaikinOAuthService
             using var payloadDoc = JsonDocument.Parse(bytes);
             var root = payloadDoc.RootElement;
 
-            // Validate issuer - must be the Daikin OIDC IDP
+            static string RedactIssuerHost(string? issuer)
+            {
+                if (string.IsNullOrWhiteSpace(issuer)) return "(missing)";
+                if (Uri.TryCreate(issuer, UriKind.Absolute, out var uri) && !string.IsNullOrWhiteSpace(uri.Host))
+                    return uri.Host;
+                return "(non-url format)";
+            }
+
+            // Token validation: require trusted issuer (must contain "daikin").
+            // If expectedClientId is configured, also require audience match for defense-in-depth.
+            var issuerHost = "(missing)";
+            var issuerTrusted = false;
             if (root.TryGetProperty("iss", out var issEl))
             {
                 var iss = issEl.GetString();
-                if (string.IsNullOrEmpty(iss) || !iss.Contains("daikineurope.com", StringComparison.OrdinalIgnoreCase))
+                issuerHost = RedactIssuerHost(iss);
+                if (!string.IsNullOrWhiteSpace(iss))
                 {
-                    Console.WriteLine($"[DaikinOAuth] id_token issuer rejected");
-                    return null;
+                    issuerTrusted = iss.Contains("daikin", StringComparison.OrdinalIgnoreCase);
+                    if (!issuerTrusted)
+                        Console.WriteLine($"[DaikinOAuth] id_token issuer not Daikin: {issuerHost}");
+                }
+                else
+                {
+                    Console.WriteLine("[DaikinOAuth] id_token has empty 'iss' claim, proceeding with aud check");
                 }
             }
             else
             {
-                Console.WriteLine($"[DaikinOAuth] id_token missing 'iss' claim");
-                return null;
+                Console.WriteLine("[DaikinOAuth] id_token missing 'iss' claim, proceeding with aud check");
             }
 
             // Validate audience matches our client_id (if we know it)
+            var audienceMatches = false;
             if (!string.IsNullOrEmpty(expectedClientId) && root.TryGetProperty("aud", out var audEl))
             {
-                var aud = audEl.ValueKind == JsonValueKind.String ? audEl.GetString() : null;
-                if (aud != null && aud != expectedClientId)
+                if (audEl.ValueKind == JsonValueKind.String)
                 {
-                    Console.WriteLine($"[DaikinOAuth] id_token audience mismatch");
-                    return null;
+                    var aud = audEl.GetString();
+                    if (aud == expectedClientId)
+                    {
+                        audienceMatches = true;
+                    }
+                    else if (!string.IsNullOrEmpty(aud))
+                    {
+                        Console.WriteLine("[DaikinOAuth] id_token audience mismatch");
+                        return null; // Wrong audience — definitely not meant for us
+                    }
                 }
+                else if (audEl.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var audEntry in audEl.EnumerateArray())
+                    {
+                        if (audEntry.ValueKind == JsonValueKind.String && audEntry.GetString() == expectedClientId)
+                        {
+                            audienceMatches = true;
+                            break;
+                        }
+                    }
+
+                    if (!audienceMatches)
+                    {
+                        Console.WriteLine("[DaikinOAuth] id_token audience mismatch");
+                        return null;
+                    }
+                }
+            }
+
+            // Require a trusted issuer; never accept tokens from untrusted issuers
+            if (!issuerTrusted)
+            {
+                Console.WriteLine($"[DaikinOAuth] id_token rejected: untrusted issuer (issuerHost={issuerHost})");
+                return null;
+            }
+
+            // If expectedClientId is configured, also require that the audience matched
+            if (!string.IsNullOrEmpty(expectedClientId) && !audienceMatches)
+            {
+                Console.WriteLine("[DaikinOAuth] id_token rejected: audience not verified for trusted issuer");
+                return null;
             }
 
             if (root.TryGetProperty("sub", out var subEl))
@@ -335,18 +390,35 @@ internal class DaikinOAuthService
 
         try
         {
-            // Check if destination already has tokens; if not, copy from source
-            var existingTarget = await _tokenRepo.LoadAsync(toUserId);
-            if (existingTarget == null)
+            var source = await _tokenRepo.LoadAsync(fromUserId);
+            if (source == null)
             {
-                var source = await _tokenRepo.LoadAsync(fromUserId);
-                if (source != null)
-                {
-                    await _tokenRepo.SaveAsync(toUserId, source.AccessToken, source.RefreshToken, source.ExpiresAtUtc);
-                    await _tokenRepo.DeleteAsync(fromUserId);
-                }
+                Console.WriteLine($"[DaikinOAuth] No source token found for migration from {fromUserId} to {toUserId}");
+                return;
             }
-            Console.WriteLine($"[DaikinOAuth] Migrated user data from {fromUserId} to {toUserId}");
+
+            var existingTarget = await _tokenRepo.LoadAsync(toUserId);
+            var isNewerSource = existingTarget == null || source.ExpiresAtUtc > existingTarget.ExpiresAtUtc;
+            var mode = existingTarget == null
+                ? "fresh"
+                : (isNewerSource ? "overwrite" : "skip-older");
+
+            if (isNewerSource)
+            {
+                await _tokenRepo.SaveAsync(
+                    toUserId,
+                    source.AccessToken,
+                    source.RefreshToken,
+                    source.ExpiresAtUtc,
+                    source.DaikinSubject);
+                Console.WriteLine($"[DaikinOAuth] Migrated user data from {fromUserId} to {toUserId} ({mode})");
+            }
+            else
+            {
+                Console.WriteLine($"[DaikinOAuth] Skipped migration from {fromUserId} to {toUserId} because target has newer or equal tokens ({mode})");
+            }
+
+            await _tokenRepo.DeleteAsync(fromUserId);
         }
         catch (Exception ex)
         {
