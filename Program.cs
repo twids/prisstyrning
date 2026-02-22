@@ -589,9 +589,16 @@ scheduleGroup.MapGet("/preview", async (HttpContext c, UserSettingsRepository se
     return Results.Json(new { schedulePayload, generated, message, zone });
 });
 scheduleGroup.MapPost("/apply", async (BatchRunner batchRunner, HttpContext ctx, IServiceScopeFactory scopeFactory) => await HandleApplyScheduleAsync(batchRunner, ctx, builder.Configuration, scopeFactory));
-scheduleGroup.MapPost("/comfort", async (HttpContext ctx, BatchRunner batchRunner, IConfiguration cfg) =>
+scheduleGroup.MapPost("/comfort", async (HttpContext ctx, BatchRunner batchRunner, IConfiguration cfg, DaikinOAuthService daikinOAuth) =>
 {
     var userId = GetUserId(ctx) ?? "default";
+
+    // Verify the user has a valid Daikin token before allowing schedule application
+    var (token, _) = await daikinOAuth.TryGetValidAccessTokenAsync(userId);
+    token ??= await daikinOAuth.RefreshIfNeededAsync(userId);
+    if (token == null)
+        return Results.Json(new { error = "Not authorized with Daikin. Please connect your Daikin account first." }, statusCode: 401);
+
     try
     {
         using var reader = new StreamReader(ctx.Request.Body);

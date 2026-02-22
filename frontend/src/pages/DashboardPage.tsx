@@ -253,7 +253,7 @@ export default function DashboardPage() {
                 Eco (Daily DHW)
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                Last run: {flexibleState.LastEcoRunUtc
+                Last scheduled: {flexibleState.LastEcoRunUtc
                   ? new Date(flexibleState.LastEcoRunUtc).toLocaleString()
                   : 'Never (waiting for first interval)'}
               </Typography>

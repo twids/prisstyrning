@@ -181,7 +181,7 @@ internal class BatchRunner
             if (ecoResult.State == "scheduled" && ecoResult.ScheduledHourUtc.HasValue)
             {
                 await flexRepo.UpdateEcoRunAsync(userId ?? "default", ecoResult.ScheduledHourUtc.Value);
-                Console.WriteLine($"[Batch/Flexible] Updated LastEcoRunUtc to {ecoResult.ScheduledHourUtc.Value:yyyy-MM-dd HH:00}");
+                Console.WriteLine($"[Batch/Flexible] Recorded scheduled eco hour at {ecoResult.ScheduledHourUtc.Value:yyyy-MM-dd HH:00}");
             }
 
             // If comfort was scheduled or rescheduled, update NextScheduledComfortUtc
