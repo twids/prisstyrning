@@ -599,4 +599,104 @@ public static class ScheduleAlgorithm
         var root = new JsonObject { ["0"] = new JsonObject { ["actions"] = actionsCombined } };
         return (root, message);
     }
+
+    // ─── Flexible Eco Scheduling ──────────────────────────────────────
+
+    /// <summary>Result from the flexible eco scheduling algorithm.</summary>
+    public sealed record FlexibleEcoResult(
+        DateTimeOffset? ScheduledHourUtc,  // The hour we want to schedule eco, or null if no schedule needed
+        string State,                       // "scheduled", "waiting", "no_prices"
+        string Message                      // Human-readable explanation
+    );
+
+    /// <summary>
+    /// Parses price data from raw JSON arrays into a flat list of hourly entries.
+    /// Works with both 15-minute and hourly data. Deduplicates by hour
+    /// (tomorrow's data wins when both arrays contain the same hour).
+    /// Returns sorted by start time.
+    /// </summary>
+    internal static List<(DateTimeOffset Start, decimal Price)> ParseHourlyPrices(JsonArray? rawToday, JsonArray? rawTomorrow)
+    {
+        var byHour = new Dictionary<DateTimeOffset, decimal>();
+
+        void AddEntries(JsonArray? raw)
+        {
+            if (raw == null) return;
+            foreach (var item in raw)
+            {
+                if (item == null) continue;
+                var startStr = item["start"]?.ToString();
+                var valueStr = item["value"]?.ToString();
+                if (!DateTimeOffset.TryParse(startStr, out var startTs)) continue;
+                if (!decimal.TryParse(valueStr, System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out var val)) continue;
+
+                // Truncate to hour boundary
+                var hourKey = new DateTimeOffset(startTs.Year, startTs.Month, startTs.Day,
+                    startTs.Hour, 0, 0, startTs.Offset);
+                byHour[hourKey] = val; // last write wins (tomorrow overwrites today for dupes)
+            }
+        }
+
+        AddEntries(rawToday);
+        AddEntries(rawTomorrow);
+
+        return byHour
+            .OrderBy(kvp => kvp.Key)
+            .Select(kvp => (kvp.Key, kvp.Value))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Determines when to schedule the next eco (DHW ~45°C) run within the flexibility window.
+    /// Picks the cheapest available hour in the eco window from today/tomorrow price data.
+    /// </summary>
+    public static FlexibleEcoResult GenerateFlexibleEco(
+        JsonArray? rawToday,
+        JsonArray? rawTomorrow,
+        DateTimeOffset lastEcoRun,
+        int intervalHours,
+        int flexibilityHours,
+        DateTimeOffset? nowOverride = null)
+    {
+        var now = nowOverride ?? DateTimeOffset.UtcNow;
+
+        // Compute eco window
+        var windowStart = lastEcoRun.AddHours(intervalHours - flexibilityHours);
+        var windowEnd = lastEcoRun.AddHours(intervalHours + flexibilityHours);
+
+        // If window hasn't opened yet, return waiting
+        if (now < windowStart)
+        {
+            var hoursUntilOpen = (windowStart - now).TotalHours;
+            return new FlexibleEcoResult(
+                null,
+                "waiting",
+                $"Eco window opens in {hoursUntilOpen:F1} hours (at {windowStart:yyyy-MM-dd HH:00} UTC)");
+        }
+
+        // Parse all available prices
+        var allPrices = ParseHourlyPrices(rawToday, rawTomorrow);
+
+        // Filter to future hours within the eco window
+        var effectiveStart = now > windowStart ? now : windowStart;
+        var candidates = allPrices
+            .Where(p => p.Start >= effectiveStart && p.Start < windowEnd)
+            .ToList();
+
+        if (candidates.Count == 0)
+        {
+            return new FlexibleEcoResult(
+                null,
+                "no_prices",
+                "No price data available in eco window");
+        }
+
+        // Pick the cheapest hour
+        var cheapest = candidates.OrderBy(p => p.Price).First();
+        return new FlexibleEcoResult(
+            cheapest.Start,
+            "scheduled",
+            $"Eco scheduled at {cheapest.Start:HH:00} ({cheapest.Price:F2} SEK/kWh)");
+    }
 }
