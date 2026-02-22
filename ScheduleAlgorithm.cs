@@ -699,4 +699,163 @@ public static class ScheduleAlgorithm
             "scheduled",
             $"Eco scheduled at {cheapest.Start:HH:00} ({cheapest.Price:F2} SEK/kWh)");
     }
+
+    // ─── Flexible Comfort Scheduling ──────────────────────────────────
+
+    /// <summary>Result from the flexible comfort scheduling algorithm.</summary>
+    public sealed record FlexibleComfortResult(
+        DateTimeOffset? ScheduledHourUtc,     // The hour we want to schedule comfort, or null
+        string State,                          // "scheduled", "rescheduled", "already_scheduled", "already_ran", "waiting", "waiting_for_cheaper", "no_prices"
+        double WindowProgress,                 // 0.0 to 1.0, how far through the comfort window we are
+        decimal? EffectiveThreshold,           // The current sliding threshold
+        string Message                         // Human-readable explanation
+    );
+
+    /// <summary>
+    /// Determines when to schedule the next comfort (legionella, ~60°C) run.
+    /// Uses a sliding threshold that becomes more lenient as the comfort window progresses.
+    /// Supports re-optimization: if a cheaper hour is found, reschedules.
+    /// </summary>
+    public static FlexibleComfortResult GenerateFlexibleComfort(
+        JsonArray? rawToday,
+        JsonArray? rawTomorrow,
+        DateTimeOffset lastComfortRun,
+        int intervalDays,
+        int flexibilityDays,
+        decimal? historicalBaseThreshold,
+        decimal? historicalMaxPrice,
+        DateTimeOffset? nextScheduledComfortUtc = null,
+        DateTimeOffset? nowOverride = null)
+    {
+        var now = nowOverride ?? DateTimeOffset.UtcNow;
+
+        // 1. Compute comfort window
+        var windowStart = lastComfortRun.AddDays(intervalDays - flexibilityDays);
+        var windowEnd = lastComfortRun.AddDays(intervalDays + flexibilityDays);
+
+        // 2. If window hasn't opened yet → waiting
+        if (now < windowStart)
+        {
+            return new FlexibleComfortResult(
+                null,
+                "waiting",
+                0.0,
+                historicalBaseThreshold,
+                $"Comfort window opens in {(windowStart - now).TotalHours:F1} hours (at {windowStart:yyyy-MM-dd HH:00} UTC)");
+        }
+
+        // 3. If nextScheduledComfortUtc is in the past → already_ran
+        if (nextScheduledComfortUtc.HasValue && nextScheduledComfortUtc.Value <= now)
+        {
+            var windowSpan = (windowEnd - windowStart).TotalHours;
+            var elapsed = (now - windowStart).TotalHours;
+            var progress = windowSpan > 0 ? Math.Clamp(elapsed / windowSpan, 0.0, 1.0) : 1.0;
+            return new FlexibleComfortResult(
+                nextScheduledComfortUtc.Value,
+                "already_ran",
+                progress,
+                null,
+                $"Comfort already ran at {nextScheduledComfortUtc.Value:yyyy-MM-dd HH:00} UTC");
+        }
+
+        // 4. Compute window progress and effective threshold
+        var windowSpanHours = (windowEnd - windowStart).TotalHours;
+        var elapsedHours = (now - windowStart).TotalHours;
+        var windowProgress = windowSpanHours > 0 ? Math.Clamp(elapsedHours / windowSpanHours, 0.0, 1.0) : 1.0;
+
+        decimal? effectiveThreshold = null;
+        if (historicalBaseThreshold.HasValue && historicalMaxPrice.HasValue)
+        {
+            effectiveThreshold = HistoricalPriceAnalyzer.ComputeSlidingThreshold(
+                historicalBaseThreshold.Value, historicalMaxPrice.Value, windowProgress);
+        }
+
+        // 5. Parse available prices, filter to future hours within window
+        var allPrices = ParseHourlyPrices(rawToday, rawTomorrow);
+        var effectiveStart = now > windowStart ? now : windowStart;
+        var hoursRemaining = (windowEnd - now).TotalHours;
+        bool atDeadline = windowProgress >= 0.95 || hoursRemaining < 36;
+
+        // At deadline, relax window end constraint to allow any future price
+        var candidates = allPrices
+            .Where(p => p.Start >= effectiveStart && (atDeadline || p.Start < windowEnd))
+            .ToList();
+
+        if (candidates.Count == 0)
+        {
+            return new FlexibleComfortResult(
+                null,
+                "no_prices",
+                windowProgress,
+                effectiveThreshold,
+                "No price data available in comfort window");
+        }
+
+        // 6. Find cheapest available hour
+        var cheapest = candidates.OrderBy(p => p.Price).First();
+
+        // 7. Re-optimization: if nextScheduledComfortUtc is set and in the future
+        if (nextScheduledComfortUtc.HasValue && nextScheduledComfortUtc.Value > now)
+        {
+            // Look up the price of the currently scheduled hour
+            var scheduledPrice = allPrices
+                .Where(p => p.Start == nextScheduledComfortUtc.Value)
+                .Select(p => (decimal?)p.Price)
+                .FirstOrDefault();
+
+            // If price not found in data (data shifted), treat as reschedulable
+            if (scheduledPrice == null || cheapest.Price < scheduledPrice.Value)
+            {
+                return new FlexibleComfortResult(
+                    cheapest.Start,
+                    "rescheduled",
+                    windowProgress,
+                    effectiveThreshold,
+                    $"Rescheduled comfort to {cheapest.Start:HH:00} ({cheapest.Price:F2} SEK/kWh), cheaper than previous {nextScheduledComfortUtc.Value:HH:00}");
+            }
+            else
+            {
+                return new FlexibleComfortResult(
+                    nextScheduledComfortUtc.Value,
+                    "already_scheduled",
+                    windowProgress,
+                    effectiveThreshold,
+                    $"Comfort already scheduled at {nextScheduledComfortUtc.Value:HH:00} ({scheduledPrice.Value:F2} SEK/kWh), still cheapest");
+            }
+        }
+
+        // 8. No scheduled comfort yet — decide whether to schedule
+
+        if (effectiveThreshold.HasValue && cheapest.Price <= effectiveThreshold.Value)
+        {
+            return new FlexibleComfortResult(
+                cheapest.Start,
+                "scheduled",
+                windowProgress,
+                effectiveThreshold,
+                $"Comfort scheduled at {cheapest.Start:HH:00} ({cheapest.Price:F2} SEK/kWh, threshold {effectiveThreshold.Value:F2})");
+        }
+
+        if (atDeadline)
+        {
+            return new FlexibleComfortResult(
+                cheapest.Start,
+                "scheduled",
+                windowProgress,
+                effectiveThreshold,
+                $"Comfort forced at deadline: {cheapest.Start:HH:00} ({cheapest.Price:F2} SEK/kWh)");
+        }
+
+        // Not cheap enough yet, wait for better prices
+        var msg = effectiveThreshold.HasValue
+            ? $"Cheapest available {cheapest.Price:F2} SEK/kWh exceeds threshold {effectiveThreshold.Value:F2} (progress {windowProgress:P0})"
+            : $"No historical data available, waiting for prices (progress {windowProgress:P0})";
+
+        return new FlexibleComfortResult(
+            null,
+            "waiting_for_cheaper",
+            windowProgress,
+            effectiveThreshold,
+            msg);
+    }
 }
