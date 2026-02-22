@@ -858,4 +858,99 @@ public static class ScheduleAlgorithm
             effectiveThreshold,
             msg);
     }
+
+    // ─── Flexible Schedule Composition ────────────────────────────────
+
+    /// <summary>
+    /// Composes eco and comfort scheduling results into a single Daikin-compatible schedule payload.
+    /// Uses "eco", "comfort", and "turn_off" as the three possible domesticHotWaterTemperature values.
+    /// </summary>
+    public static (JsonNode? schedulePayload, string message) ComposeFlexibleSchedule(
+        FlexibleEcoResult? ecoResult,
+        FlexibleComfortResult? comfortResult,
+        DateTimeOffset now)
+    {
+        var todayDate = now.Date;
+        var tomorrowDate = todayDate.AddDays(1);
+        var todayName = todayDate.DayOfWeek.ToString().ToLowerInvariant();
+        var tomorrowName = tomorrowDate.DayOfWeek.ToString().ToLowerInvariant();
+
+        // Build per-day action dictionaries: time → state
+        // SortedDictionary keeps actions ordered by time
+        var dayActions = new Dictionary<string, SortedDictionary<TimeSpan, string>>
+        {
+            [todayName] = new SortedDictionary<TimeSpan, string> { [TimeSpan.Zero] = "turn_off" },
+            [tomorrowName] = new SortedDictionary<TimeSpan, string> { [TimeSpan.Zero] = "turn_off" }
+        };
+
+        bool ecoScheduled = ecoResult?.ScheduledHourUtc != null;
+        bool comfortScheduled = comfortResult?.ScheduledHourUtc != null &&
+            (comfortResult.State == "scheduled" || comfortResult.State == "rescheduled" || comfortResult.State == "already_scheduled");
+
+        // Add eco transitions
+        if (ecoScheduled)
+        {
+            var ecoHour = ecoResult!.ScheduledHourUtc!.Value;
+            var dayName = ecoHour.Date == todayDate ? todayName : tomorrowName;
+            var time = new TimeSpan(ecoHour.Hour, 0, 0);
+            var timeEnd = time.Add(TimeSpan.FromHours(1));
+
+            if (dayActions.ContainsKey(dayName))
+            {
+                dayActions[dayName][time] = "eco";
+                // Only add turn_off after if it doesn't exceed 24h
+                if (timeEnd.TotalHours < 24)
+                    dayActions[dayName][timeEnd] = "turn_off";
+            }
+        }
+
+        // Add comfort transitions (comfort takes priority over eco on same hour)
+        if (comfortScheduled)
+        {
+            var comfortHour = comfortResult!.ScheduledHourUtc!.Value;
+            var dayName = comfortHour.Date == todayDate ? todayName : tomorrowName;
+            var time = new TimeSpan(comfortHour.Hour, 0, 0);
+            var timeEnd = time.Add(TimeSpan.FromHours(1));
+
+            if (dayActions.ContainsKey(dayName))
+            {
+                dayActions[dayName][time] = "comfort"; // overwrites eco if same hour
+                if (timeEnd.TotalHours < 24)
+                    dayActions[dayName][timeEnd] = "turn_off";
+            }
+        }
+
+        // Build Daikin JSON structure
+        var actionsCombined = new JsonObject();
+        foreach (var (dayName, actions) in dayActions)
+        {
+            var dayObj = new JsonObject();
+            foreach (var (time, state) in actions)
+            {
+                var key = time.ToString(@"hh\:mm\:ss");
+                dayObj[key] = new JsonObject { ["domesticHotWaterTemperature"] = state };
+            }
+            actionsCombined[dayName] = dayObj;
+        }
+
+        var root = new JsonObject { ["0"] = new JsonObject { ["actions"] = actionsCombined } };
+
+        // Build message
+        var parts = new List<string>();
+        if (ecoScheduled)
+            parts.Add($"Eco: {ecoResult!.Message}");
+        else if (ecoResult != null)
+            parts.Add($"Eco: {ecoResult.State}");
+
+        if (comfortScheduled)
+            parts.Add($"Comfort: {comfortResult!.Message}");
+        else if (comfortResult != null)
+            parts.Add($"Comfort: {comfortResult.State}");
+
+        if (parts.Count == 0)
+            parts.Add("No eco or comfort scheduled, turn_off only");
+
+        var message = string.Join(" | ", parts);
+        return (root, message);
+    }
 }
