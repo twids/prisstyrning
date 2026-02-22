@@ -1,4 +1,4 @@
-﻿
+
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection;
@@ -179,7 +179,13 @@ app.MapGet("/api/user/settings", async (HttpContext ctx, UserSettingsRepository 
         ComfortHours = entity.ComfortHours, 
         TurnOffPercentile = entity.TurnOffPercentile, 
         AutoApplySchedule = entity.AutoApplySchedule, 
-        MaxComfortGapHours = entity.MaxComfortGapHours 
+        MaxComfortGapHours = entity.MaxComfortGapHours,
+        SchedulingMode = entity.SchedulingMode,
+        EcoIntervalHours = entity.EcoIntervalHours,
+        EcoFlexibilityHours = entity.EcoFlexibilityHours,
+        ComfortIntervalDays = entity.ComfortIntervalDays,
+        ComfortFlexibilityDays = entity.ComfortFlexibilityDays,
+        ComfortEarlyPercentile = entity.ComfortEarlyPercentile
     }, new JsonSerializerOptions { PropertyNamingPolicy = null });
 });
 
@@ -192,6 +198,12 @@ app.MapPost("/api/user/settings", async (HttpContext ctx, UserSettingsRepository
     string? rawTp = body["TurnOffPercentile"]?.ToString();
     string? rawAas = body["AutoApplySchedule"]?.ToString();
     string? rawMcgh = body["MaxComfortGapHours"]?.ToString();
+    string? rawMode = body["SchedulingMode"]?.ToString();
+    string? rawEih = body["EcoIntervalHours"]?.ToString();
+    string? rawEfh = body["EcoFlexibilityHours"]?.ToString();
+    string? rawCid = body["ComfortIntervalDays"]?.ToString();
+    string? rawCfd = body["ComfortFlexibilityDays"]?.ToString();
+    string? rawCep = body["ComfortEarlyPercentile"]?.ToString();
     var errors = new List<string>();
     int comfortHours = 3;
     if (!string.IsNullOrWhiteSpace(rawCh))
@@ -205,9 +217,73 @@ app.MapPost("/api/user/settings", async (HttpContext ctx, UserSettingsRepository
     int maxComfortGapHours = 28;
     if (!string.IsNullOrWhiteSpace(rawMcgh))
     { if (!int.TryParse(rawMcgh, out maxComfortGapHours) || maxComfortGapHours < 1 || maxComfortGapHours > 72) { errors.Add("MaxComfortGapHours must be an integer between 1 and 72"); maxComfortGapHours = 28; } }
+    // Flexible scheduling fields
+    string? schedulingMode = null;
+    if (!string.IsNullOrWhiteSpace(rawMode))
+    {
+        if (rawMode != "Classic" && rawMode != "Flexible") { errors.Add("SchedulingMode must be 'Classic' or 'Flexible'"); }
+        else { schedulingMode = rawMode; }
+    }
+    int? ecoIntervalHours = null;
+    if (!string.IsNullOrWhiteSpace(rawEih))
+    { if (!int.TryParse(rawEih, out var eih) || eih < 6 || eih > 36) { errors.Add("EcoIntervalHours must be an integer between 6 and 36"); } else { ecoIntervalHours = eih; } }
+    int? ecoFlexibilityHours = null;
+    if (!string.IsNullOrWhiteSpace(rawEfh))
+    { if (!int.TryParse(rawEfh, out var efh) || efh < 1 || efh > 18) { errors.Add("EcoFlexibilityHours must be an integer between 1 and 18"); } else { ecoFlexibilityHours = efh; } }
+    int? comfortIntervalDays = null;
+    if (!string.IsNullOrWhiteSpace(rawCid))
+    { if (!int.TryParse(rawCid, out var cid) || cid < 7 || cid > 90) { errors.Add("ComfortIntervalDays must be an integer between 7 and 90"); } else { comfortIntervalDays = cid; } }
+    int? comfortFlexibilityDays = null;
+    if (!string.IsNullOrWhiteSpace(rawCfd))
+    { if (!int.TryParse(rawCfd, out var cfd) || cfd < 1 || cfd > 30) { errors.Add("ComfortFlexibilityDays must be an integer between 1 and 30"); } else { comfortFlexibilityDays = cfd; } }
+    double? comfortEarlyPercentile = null;
+    if (!string.IsNullOrWhiteSpace(rawCep))
+    { if (!double.TryParse(rawCep, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var cep) || cep < 0.01 || cep > 0.50) { errors.Add("ComfortEarlyPercentile must be a number between 0.01 and 0.50"); } else { comfortEarlyPercentile = cep; } }
     if (errors.Count > 0) return Results.BadRequest(new { error = "Validation failed", errors });
-    await settingsRepo.SaveSettingsAsync(userId, comfortHours, turnOffPercentile, autoApplySchedule, maxComfortGapHours);
-    return Results.Json(new { ComfortHours = comfortHours, TurnOffPercentile = turnOffPercentile, AutoApplySchedule = autoApplySchedule, MaxComfortGapHours = maxComfortGapHours });
+    await settingsRepo.SaveSettingsAsync(userId, comfortHours, turnOffPercentile, autoApplySchedule, maxComfortGapHours,
+        schedulingMode, ecoIntervalHours, ecoFlexibilityHours, comfortIntervalDays, comfortFlexibilityDays, comfortEarlyPercentile);
+    return Results.Ok(new { saved = true });
+
+});
+
+app.MapGet("/api/user/flexible-state", async (HttpContext ctx, FlexibleScheduleStateRepository flexRepo, UserSettingsRepository settingsRepo) =>
+{
+    var userId = GetUserId(ctx) ?? "default";
+    var state = await flexRepo.GetOrCreateAsync(userId);
+    var settings = await settingsRepo.GetOrCreateAsync(userId);
+    
+    // Compute window info
+    var now = DateTimeOffset.UtcNow;
+    DateTimeOffset? ecoWindowStart = null, ecoWindowEnd = null;
+    DateTimeOffset? comfortWindowStart = null, comfortWindowEnd = null;
+    double? comfortWindowProgress = null;
+
+    if (state.LastEcoRunUtc.HasValue)
+    {
+        ecoWindowStart = state.LastEcoRunUtc.Value.AddHours(settings.EcoIntervalHours - settings.EcoFlexibilityHours);
+        ecoWindowEnd = state.LastEcoRunUtc.Value.AddHours(settings.EcoIntervalHours + settings.EcoFlexibilityHours);
+    }
+    if (state.LastComfortRunUtc.HasValue)
+    {
+        comfortWindowStart = state.LastComfortRunUtc.Value.AddDays(settings.ComfortIntervalDays - settings.ComfortFlexibilityDays);
+        comfortWindowEnd = state.LastComfortRunUtc.Value.AddDays(settings.ComfortIntervalDays + settings.ComfortFlexibilityDays);
+        if (comfortWindowStart.Value < comfortWindowEnd.Value)
+        {
+            comfortWindowProgress = Math.Clamp(
+                (now - comfortWindowStart.Value).TotalHours / (comfortWindowEnd.Value - comfortWindowStart.Value).TotalHours,
+                0.0, 1.0);
+        }
+    }
+
+    return Results.Json(new
+    {
+        LastEcoRunUtc = state.LastEcoRunUtc,
+        LastComfortRunUtc = state.LastComfortRunUtc,
+        NextScheduledComfortUtc = state.NextScheduledComfortUtc,
+        EcoWindow = new { Start = ecoWindowStart, End = ecoWindowEnd },
+        ComfortWindow = new { Start = comfortWindowStart, End = comfortWindowEnd, Progress = comfortWindowProgress },
+        SchedulingMode = settings.SchedulingMode
+    }, new JsonSerializerOptions { PropertyNamingPolicy = null });
 });
 
 // Preload price memory from database
