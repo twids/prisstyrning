@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+/* Custom theme layer */
+@theme {
+  --color-comfort: #22c55e;
+  --color-eco: #3b82f6;
+  --color-turnoff: #ef4444;
+  --color-comfort-bg: #dcfce7;
+  --color-eco-bg: #dbeafe;
+  --color-turnoff-bg: #fee2e2;
+}
+
+/* Base styles */
+@layer base {
+  body {
+    @apply bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-gray-100 antialiased;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}
+
+@keyframes slide-up {
+  from { transform: translateY(1rem); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out;
+}
