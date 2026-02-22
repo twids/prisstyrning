@@ -18,7 +18,7 @@ export interface PriceTimeseries {
   source: 'memory' | 'latest';
 }
 
-export type ScheduleState = 'comfort' | 'turn_off'; // Updated for 2-mode system post-ECO removal
+export type ScheduleState = 'comfort' | 'eco' | 'turn_off';
 
 export interface SchedulePayload {
   [scheduleId: string]: {
@@ -38,7 +38,12 @@ export interface UserSettings {
   TurnOffPercentile: number;
   AutoApplySchedule: boolean;
   MaxComfortGapHours: number;
-  // Note: TurnOffMaxConsecutive removed in Phase 4
+  SchedulingMode: 'Classic' | 'Flexible';
+  EcoIntervalHours: number;
+  EcoFlexibilityHours: number;
+  ComfortIntervalDays: number;
+  ComfortFlexibilityDays: number;
+  ComfortEarlyPercentile: number;
 }
 
 export interface SchedulePreviewResponse {
@@ -134,4 +139,20 @@ export interface AdminUser {
 
 export interface AdminUsersResponse {
   users: AdminUser[];
+}
+
+export interface FlexibleState {
+  LastEcoRunUtc: string | null;
+  LastComfortRunUtc: string | null;
+  NextScheduledComfortUtc: string | null;
+  EcoWindow: {
+    Start: string | null;
+    End: string | null;
+  };
+  ComfortWindow: {
+    Start: string | null;
+    End: string | null;
+    Progress: number | null;
+  };
+  SchedulingMode: string;
 }

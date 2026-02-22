@@ -38,6 +38,8 @@ const Cell = styled(Box, {
   backgroundColor:
     state === 'comfort'
       ? theme.palette.success.main
+      : state === 'eco'
+      ? theme.palette.info.main
       : state === 'turn_off'
       ? theme.palette.error.main
       : theme.palette.action.disabledBackground,

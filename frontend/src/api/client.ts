@@ -70,6 +70,11 @@ class ApiClient {
     return this.post('/api/daikin/gateway/schedule/put', payload);
   }
 
+  // Flexible scheduling state
+  async getFlexibleState(): Promise<T.FlexibleState> {
+    return this.get('/api/user/flexible-state');
+  }
+
   // Status
   async getStatus(): Promise<T.StatusResponse> {
     return this.get('/api/status');

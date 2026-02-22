@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Stack, Paper, Typography, Button, Alert, Box, Snackbar, Alert as MuiAlert } from '@mui/material';
+import { Stack, Paper, Typography, Button, Alert, Box, Snackbar, TextField, Divider } from '@mui/material';
+
 import AuthStatusChip from '../components/AuthStatusChip';
 import PriceChart from '../components/PriceChart';
 import ScheduleGrid from '../components/ScheduleGrid';
@@ -11,6 +12,8 @@ import { useAuth } from '../hooks/useAuth';
 import { useSchedulePreview } from '../hooks/useSchedulePreview';
 import { useApplySchedule } from '../hooks/useApplySchedule';
 import { useCurrentSchedule } from '../hooks/useCurrentSchedule';
+import { useFlexibleState } from '../hooks/useFlexibleState';
+import { useUserSettings } from '../hooks/useUserSettings';
 
 export default function DashboardPage() {
   const { isAuthorized, startAuth, refresh, isRefreshing } = useAuth();
@@ -28,6 +31,9 @@ export default function DashboardPage() {
   // New hooks
   const applySchedule = useApplySchedule();
   const currentSchedule = useCurrentSchedule();
+  const { settings } = useUserSettings();
+  const isFlexible = settings?.SchedulingMode === 'Flexible';
+  const { state: flexibleState } = useFlexibleState(isFlexible);
 
   const handleGenerateSchedule = async () => {
     try {
@@ -162,6 +168,88 @@ export default function DashboardPage() {
         )}
       </Paper>
 
+      {/* Flexible Scheduling Status */}
+      {isFlexible && flexibleState && (
+        <Paper sx={{ p: 3 }}>
+          <Typography variant="h5" gutterBottom>
+            Flexible Scheduling Status
+          </Typography>
+
+          <Stack spacing={2}>
+            {/* Eco Status */}
+            <Box>
+              <Typography variant="subtitle1" fontWeight="bold">
+                Eco (Daily DHW)
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Last run: {flexibleState.LastEcoRunUtc
+                  ? new Date(flexibleState.LastEcoRunUtc).toLocaleString()
+                  : 'Never (waiting for first interval)'}
+              </Typography>
+              {flexibleState.EcoWindow.Start && flexibleState.EcoWindow.End && (
+                <Typography variant="body2" color="text.secondary">
+                  Next window: {new Date(flexibleState.EcoWindow.Start).toLocaleString()} – {new Date(flexibleState.EcoWindow.End).toLocaleString()}
+                </Typography>
+              )}
+            </Box>
+
+            <Divider />
+
+            {/* Comfort Status */}
+            <Box>
+              <Typography variant="subtitle1" fontWeight="bold">
+                Comfort (Legionella)
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Last run: {flexibleState.LastComfortRunUtc
+                  ? new Date(flexibleState.LastComfortRunUtc).toLocaleString()
+                  : 'Never (waiting for first interval)'}
+              </Typography>
+              {flexibleState.NextScheduledComfortUtc && (
+                <Typography variant="body2" color="primary.main">
+                  Next scheduled: {new Date(flexibleState.NextScheduledComfortUtc).toLocaleString()}
+                </Typography>
+              )}
+              {flexibleState.ComfortWindow.Start && flexibleState.ComfortWindow.End && (
+                <>
+                  <Typography variant="body2" color="text.secondary">
+                    Window: {new Date(flexibleState.ComfortWindow.Start).toLocaleString()} – {new Date(flexibleState.ComfortWindow.End).toLocaleString()}
+                  </Typography>
+                  {flexibleState.ComfortWindow.Progress !== null && (
+                    <Box sx={{ mt: 1 }}>
+                      <Typography variant="caption" color="text.secondary">
+                        Window progress: {(flexibleState.ComfortWindow.Progress * 100).toFixed(0)}%
+                      </Typography>
+                      <Box
+                        sx={{
+                          mt: 0.5,
+                          height: 8,
+                          borderRadius: 4,
+                          bgcolor: 'grey.200',
+                          overflow: 'hidden',
+                        }}
+                      >
+                        <Box
+                          sx={{
+                            height: '100%',
+                            width: `${(flexibleState.ComfortWindow.Progress ?? 0) * 100}%`,
+                            bgcolor: (flexibleState.ComfortWindow.Progress ?? 0) > 0.9
+                              ? 'warning.main'
+                              : 'primary.main',
+                            borderRadius: 4,
+                            transition: 'width 0.3s ease',
+                          }}
+                        />
+                      </Box>
+                    </Box>
+                  )}
+                </>
+              )}
+            </Box>
+          </Stack>
+        </Paper>
+      )}
+
       {/* Apply Schedule Section */}
       <Paper sx={{ p: 3 }}>
         <Typography variant="h5" gutterBottom>
@@ -227,13 +315,13 @@ export default function DashboardPage() {
         onClose={() => setSnackbar({ ...snackbar, open: false })}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
       >
-        <MuiAlert
+        <Alert
           onClose={() => setSnackbar({ ...snackbar, open: false })}
           severity={snackbar.severity}
           sx={{ width: '100%' }}
         >
           {snackbar.message}
-        </MuiAlert>
+        </Alert>
       </Snackbar>
     </Stack>
   );
