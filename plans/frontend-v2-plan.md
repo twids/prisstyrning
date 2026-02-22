@@ -1,6 +1,6 @@
 ## Plan: Frontend V2 - MUI-Free Modern Redesign
 
-Create a v2 of the Prisstyrning frontend that removes Material UI entirely, uses pure CSS with CSS custom properties for automatic day/night theming, replaces `@mui/x-charts` with the lightweight `recharts` library, and serves at `/v2` alongside the existing frontend. All existing functionality is preserved identically.
+Create a v2 of the Prisstyrning frontend that removes Material UI entirely, uses Tailwind CSS v4 with Headless UI for accessible components and automatic day/night theming, replaces `@mui/x-charts` with the lightweight `recharts` library, and serves at `/v2` alongside the existing frontend. All existing functionality is preserved identically.
 
 **Phases (7 phases)**
 
@@ -11,20 +11,20 @@ Create a v2 of the Prisstyrning frontend that removes Material UI entirely, uses
     - **Files to Modify:** `Program.cs` (add `/v2` static files and SPA fallback)
     - **Tests to Write:** N/A (scaffold phase)
     - **Steps:**
-        1. Create `frontend-v2/` directory with `package.json` containing React, react-router-dom, @tanstack/react-query, recharts, date-fns
+        1. Create `frontend-v2/` directory with `package.json` containing React, react-router-dom, @tanstack/react-query, recharts, date-fns, Tailwind CSS v4, @headlessui/react
         2. Configure Vite to build to `wwwroot-v2/`, proxy `/api` and `/auth` to port 5000
         3. Copy API client, types, and all hooks verbatim
         4. Create `main.tsx` and `App.tsx` with router shell
         5. Update `Program.cs` to serve `wwwroot-v2/` at `/v2` with SPA fallback
 
 2. **Phase 2: CSS Design System & Auto Theme**
-    - **Objective:** Build a complete CSS design system with automatic light/dark theme switching
-    - **Files/Functions to Create:** `src/styles/global.css`, `src/styles/components.css`, `src/context/ThemeContext.tsx`
+    - **Objective:** Build a complete design system using Tailwind CSS v4 with automatic light/dark theme switching
+    - **Files/Functions to Create:** `src/styles/app.css`, `src/context/ThemeContext.tsx`
     - **Tests to Write:** N/A (styling phase)
     - **Steps:**
-        1. Create CSS custom properties for both light and dark themes
-        2. Implement auto-detection via `prefers-color-scheme` and time-of-day (6AM–6PM = light)
-        3. Style card, button, input, slider, switch, badge, dialog, toast, table components
+        1. Configure Tailwind CSS v4 with `@tailwindcss/vite` plugin and custom theme colors
+        2. Implement auto-detection via `prefers-color-scheme` and time-of-day (6AM–6PM = light) with `dark:` class strategy
+        3. Style components using Tailwind utility classes with dark mode variants
         4. Apply modern design with subtle shadows, rounded corners, smooth transitions
 
 3. **Phase 3: Shared Components**

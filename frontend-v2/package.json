@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build --base /v2/",
+    "build": "tsc && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
