@@ -14,6 +14,7 @@ import { useApplySchedule } from '../hooks/useApplySchedule';
 import { useCurrentSchedule } from '../hooks/useCurrentSchedule';
 import { useFlexibleState } from '../hooks/useFlexibleState';
 import { useUserSettings } from '../hooks/useUserSettings';
+import { useManualComfort } from '../hooks/useManualComfort';
 
 export default function DashboardPage() {
   const { isAuthorized, startAuth, refresh, isRefreshing } = useAuth();
@@ -34,6 +35,37 @@ export default function DashboardPage() {
   const { settings } = useUserSettings();
   const isFlexible = settings?.SchedulingMode === 'Flexible';
   const { state: flexibleState } = useFlexibleState(isFlexible);
+  const manualComfort = useManualComfort();
+
+  const formatDateTimeLocal = (date: Date): string => {
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  };
+
+  const [manualComfortTime, setManualComfortTime] = useState(() => {
+    const nextHour = new Date();
+    nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
+    return formatDateTimeLocal(nextHour);
+  });
+
+  const handleManualComfort = async () => {
+    if (!manualComfortTime) return;
+    try {
+      const comfortDate = new Date(manualComfortTime);
+      const result = await manualComfort.mutateAsync(comfortDate.toISOString());
+      setSnackbar({
+        open: true,
+        message: result.message,
+        severity: result.applied ? 'success' : 'warning',
+      });
+    } catch (error) {
+      setSnackbar({
+        open: true,
+        message: `Failed to schedule comfort: ${error}`,
+        severity: 'error',
+      });
+    }
+  };
 
   const handleGenerateSchedule = async () => {
     try {
@@ -165,6 +197,45 @@ export default function DashboardPage() {
               </Typography>
             )}
           </Box>
+        )}
+      </Paper>
+
+      {/* Manual Comfort Run */}
+      <Paper sx={{ p: 3 }}>
+        <Typography variant="h5" gutterBottom>
+          Manual Comfort Run
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Schedule an immediate comfort run (e.g., for filling a hot tub). Select a time within the next 48 hours.
+        </Typography>
+
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="flex-end">
+          <TextField
+            type="datetime-local"
+            label="Comfort Time"
+            value={manualComfortTime}
+            onChange={(e) => setManualComfortTime(e.target.value)}
+            InputLabelProps={{ shrink: true }}
+            inputProps={{
+              min: formatDateTimeLocal(new Date()),
+              max: formatDateTimeLocal(new Date(Date.now() + 48 * 60 * 60 * 1000)),
+            }}
+            fullWidth
+          />
+          <Button
+            variant="contained"
+            onClick={handleManualComfort}
+            disabled={!isAuthorized || !manualComfortTime || manualComfort.isPending}
+            sx={{ whiteSpace: 'nowrap', minWidth: 160 }}
+          >
+            {manualComfort.isPending ? 'Scheduling...' : 'Schedule & Apply'}
+          </Button>
+        </Stack>
+
+        {!isAuthorized && (
+          <Alert severity="warning" sx={{ mt: 2 }}>
+            Authorize with Daikin before scheduling a manual comfort run.
+          </Alert>
         )}
       </Paper>
 

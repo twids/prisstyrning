@@ -953,4 +953,51 @@ public static class ScheduleAlgorithm
         var message = string.Join(" | ", parts);
         return (root, message);
     }
+
+    /// <summary>
+    /// Composes a Daikin-compatible schedule JSON for a manual comfort run at a specific time.
+    /// The schedule covers today and tomorrow with turn_off everywhere except a 1-hour comfort window.
+    /// </summary>
+    public static JsonNode ComposeManualComfortSchedule(DateTimeOffset comfortTime)
+    {
+        var todayDate = DateTimeOffset.UtcNow.Date;
+        var tomorrowDate = todayDate.AddDays(1);
+        var todayName = todayDate.DayOfWeek.ToString().ToLowerInvariant();
+        var tomorrowName = tomorrowDate.DayOfWeek.ToString().ToLowerInvariant();
+
+        var comfortDate = comfortTime.UtcDateTime.Date;
+        var comfortDayName = comfortDate.DayOfWeek.ToString().ToLowerInvariant();
+        var comfortHourSpan = new TimeSpan(comfortTime.UtcDateTime.Hour, 0, 0);
+        var comfortEndSpan = comfortHourSpan.Add(TimeSpan.FromHours(1));
+
+        var dayActions = new Dictionary<string, SortedDictionary<TimeSpan, string>>();
+
+        // Initialize both days with turn_off
+        dayActions[todayName] = new SortedDictionary<TimeSpan, string> { [TimeSpan.Zero] = "turn_off" };
+        if (todayName != tomorrowName)
+            dayActions[tomorrowName] = new SortedDictionary<TimeSpan, string> { [TimeSpan.Zero] = "turn_off" };
+
+        // Add comfort at the specified hour (only if it's today or tomorrow)
+        if (dayActions.ContainsKey(comfortDayName))
+        {
+            dayActions[comfortDayName][comfortHourSpan] = "comfort";
+            if (comfortEndSpan.TotalHours < 24)
+                dayActions[comfortDayName][comfortEndSpan] = "turn_off";
+        }
+
+        // Build JSON
+        var actionsCombined = new JsonObject();
+        foreach (var (dayName, actions) in dayActions)
+        {
+            var dayObj = new JsonObject();
+            foreach (var (time, state) in actions)
+            {
+                var key = time.ToString(@"hh\:mm\:ss");
+                dayObj[key] = new JsonObject { ["domesticHotWaterTemperature"] = state };
+            }
+            actionsCombined[dayName] = dayObj;
+        }
+
+        return new JsonObject { ["0"] = new JsonObject { ["actions"] = actionsCombined } };
+    }
 }

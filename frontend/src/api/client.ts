@@ -75,6 +75,11 @@ class ApiClient {
     return this.get('/api/user/flexible-state');
   }
 
+  // Manual comfort
+  async scheduleManualComfort(comfortTime: string): Promise<{ applied: boolean; comfortHour: string; message: string }> {
+    return this.post('/api/schedule/comfort', { comfortTime });
+  }
+
   // Status
   async getStatus(): Promise<T.StatusResponse> {
     return this.get('/api/status');

@@ -203,7 +203,7 @@ internal class BatchRunner
     /// Applies a schedule payload to the Daikin device. Extracted from RunBatchInternalAsync for reuse.
     /// Returns true if the schedule was successfully applied.
     /// </summary>
-    private async Task<bool> ApplyScheduleToDaikinAsync(IConfiguration config, string dynamicSchedulePayload, string? userId)
+    internal async Task<bool> ApplyScheduleToDaikinAsync(IConfiguration config, string dynamicSchedulePayload, string? userId)
     {
         var applyEnabled = config["Daikin:ApplySchedule"] is string s && bool.TryParse(s, out var b) ? b : true;
         if (!applyEnabled || string.IsNullOrEmpty(dynamicSchedulePayload))

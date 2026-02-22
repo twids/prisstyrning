@@ -589,6 +589,55 @@ scheduleGroup.MapGet("/preview", async (HttpContext c, UserSettingsRepository se
     return Results.Json(new { schedulePayload, generated, message, zone });
 });
 scheduleGroup.MapPost("/apply", async (BatchRunner batchRunner, HttpContext ctx, IServiceScopeFactory scopeFactory) => await HandleApplyScheduleAsync(batchRunner, ctx, builder.Configuration, scopeFactory));
+scheduleGroup.MapPost("/comfort", async (HttpContext ctx, BatchRunner batchRunner, IConfiguration cfg) =>
+{
+    var userId = GetUserId(ctx) ?? "default";
+    try
+    {
+        using var reader = new StreamReader(ctx.Request.Body);
+        var body = await reader.ReadToEndAsync();
+        var json = System.Text.Json.JsonDocument.Parse(body);
+        var comfortTimeStr = json.RootElement.GetProperty("comfortTime").GetString();
+        if (string.IsNullOrEmpty(comfortTimeStr) || !DateTimeOffset.TryParse(comfortTimeStr, out var comfortTime))
+            return Results.BadRequest(new { error = "Invalid or missing comfortTime" });
+
+        var now = DateTimeOffset.UtcNow;
+        if (comfortTime < now)
+            return Results.BadRequest(new { error = "comfortTime must be in the future" });
+        if (comfortTime > now.AddHours(48))
+            return Results.BadRequest(new { error = "comfortTime must be within the next 48 hours" });
+
+        var todayDate = now.Date;
+        var tomorrowDate = todayDate.AddDays(1);
+        var comfortDate = comfortTime.UtcDateTime.Date;
+        if (comfortDate != todayDate && comfortDate != tomorrowDate)
+            return Results.BadRequest(new { error = "comfortTime must be today or tomorrow" });
+
+        var schedule = ScheduleAlgorithm.ComposeManualComfortSchedule(comfortTime);
+        var schedulePayload = schedule.ToJsonString();
+
+        var applied = await batchRunner.ApplyScheduleToDaikinAsync(cfg, schedulePayload, userId);
+
+        var dayName = comfortTime.ToString("dddd");
+        var hourStr = comfortTime.ToString("HH:mm");
+        return Results.Json(new
+        {
+            applied,
+            comfortHour = comfortTime.ToString("o"),
+            message = applied
+                ? $"Comfort scheduled at {hourStr} on {dayName} and applied to Daikin"
+                : $"Comfort schedule composed for {hourStr} on {dayName} but could not apply to Daikin"
+        });
+    }
+    catch (System.Text.Json.JsonException)
+    {
+        return Results.BadRequest(new { error = "Invalid JSON body" });
+    }
+    catch (KeyNotFoundException)
+    {
+        return Results.BadRequest(new { error = "Missing comfortTime field" });
+    }
+});
 
 // Admin group
 var adminGroup = app.MapGroup("/api/admin").WithTags("Admin");
