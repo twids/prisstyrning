@@ -29,10 +29,8 @@ export default function DashboardPage() {
   const { state: flexibleState } = useFlexibleState(isFlexible);
   const manualComfort = useManualComfort();
 
-  const formatDateTimeLocal = (date: Date): string => {
-    const pad = (n: number) => n.toString().padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-  };
+  const formatDateTimeLocal = (date: Date): string =>
+    date.toISOString().slice(0, 16);
 
   const [manualComfortTime, setManualComfortTime] = useState(() => {
     const nextHour = new Date();
@@ -52,7 +50,11 @@ export default function DashboardPage() {
   };
 
   const handleGenerateSchedule = async () => {
-    try { await schedulePreview.mutateAsync(); } catch (error) { console.error('Failed:', error); }
+    try {
+      await schedulePreview.mutateAsync();
+    } catch (error) {
+      showToast(`Failed to generate schedule: ${error}`, 'error');
+    }
   };
 
   const handleApplySchedule = () => {
