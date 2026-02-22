@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Prisstyrning.Data.Entities;
 using Prisstyrning.Data.Repositories;
 
 internal enum HourState { None, Comfort, Eco, TurnOff }
@@ -43,8 +44,18 @@ internal class BatchRunner
             int mcgh = int.TryParse(config["Schedule:MaxComfortGapHours"], out var _mcgh) ? Math.Clamp(_mcgh, 1, 72) : 28;
             settings = new UserScheduleSettings(ch, tp, mcgh);
         }
-        int activationLimit = int.TryParse(config["Schedule:MaxActivationsPerDay"], out var mpd) ? Math.Clamp(mpd, 1, 24) : 4;
-        var (generated, schedulePayload, message) = await RunBatchInternalAsync(config, new UserScheduleSettings(settings.ComfortHours, settings.TurnOffPercentile, settings.MaxComfortGapHours), activationLimit, applySchedule, persist, userId);
+
+        bool generated; JsonNode? schedulePayload; string message;
+
+        if (settings.SchedulingMode == "Flexible" && scopeFactory != null)
+        {
+            (generated, schedulePayload, message) = await RunFlexibleBatchAsync(config, settings, userId, applySchedule, persist, scopeFactory);
+        }
+        else
+        {
+            int activationLimit = int.TryParse(config["Schedule:MaxActivationsPerDay"], out var mpd) ? Math.Clamp(mpd, 1, 24) : 4;
+            (generated, schedulePayload, message) = await RunBatchInternalAsync(config, new UserScheduleSettings(settings.ComfortHours, settings.TurnOffPercentile, settings.MaxComfortGapHours), activationLimit, applySchedule, persist, userId);
+        }
         
         // Enhanced logging for history persistence
         if (!persist)
@@ -66,6 +77,251 @@ internal class BatchRunner
         }
         
         return (generated, schedulePayload, message);
+    }
+
+    // ─── Flexible Scheduling Path ──────────────────────────────────────
+    private async Task<(bool generated, JsonNode? schedulePayload, string message)> RunFlexibleBatchAsync(
+        IConfiguration config, UserScheduleSettings settings, string? userId, bool applySchedule, bool persist, IServiceScopeFactory scopeFactory)
+    {
+        var now = DateTimeOffset.UtcNow;
+        Console.WriteLine($"[Batch/Flexible] Start userId={userId ?? "anon"} mode=Flexible");
+
+        // 1. Fetch prices (same as classic path)
+        JsonArray? rawToday = null; JsonArray? rawTomorrow = null;
+        try
+        {
+            var zone = config["Price:Nordpool:DefaultZone"] ?? "SE3";
+            var currency = config["Price:Nordpool:Currency"] ?? "SEK";
+            var np = new NordpoolClient(_httpClientFactory.CreateClient("Nordpool"), currency);
+            var fetched = await np.GetTodayTomorrowAsync(zone);
+            rawToday = fetched.today; rawTomorrow = fetched.tomorrow;
+            PriceMemory.Set(rawToday, rawTomorrow);
+        }
+        catch (Exception ex)
+        {
+            return (false, null, $"Nordpool error: {ex.Message}");
+        }
+
+        // 2. Load flexible schedule state and historical price stats
+        FlexibleScheduleState flexState;
+        HistoricalPriceAnalyzer.HistoricalPriceStats histStats;
+        string zone2;
+        using (var scope = scopeFactory.CreateScope())
+        {
+            var flexRepo = scope.ServiceProvider.GetRequiredService<FlexibleScheduleStateRepository>();
+            var priceRepo = scope.ServiceProvider.GetRequiredService<PriceRepository>();
+            var settingsRepo = scope.ServiceProvider.GetRequiredService<UserSettingsRepository>();
+
+            flexState = await flexRepo.GetOrCreateAsync(userId ?? "default");
+            zone2 = await settingsRepo.GetUserZoneAsync(userId);
+            histStats = await HistoricalPriceAnalyzer.GetHistoricalStatsAsync(
+                priceRepo, zone2, settings.ComfortEarlyPercentile);
+        }
+
+        // 3. Determine last run times (use now for first run)
+        var lastEcoRun = flexState.LastEcoRunUtc ?? now;
+        var lastComfortRun = flexState.LastComfortRunUtc ?? now;
+
+        // 4. Run flexible eco algorithm
+        var ecoResult = ScheduleAlgorithm.GenerateFlexibleEco(
+            rawToday, rawTomorrow,
+            lastEcoRun,
+            settings.EcoIntervalHours,
+            settings.EcoFlexibilityHours,
+            nowOverride: now);
+
+        Console.WriteLine($"[Batch/Flexible] Eco: state={ecoResult.State} scheduled={ecoResult.ScheduledHourUtc?.ToString("yyyy-MM-dd HH:00") ?? "none"}");
+
+        // 5. Run flexible comfort algorithm
+        var comfortResult = ScheduleAlgorithm.GenerateFlexibleComfort(
+            rawToday, rawTomorrow,
+            lastComfortRun,
+            settings.ComfortIntervalDays,
+            settings.ComfortFlexibilityDays,
+            histStats.PercentileThreshold,
+            histStats.MaxPrice,
+            flexState.NextScheduledComfortUtc,
+            nowOverride: now);
+
+        Console.WriteLine($"[Batch/Flexible] Comfort: state={comfortResult.State} scheduled={comfortResult.ScheduledHourUtc?.ToString("yyyy-MM-dd HH:00") ?? "none"} progress={comfortResult.WindowProgress:P0}");
+
+        // 6. Handle comfort "already_ran" state: mark as completed
+        if (comfortResult.State == "already_ran" && flexState.NextScheduledComfortUtc.HasValue)
+        {
+            using var scope = scopeFactory.CreateScope();
+            var flexRepo = scope.ServiceProvider.GetRequiredService<FlexibleScheduleStateRepository>();
+            await flexRepo.UpdateComfortRunAsync(userId ?? "default", flexState.NextScheduledComfortUtc.Value);
+            Console.WriteLine($"[Batch/Flexible] Comfort marked as completed at {flexState.NextScheduledComfortUtc.Value:yyyy-MM-dd HH:00}");
+        }
+
+        // 7. Compose flexible schedule
+        var (schedulePayload, composeMessage) = ScheduleAlgorithm.ComposeFlexibleSchedule(ecoResult, comfortResult, now);
+        if (schedulePayload == null)
+        {
+            return (false, null, composeMessage);
+        }
+
+        var dynamicSchedulePayload = schedulePayload.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        Console.WriteLine($"[Batch/Flexible] Composed schedule: {composeMessage}");
+
+        // 8. Apply schedule to Daikin (reuse existing apply infrastructure)
+        bool scheduleApplied = false;
+        if (applySchedule)
+        {
+            scheduleApplied = await ApplyScheduleToDaikinAsync(config, dynamicSchedulePayload, userId);
+        }
+
+        // 9. Update state after successful apply (only when actually applying and persisting)
+        if (scheduleApplied && persist)
+        {
+            using var scope = scopeFactory.CreateScope();
+            var flexRepo = scope.ServiceProvider.GetRequiredService<FlexibleScheduleStateRepository>();
+
+            // If eco was scheduled, update LastEcoRunUtc
+            if (ecoResult.State == "scheduled" && ecoResult.ScheduledHourUtc.HasValue)
+            {
+                await flexRepo.UpdateEcoRunAsync(userId ?? "default", ecoResult.ScheduledHourUtc.Value);
+                Console.WriteLine($"[Batch/Flexible] Recorded scheduled eco hour at {ecoResult.ScheduledHourUtc.Value:yyyy-MM-dd HH:00}");
+            }
+
+            // If comfort was scheduled or rescheduled, update NextScheduledComfortUtc
+            if ((comfortResult.State == "scheduled" || comfortResult.State == "rescheduled") && comfortResult.ScheduledHourUtc.HasValue)
+            {
+                await flexRepo.ScheduleComfortRunAsync(userId ?? "default", comfortResult.ScheduledHourUtc.Value);
+                Console.WriteLine($"[Batch/Flexible] Updated NextScheduledComfortUtc to {comfortResult.ScheduledHourUtc.Value:yyyy-MM-dd HH:00}");
+            }
+        }
+
+        string message = composeMessage;
+        if (applySchedule)
+            message += scheduleApplied ? " | Applied" : " | Apply failed";
+
+        return (true, schedulePayload, message);
+    }
+
+    /// <summary>
+    /// Applies a schedule payload to the Daikin device. Extracted from RunBatchInternalAsync for reuse.
+    /// Returns true if the schedule was successfully applied.
+    /// </summary>
+    internal async Task<bool> ApplyScheduleToDaikinAsync(IConfiguration config, string dynamicSchedulePayload, string? userId)
+    {
+        var applyEnabled = config["Daikin:ApplySchedule"] is string s && bool.TryParse(s, out var b) ? b : true;
+        if (!applyEnabled || string.IsNullOrEmpty(dynamicSchedulePayload))
+            return false;
+
+        var accessToken = config["Daikin:AccessToken"] ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(accessToken))
+        {
+            var (tkn, _) = await _daikinOAuthService.TryGetValidAccessTokenAsync(userId);
+            if (tkn == null) tkn = await _daikinOAuthService.RefreshIfNeededAsync(userId);
+            accessToken = tkn ?? string.Empty;
+        }
+        if (string.IsNullOrEmpty(accessToken))
+            return false;
+
+        string? appliedSite = null; string? appliedDevice = null;
+
+        async Task<bool> TryApplyAsync(string token, bool isRetry)
+        {
+            try
+            {
+                bool log = (config["Daikin:Http:Log"] ?? config["Daikin:HttpLog"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
+                bool logBody = (config["Daikin:Http:LogBody"] ?? config["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
+                int.TryParse(config["Daikin:Http:BodySnippetLength"], out var snipLen);
+                var daikin = new DaikinApiClient(_httpClientFactory.CreateClient("Daikin"), token, log, logBody, snipLen == 0 ? null : snipLen);
+                var overrideSite = config["Daikin:SiteId"];
+                var overrideDevice = config["Daikin:DeviceId"];
+                var overrideEmbedded = config["Daikin:ManagementPointEmbeddedId"];
+                var scheduleMode = config["Daikin:ScheduleMode"] ?? "heating";
+
+                if (!string.IsNullOrWhiteSpace(overrideSite)) appliedSite = overrideSite;
+                if (appliedSite == null)
+                {
+                    var sitesJson = await daikin.GetSitesAsync();
+                    using var doc = JsonDocument.Parse(sitesJson);
+                    if (doc.RootElement.ValueKind == JsonValueKind.Array && doc.RootElement.GetArrayLength() > 0)
+                    {
+                        appliedSite = doc.RootElement[0].GetProperty("id").GetString();
+                    }
+                }
+                if (appliedSite == null) { Console.WriteLine("[Schedule/Flexible] no site found"); return false; }
+
+                if (!string.IsNullOrWhiteSpace(overrideDevice)) appliedDevice = overrideDevice;
+                string? pickedDeviceJson = null;
+                if (appliedDevice == null)
+                {
+                    var devicesJson = await daikin.GetDevicesAsync(appliedSite);
+                    using var dDoc = JsonDocument.Parse(devicesJson);
+                    if (dDoc.RootElement.ValueKind == JsonValueKind.Array && dDoc.RootElement.GetArrayLength() > 0)
+                    {
+                        var elem = dDoc.RootElement[0];
+                        appliedDevice = elem.GetProperty("id").GetString();
+                        pickedDeviceJson = elem.GetRawText();
+                    }
+                }
+                if (appliedDevice == null) { Console.WriteLine("[Schedule/Flexible] no device found"); return false; }
+
+                string? embeddedId = overrideEmbedded;
+                if (embeddedId == null)
+                {
+                    if (pickedDeviceJson == null)
+                    {
+                        var devicesJson = await daikin.GetDevicesAsync(appliedSite);
+                        using var dDoc = JsonDocument.Parse(devicesJson);
+                        if (dDoc.RootElement.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var item in dDoc.RootElement.EnumerateArray())
+                            {
+                                if (item.TryGetProperty("id", out var idEl) && idEl.GetString() == appliedDevice)
+                                { pickedDeviceJson = item.GetRawText(); break; }
+                            }
+                        }
+                    }
+                    if (pickedDeviceJson != null)
+                    {
+                        using var devDoc = JsonDocument.Parse(pickedDeviceJson);
+                        if (devDoc.RootElement.TryGetProperty("managementPoints", out var mpArray) && mpArray.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var mp in mpArray.EnumerateArray())
+                            {
+                                if (mp.TryGetProperty("managementPointType", out var mpt) && mpt.GetString() == "domesticHotWaterTank" && mp.TryGetProperty("embeddedId", out var emb))
+                                { embeddedId = emb.GetString(); break; }
+                            }
+                        }
+                    }
+                }
+                if (embeddedId == null)
+                {
+                    await daikin.LegacySetDhwScheduleAsync(appliedDevice, dynamicSchedulePayload);
+                    Console.WriteLine($"[Schedule/Flexible] legacy apply OK site={appliedSite} device={appliedDevice}");
+                    return true;
+                }
+
+                await daikin.PutSchedulesAsync(appliedDevice, embeddedId, scheduleMode, dynamicSchedulePayload);
+                await daikin.SetCurrentScheduleAsync(appliedDevice, embeddedId, scheduleMode, "0");
+                Console.WriteLine($"[Schedule/Flexible] apply OK site={appliedSite} device={appliedDevice} embedded={embeddedId}");
+                return true;
+            }
+            catch (HttpRequestException hre) when (hre.Message.Contains("401") && !isRetry)
+            {
+                Console.WriteLine("[Schedule/Flexible] 401 on first attempt – will retry after refresh.");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Schedule/Flexible] apply failed (retry={isRetry}): {ex.Message}");
+                return false;
+            }
+        }
+
+        var applied = await TryApplyAsync(accessToken, false);
+        if (!applied)
+        {
+            var refreshed = await _daikinOAuthService.RefreshIfNeededAsync(userId);
+            if (!string.IsNullOrEmpty(refreshed) && refreshed != accessToken)
+                applied = await TryApplyAsync(refreshed, true);
+        }
+        return applied;
     }
 
     // Returnerar schedulePayload som JsonNode istället för sträng för att API-responsen ska ha ett inbäddat JSON-objekt

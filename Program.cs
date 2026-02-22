@@ -1,4 +1,4 @@
-﻿
+
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection;
@@ -89,6 +89,7 @@ builder.Services.AddScoped<AdminRepository>();
 builder.Services.AddScoped<PriceRepository>();
 builder.Services.AddScoped<ScheduleHistoryRepository>();
 builder.Services.AddScoped<DaikinTokenRepository>();
+builder.Services.AddScoped<FlexibleScheduleStateRepository>();
 builder.Services.AddScoped<DaikinOAuthService>();
 builder.Services.AddHostedService<JsonMigrationService>();
 
@@ -178,7 +179,13 @@ app.MapGet("/api/user/settings", async (HttpContext ctx, UserSettingsRepository 
         ComfortHours = entity.ComfortHours, 
         TurnOffPercentile = entity.TurnOffPercentile, 
         AutoApplySchedule = entity.AutoApplySchedule, 
-        MaxComfortGapHours = entity.MaxComfortGapHours 
+        MaxComfortGapHours = entity.MaxComfortGapHours,
+        SchedulingMode = entity.SchedulingMode,
+        EcoIntervalHours = entity.EcoIntervalHours,
+        EcoFlexibilityHours = entity.EcoFlexibilityHours,
+        ComfortIntervalDays = entity.ComfortIntervalDays,
+        ComfortFlexibilityDays = entity.ComfortFlexibilityDays,
+        ComfortEarlyPercentile = entity.ComfortEarlyPercentile
     }, new JsonSerializerOptions { PropertyNamingPolicy = null });
 });
 
@@ -191,6 +198,12 @@ app.MapPost("/api/user/settings", async (HttpContext ctx, UserSettingsRepository
     string? rawTp = body["TurnOffPercentile"]?.ToString();
     string? rawAas = body["AutoApplySchedule"]?.ToString();
     string? rawMcgh = body["MaxComfortGapHours"]?.ToString();
+    string? rawMode = body["SchedulingMode"]?.ToString();
+    string? rawEih = body["EcoIntervalHours"]?.ToString();
+    string? rawEfh = body["EcoFlexibilityHours"]?.ToString();
+    string? rawCid = body["ComfortIntervalDays"]?.ToString();
+    string? rawCfd = body["ComfortFlexibilityDays"]?.ToString();
+    string? rawCep = body["ComfortEarlyPercentile"]?.ToString();
     var errors = new List<string>();
     int comfortHours = 3;
     if (!string.IsNullOrWhiteSpace(rawCh))
@@ -204,9 +217,73 @@ app.MapPost("/api/user/settings", async (HttpContext ctx, UserSettingsRepository
     int maxComfortGapHours = 28;
     if (!string.IsNullOrWhiteSpace(rawMcgh))
     { if (!int.TryParse(rawMcgh, out maxComfortGapHours) || maxComfortGapHours < 1 || maxComfortGapHours > 72) { errors.Add("MaxComfortGapHours must be an integer between 1 and 72"); maxComfortGapHours = 28; } }
+    // Flexible scheduling fields
+    string? schedulingMode = null;
+    if (!string.IsNullOrWhiteSpace(rawMode))
+    {
+        if (rawMode != "Classic" && rawMode != "Flexible") { errors.Add("SchedulingMode must be 'Classic' or 'Flexible'"); }
+        else { schedulingMode = rawMode; }
+    }
+    int? ecoIntervalHours = null;
+    if (!string.IsNullOrWhiteSpace(rawEih))
+    { if (!int.TryParse(rawEih, out var eih) || eih < 6 || eih > 36) { errors.Add("EcoIntervalHours must be an integer between 6 and 36"); } else { ecoIntervalHours = eih; } }
+    int? ecoFlexibilityHours = null;
+    if (!string.IsNullOrWhiteSpace(rawEfh))
+    { if (!int.TryParse(rawEfh, out var efh) || efh < 1 || efh > 18) { errors.Add("EcoFlexibilityHours must be an integer between 1 and 18"); } else { ecoFlexibilityHours = efh; } }
+    int? comfortIntervalDays = null;
+    if (!string.IsNullOrWhiteSpace(rawCid))
+    { if (!int.TryParse(rawCid, out var cid) || cid < 7 || cid > 90) { errors.Add("ComfortIntervalDays must be an integer between 7 and 90"); } else { comfortIntervalDays = cid; } }
+    int? comfortFlexibilityDays = null;
+    if (!string.IsNullOrWhiteSpace(rawCfd))
+    { if (!int.TryParse(rawCfd, out var cfd) || cfd < 1 || cfd > 30) { errors.Add("ComfortFlexibilityDays must be an integer between 1 and 30"); } else { comfortFlexibilityDays = cfd; } }
+    double? comfortEarlyPercentile = null;
+    if (!string.IsNullOrWhiteSpace(rawCep))
+    { if (!double.TryParse(rawCep, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var cep) || cep < 0.01 || cep > 0.50) { errors.Add("ComfortEarlyPercentile must be a number between 0.01 and 0.50"); } else { comfortEarlyPercentile = cep; } }
     if (errors.Count > 0) return Results.BadRequest(new { error = "Validation failed", errors });
-    await settingsRepo.SaveSettingsAsync(userId, comfortHours, turnOffPercentile, autoApplySchedule, maxComfortGapHours);
-    return Results.Json(new { ComfortHours = comfortHours, TurnOffPercentile = turnOffPercentile, AutoApplySchedule = autoApplySchedule, MaxComfortGapHours = maxComfortGapHours });
+    await settingsRepo.SaveSettingsAsync(userId, comfortHours, turnOffPercentile, autoApplySchedule, maxComfortGapHours,
+        schedulingMode, ecoIntervalHours, ecoFlexibilityHours, comfortIntervalDays, comfortFlexibilityDays, comfortEarlyPercentile);
+    return Results.Ok(new { saved = true });
+
+});
+
+app.MapGet("/api/user/flexible-state", async (HttpContext ctx, FlexibleScheduleStateRepository flexRepo, UserSettingsRepository settingsRepo) =>
+{
+    var userId = GetUserId(ctx) ?? "default";
+    var state = await flexRepo.GetOrCreateAsync(userId);
+    var settings = await settingsRepo.GetOrCreateAsync(userId);
+    
+    // Compute window info
+    var now = DateTimeOffset.UtcNow;
+    DateTimeOffset? ecoWindowStart = null, ecoWindowEnd = null;
+    DateTimeOffset? comfortWindowStart = null, comfortWindowEnd = null;
+    double? comfortWindowProgress = null;
+
+    if (state.LastEcoRunUtc.HasValue)
+    {
+        ecoWindowStart = state.LastEcoRunUtc.Value.AddHours(settings.EcoIntervalHours - settings.EcoFlexibilityHours);
+        ecoWindowEnd = state.LastEcoRunUtc.Value.AddHours(settings.EcoIntervalHours + settings.EcoFlexibilityHours);
+    }
+    if (state.LastComfortRunUtc.HasValue)
+    {
+        comfortWindowStart = state.LastComfortRunUtc.Value.AddDays(settings.ComfortIntervalDays - settings.ComfortFlexibilityDays);
+        comfortWindowEnd = state.LastComfortRunUtc.Value.AddDays(settings.ComfortIntervalDays + settings.ComfortFlexibilityDays);
+        if (comfortWindowStart.Value < comfortWindowEnd.Value)
+        {
+            comfortWindowProgress = Math.Clamp(
+                (now - comfortWindowStart.Value).TotalHours / (comfortWindowEnd.Value - comfortWindowStart.Value).TotalHours,
+                0.0, 1.0);
+        }
+    }
+
+    return Results.Json(new
+    {
+        LastEcoRunUtc = state.LastEcoRunUtc,
+        LastComfortRunUtc = state.LastComfortRunUtc,
+        NextScheduledComfortUtc = state.NextScheduledComfortUtc,
+        EcoWindow = new { Start = ecoWindowStart, End = ecoWindowEnd },
+        ComfortWindow = new { Start = comfortWindowStart, End = comfortWindowEnd, Progress = comfortWindowProgress },
+        SchedulingMode = settings.SchedulingMode
+    }, new JsonSerializerOptions { PropertyNamingPolicy = null });
 });
 
 // Preload price memory from database
@@ -512,6 +589,62 @@ scheduleGroup.MapGet("/preview", async (HttpContext c, UserSettingsRepository se
     return Results.Json(new { schedulePayload, generated, message, zone });
 });
 scheduleGroup.MapPost("/apply", async (BatchRunner batchRunner, HttpContext ctx, IServiceScopeFactory scopeFactory) => await HandleApplyScheduleAsync(batchRunner, ctx, builder.Configuration, scopeFactory));
+scheduleGroup.MapPost("/comfort", async (HttpContext ctx, BatchRunner batchRunner, IConfiguration cfg, DaikinOAuthService daikinOAuth) =>
+{
+    var userId = GetUserId(ctx) ?? "default";
+
+    // Verify the user has a valid Daikin token before allowing schedule application
+    var (token, _) = await daikinOAuth.TryGetValidAccessTokenAsync(userId);
+    token ??= await daikinOAuth.RefreshIfNeededAsync(userId);
+    if (token == null)
+        return Results.Json(new { error = "Not authorized with Daikin. Please connect your Daikin account first." }, statusCode: 401);
+
+    try
+    {
+        using var reader = new StreamReader(ctx.Request.Body);
+        var body = await reader.ReadToEndAsync();
+        var json = System.Text.Json.JsonDocument.Parse(body);
+        var comfortTimeStr = json.RootElement.GetProperty("comfortTime").GetString();
+        if (string.IsNullOrEmpty(comfortTimeStr) || !DateTimeOffset.TryParse(comfortTimeStr, out var comfortTime))
+            return Results.BadRequest(new { error = "Invalid or missing comfortTime" });
+
+        var now = DateTimeOffset.UtcNow;
+        if (comfortTime < now)
+            return Results.BadRequest(new { error = "comfortTime must be in the future" });
+        if (comfortTime > now.AddHours(48))
+            return Results.BadRequest(new { error = "comfortTime must be within the next 48 hours" });
+
+        var todayDate = now.Date;
+        var tomorrowDate = todayDate.AddDays(1);
+        var comfortDate = comfortTime.UtcDateTime.Date;
+        if (comfortDate != todayDate && comfortDate != tomorrowDate)
+            return Results.BadRequest(new { error = "comfortTime must be today or tomorrow" });
+
+        var schedule = ScheduleAlgorithm.ComposeManualComfortSchedule(comfortTime);
+        var schedulePayload = schedule.ToJsonString();
+
+        var applied = await batchRunner.ApplyScheduleToDaikinAsync(cfg, schedulePayload, userId);
+
+        var dayName = comfortTime.ToString("dddd");
+        var hourStr = comfortTime.ToString("HH:mm");
+        return Results.Json(new
+        {
+            applied,
+            comfortHour = comfortTime.ToString("o"),
+            message = applied
+                ? $"Comfort scheduled at {hourStr} on {dayName} and applied to Daikin"
+                : $"Comfort schedule composed for {hourStr} on {dayName} but could not apply to Daikin"
+        });
+    }
+    catch (System.Text.Json.JsonException)
+    {
+        return Results.BadRequest(new { error = "Invalid JSON body" });
+    }
+    catch (KeyNotFoundException)
+    {
+        return Results.BadRequest(new { error = "Missing comfortTime field" });
+    }
+});
 
 // Admin group
 var adminGroup = app.MapGroup("/api/admin").WithTags("Admin");

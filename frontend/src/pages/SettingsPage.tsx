@@ -45,6 +45,12 @@ export default function SettingsPage() {
     maxComfortGapHours: 1,
     autoApplySchedule: false,
     selectedZone: 'SE3',
+    schedulingMode: 'Classic' as 'Classic' | 'Flexible',
+    ecoIntervalHours: 24,
+    ecoFlexibilityHours: 12,
+    comfortIntervalDays: 21,
+    comfortFlexibilityDays: 7,
+    comfortEarlyPercentile: 0.10,
   });
 
   const [snackbar, setSnackbar] = useState({
@@ -64,6 +70,12 @@ export default function SettingsPage() {
         turnOffPercentile: settings.TurnOffPercentile ?? 0.9,
         maxComfortGapHours: settings.MaxComfortGapHours ?? 1,
         autoApplySchedule: settings.AutoApplySchedule ?? false,
+        schedulingMode: settings.SchedulingMode ?? 'Classic',
+        ecoIntervalHours: settings.EcoIntervalHours ?? 24,
+        ecoFlexibilityHours: settings.EcoFlexibilityHours ?? 12,
+        comfortIntervalDays: settings.ComfortIntervalDays ?? 21,
+        comfortFlexibilityDays: settings.ComfortFlexibilityDays ?? 7,
+        comfortEarlyPercentile: settings.ComfortEarlyPercentile ?? 0.10,
       }));
     }
   }, [settings]);
@@ -85,6 +97,12 @@ export default function SettingsPage() {
         TurnOffPercentile: formData.turnOffPercentile,
         MaxComfortGapHours: formData.maxComfortGapHours,
         AutoApplySchedule: formData.autoApplySchedule,
+        SchedulingMode: formData.schedulingMode,
+        EcoIntervalHours: formData.ecoIntervalHours,
+        EcoFlexibilityHours: formData.ecoFlexibilityHours,
+        ComfortIntervalDays: formData.comfortIntervalDays,
+        ComfortFlexibilityDays: formData.comfortFlexibilityDays,
+        ComfortEarlyPercentile: formData.comfortEarlyPercentile,
       });
 
       if (formData.selectedZone !== zone) {
@@ -230,6 +248,167 @@ export default function SettingsPage() {
             </FormControl>
           </Stack>
         </Paper>
+
+        {/* Scheduling Mode */}
+        <Paper sx={{ p: 3 }}>
+          <Typography variant="h6" gutterBottom>
+            Scheduling Mode
+          </Typography>
+
+          <Stack spacing={2}>
+            <FormControl fullWidth>
+              <InputLabel>Mode</InputLabel>
+              <Select
+                value={formData.schedulingMode}
+                onChange={(e) => setFormData({ ...formData, schedulingMode: e.target.value as 'Classic' | 'Flexible' })}
+                label="Mode"
+              >
+                <MenuItem value="Classic">Classic (Fixed daily schedule)</MenuItem>
+                <MenuItem value="Flexible">Flexible (Interval-based with price optimization)</MenuItem>
+              </Select>
+            </FormControl>
+
+            <Typography variant="caption" color="text.secondary">
+              Classic mode generates a fixed daily schedule. Flexible mode schedules eco and comfort runs at optimal prices within configurable intervals.
+            </Typography>
+          </Stack>
+        </Paper>
+
+        {/* Flexible Scheduling Settings - only show when Flexible mode */}
+        {formData.schedulingMode === 'Flexible' && (
+          <Paper sx={{ p: 3 }}>
+            <Typography variant="h6" gutterBottom>
+              Flexible Schedule Settings
+            </Typography>
+
+            <Stack spacing={3}>
+              {/* Eco Section */}
+              <Typography variant="subtitle1" fontWeight="bold">Eco (Daily DHW ~45°C)</Typography>
+
+              <Box>
+                <Typography gutterBottom>
+                  Eco Interval: {formData.ecoIntervalHours} hours
+                </Typography>
+                <Slider
+                  value={formData.ecoIntervalHours}
+                  onChange={(_, value) => setFormData({ ...formData, ecoIntervalHours: value as number })}
+                  min={6}
+                  max={36}
+                  step={1}
+                  marks={[
+                    { value: 6, label: '6h' },
+                    { value: 12, label: '12h' },
+                    { value: 24, label: '24h' },
+                    { value: 36, label: '36h' },
+                  ]}
+                  valueLabelDisplay="auto"
+                />
+                <Typography variant="caption" color="text.secondary">
+                  How often eco heating should run (target interval)
+                </Typography>
+              </Box>
+
+              <Box>
+                <Typography gutterBottom>
+                  Eco Flexibility: ±{formData.ecoFlexibilityHours} hours
+                </Typography>
+                <Slider
+                  value={formData.ecoFlexibilityHours}
+                  onChange={(_, value) => setFormData({ ...formData, ecoFlexibilityHours: value as number })}
+                  min={1}
+                  max={18}
+                  step={1}
+                  marks={[
+                    { value: 1, label: '±1h' },
+                    { value: 6, label: '±6h' },
+                    { value: 12, label: '±12h' },
+                    { value: 18, label: '±18h' },
+                  ]}
+                  valueLabelDisplay="auto"
+                />
+                <Typography variant="caption" color="text.secondary">
+                  Scheduling window: eco runs between {Math.max(0, formData.ecoIntervalHours - formData.ecoFlexibilityHours)}h and {formData.ecoIntervalHours + formData.ecoFlexibilityHours}h after last run
+                </Typography>
+              </Box>
+
+              <Divider />
+
+              {/* Comfort Section */}
+              <Typography variant="subtitle1" fontWeight="bold">Comfort (Legionella ~60°C)</Typography>
+
+              <Box>
+                <Typography gutterBottom>
+                  Comfort Interval: {formData.comfortIntervalDays} days
+                </Typography>
+                <Slider
+                  value={formData.comfortIntervalDays}
+                  onChange={(_, value) => setFormData({ ...formData, comfortIntervalDays: value as number })}
+                  min={7}
+                  max={90}
+                  step={1}
+                  marks={[
+                    { value: 7, label: '7d' },
+                    { value: 21, label: '21d' },
+                    { value: 30, label: '30d' },
+                    { value: 60, label: '60d' },
+                    { value: 90, label: '90d' },
+                  ]}
+                  valueLabelDisplay="auto"
+                />
+                <Typography variant="caption" color="text.secondary">
+                  How often comfort (legionella) heating should run
+                </Typography>
+              </Box>
+
+              <Box>
+                <Typography gutterBottom>
+                  Comfort Flexibility: ±{formData.comfortFlexibilityDays} days
+                </Typography>
+                <Slider
+                  value={formData.comfortFlexibilityDays}
+                  onChange={(_, value) => setFormData({ ...formData, comfortFlexibilityDays: value as number })}
+                  min={1}
+                  max={30}
+                  step={1}
+                  marks={[
+                    { value: 1, label: '±1d' },
+                    { value: 7, label: '±7d' },
+                    { value: 14, label: '±14d' },
+                    { value: 30, label: '±30d' },
+                  ]}
+                  valueLabelDisplay="auto"
+                />
+                <Typography variant="caption" color="text.secondary">
+                  Scheduling window: comfort runs between {Math.max(0, formData.comfortIntervalDays - formData.comfortFlexibilityDays)}d and {formData.comfortIntervalDays + formData.comfortFlexibilityDays}d after last run
+                </Typography>
+              </Box>
+
+              <Box>
+                <Typography gutterBottom>
+                  Early Comfort Threshold: {(formData.comfortEarlyPercentile * 100).toFixed(0)}th percentile
+                </Typography>
+                <Slider
+                  value={formData.comfortEarlyPercentile}
+                  onChange={(_, value) => setFormData({ ...formData, comfortEarlyPercentile: value as number })}
+                  min={0.01}
+                  max={0.50}
+                  step={0.01}
+                  marks={[
+                    { value: 0.05, label: '5%' },
+                    { value: 0.10, label: '10%' },
+                    { value: 0.25, label: '25%' },
+                    { value: 0.50, label: '50%' },
+                  ]}
+                  valueLabelDisplay="auto"
+                  valueLabelFormat={(value) => `${(value * 100).toFixed(0)}%`}
+                />
+                <Typography variant="caption" color="text.secondary">
+                  When the comfort window opens, only trigger if the price is below this historical percentile. The threshold relaxes as the window progresses.
+                </Typography>
+              </Box>
+            </Stack>
+          </Paper>
+        )}
 
         {/* Automation Settings */}
         <Paper sx={{ p: 3 }}>

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Stack, Paper, Typography, Button, Alert, Box, Snackbar, Alert as MuiAlert } from '@mui/material';
+import { Stack, Paper, Typography, Button, Alert, Box, Snackbar, TextField, Divider } from '@mui/material';
+
 import AuthStatusChip from '../components/AuthStatusChip';
 import PriceChart from '../components/PriceChart';
 import ScheduleGrid from '../components/ScheduleGrid';
@@ -11,6 +12,9 @@ import { useAuth } from '../hooks/useAuth';
 import { useSchedulePreview } from '../hooks/useSchedulePreview';
 import { useApplySchedule } from '../hooks/useApplySchedule';
 import { useCurrentSchedule } from '../hooks/useCurrentSchedule';
+import { useFlexibleState } from '../hooks/useFlexibleState';
+import { useUserSettings } from '../hooks/useUserSettings';
+import { useManualComfort } from '../hooks/useManualComfort';
 
 export default function DashboardPage() {
   const { isAuthorized, startAuth, refresh, isRefreshing } = useAuth();
@@ -28,6 +32,40 @@ export default function DashboardPage() {
   // New hooks
   const applySchedule = useApplySchedule();
   const currentSchedule = useCurrentSchedule();
+  const { settings } = useUserSettings();
+  const isFlexible = settings?.SchedulingMode === 'Flexible';
+  const { state: flexibleState } = useFlexibleState(isFlexible);
+  const manualComfort = useManualComfort();
+
+  const formatDateTimeLocal = (date: Date): string => {
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  };
+
+  const [manualComfortTime, setManualComfortTime] = useState(() => {
+    const nextHour = new Date();
+    nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
+    return formatDateTimeLocal(nextHour);
+  });
+
+  const handleManualComfort = async () => {
+    if (!manualComfortTime) return;
+    try {
+      const comfortDate = new Date(manualComfortTime);
+      const result = await manualComfort.mutateAsync(comfortDate.toISOString());
+      setSnackbar({
+        open: true,
+        message: result.message,
+        severity: result.applied ? 'success' : 'warning',
+      });
+    } catch (error) {
+      setSnackbar({
+        open: true,
+        message: `Failed to schedule comfort: ${error}`,
+        severity: 'error',
+      });
+    }
+  };
 
   const handleGenerateSchedule = async () => {
     try {
@@ -162,6 +200,127 @@ export default function DashboardPage() {
         )}
       </Paper>
 
+      {/* Manual Comfort Run */}
+      <Paper sx={{ p: 3 }}>
+        <Typography variant="h5" gutterBottom>
+          Manual Comfort Run
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Schedule an immediate comfort run (e.g., for filling a hot tub). Select a time within the next 48 hours.
+        </Typography>
+
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="flex-end">
+          <TextField
+            type="datetime-local"
+            label="Comfort Time"
+            value={manualComfortTime}
+            onChange={(e) => setManualComfortTime(e.target.value)}
+            InputLabelProps={{ shrink: true }}
+            inputProps={{
+              min: formatDateTimeLocal(new Date()),
+              max: formatDateTimeLocal(new Date(Date.now() + 48 * 60 * 60 * 1000)),
+            }}
+            fullWidth
+          />
+          <Button
+            variant="contained"
+            onClick={handleManualComfort}
+            disabled={!isAuthorized || !manualComfortTime || manualComfort.isPending}
+            sx={{ whiteSpace: 'nowrap', minWidth: 160 }}
+          >
+            {manualComfort.isPending ? 'Scheduling...' : 'Schedule & Apply'}
+          </Button>
+        </Stack>
+
+        {!isAuthorized && (
+          <Alert severity="warning" sx={{ mt: 2 }}>
+            Authorize with Daikin before scheduling a manual comfort run.
+          </Alert>
+        )}
+      </Paper>
+
+      {/* Flexible Scheduling Status */}
+      {isFlexible && flexibleState && (
+        <Paper sx={{ p: 3 }}>
+          <Typography variant="h5" gutterBottom>
+            Flexible Scheduling Status
+          </Typography>
+
+          <Stack spacing={2}>
+            {/* Eco Status */}
+            <Box>
+              <Typography variant="subtitle1" fontWeight="bold">
+                Eco (Daily DHW)
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Last scheduled: {flexibleState.LastEcoRunUtc
+                  ? new Date(flexibleState.LastEcoRunUtc).toLocaleString()
+                  : 'Never (waiting for first interval)'}
+              </Typography>
+              {flexibleState.EcoWindow.Start && flexibleState.EcoWindow.End && (
+                <Typography variant="body2" color="text.secondary">
+                  Next window: {new Date(flexibleState.EcoWindow.Start).toLocaleString()} – {new Date(flexibleState.EcoWindow.End).toLocaleString()}
+                </Typography>
+              )}
+            </Box>
+
+            <Divider />
+
+            {/* Comfort Status */}
+            <Box>
+              <Typography variant="subtitle1" fontWeight="bold">
+                Comfort (Legionella)
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Last run: {flexibleState.LastComfortRunUtc
+                  ? new Date(flexibleState.LastComfortRunUtc).toLocaleString()
+                  : 'Never (waiting for first interval)'}
+              </Typography>
+              {flexibleState.NextScheduledComfortUtc && (
+                <Typography variant="body2" color="primary.main">
+                  Next scheduled: {new Date(flexibleState.NextScheduledComfortUtc).toLocaleString()}
+                </Typography>
+              )}
+              {flexibleState.ComfortWindow.Start && flexibleState.ComfortWindow.End && (
+                <>
+                  <Typography variant="body2" color="text.secondary">
+                    Window: {new Date(flexibleState.ComfortWindow.Start).toLocaleString()} – {new Date(flexibleState.ComfortWindow.End).toLocaleString()}
+                  </Typography>
+                  {flexibleState.ComfortWindow.Progress !== null && (
+                    <Box sx={{ mt: 1 }}>
+                      <Typography variant="caption" color="text.secondary">
+                        Window progress: {(flexibleState.ComfortWindow.Progress * 100).toFixed(0)}%
+                      </Typography>
+                      <Box
+                        sx={{
+                          mt: 0.5,
+                          height: 8,
+                          borderRadius: 4,
+                          bgcolor: 'grey.200',
+                          overflow: 'hidden',
+                        }}
+                      >
+                        <Box
+                          sx={{
+                            height: '100%',
+                            width: `${(flexibleState.ComfortWindow.Progress ?? 0) * 100}%`,
+                            bgcolor: (flexibleState.ComfortWindow.Progress ?? 0) > 0.9
+                              ? 'warning.main'
+                              : 'primary.main',
+                            borderRadius: 4,
+                            transition: 'width 0.3s ease',
+                          }}
+                        />
+                      </Box>
+                    </Box>
+                  )}
+                </>
+              )}
+            </Box>
+          </Stack>
+        </Paper>
+      )}
+
       {/* Apply Schedule Section */}
       <Paper sx={{ p: 3 }}>
         <Typography variant="h5" gutterBottom>
@@ -227,13 +386,13 @@ export default function DashboardPage() {
         onClose={() => setSnackbar({ ...snackbar, open: false })}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
       >
-        <MuiAlert
+        <Alert
           onClose={() => setSnackbar({ ...snackbar, open: false })}
           severity={snackbar.severity}
           sx={{ width: '100%' }}
         >
           {snackbar.message}
-        </MuiAlert>
+        </Alert>
       </Snackbar>
     </Stack>
   );

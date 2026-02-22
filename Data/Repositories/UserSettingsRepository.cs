@@ -21,6 +21,13 @@ public class UserSettingsRepository
         double turnOffPercentile = double.TryParse(_cfg["Schedule:TurnOffPercentile"], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var tp) ? Math.Clamp(tp, 0.5, 0.99) : 0.9;
         int maxComfortGapHours = int.TryParse(_cfg["Schedule:MaxComfortGapHours"], out var mcgh) ? Math.Clamp(mcgh, 1, 72) : 28;
 
+        string schedulingMode = "Classic";
+        int ecoIntervalHours = 24;
+        int ecoFlexibilityHours = 12;
+        int comfortIntervalDays = 21;
+        int comfortFlexibilityDays = 7;
+        double comfortEarlyPercentile = 0.10;
+
         if (!string.IsNullOrWhiteSpace(userId))
         {
             var entity = await _db.UserSettings.FindAsync(userId);
@@ -29,10 +36,19 @@ public class UserSettingsRepository
                 comfortHours = Math.Clamp(entity.ComfortHours, 1, 12);
                 turnOffPercentile = Math.Clamp(entity.TurnOffPercentile, 0.5, 0.99);
                 maxComfortGapHours = Math.Clamp(entity.MaxComfortGapHours, 1, 72);
+                schedulingMode = (entity.SchedulingMode == "Classic" || entity.SchedulingMode == "Flexible")
+                    ? entity.SchedulingMode : "Classic";
+                ecoIntervalHours = Math.Clamp(entity.EcoIntervalHours, 6, 36);
+                ecoFlexibilityHours = Math.Clamp(entity.EcoFlexibilityHours, 1, 18);
+                comfortIntervalDays = Math.Clamp(entity.ComfortIntervalDays, 7, 90);
+                comfortFlexibilityDays = Math.Clamp(entity.ComfortFlexibilityDays, 1, 30);
+                comfortEarlyPercentile = Math.Clamp(entity.ComfortEarlyPercentile, 0.01, 0.50);
             }
         }
 
-        return new UserScheduleSettings(comfortHours, turnOffPercentile, maxComfortGapHours);
+        return new UserScheduleSettings(comfortHours, turnOffPercentile, maxComfortGapHours,
+            schedulingMode, ecoIntervalHours, ecoFlexibilityHours,
+            comfortIntervalDays, comfortFlexibilityDays, comfortEarlyPercentile);
     }
 
     public UserScheduleSettings LoadScheduleSettings(string? userId)
@@ -80,7 +96,9 @@ public class UserSettingsRepository
         return entity;
     }
 
-    public async Task SaveSettingsAsync(string userId, int comfortHours, double turnOffPercentile, bool autoApplySchedule, int maxComfortGapHours)
+    public async Task SaveSettingsAsync(string userId, int comfortHours, double turnOffPercentile, bool autoApplySchedule, int maxComfortGapHours,
+        string? schedulingMode = null, int? ecoIntervalHours = null, int? ecoFlexibilityHours = null,
+        int? comfortIntervalDays = null, int? comfortFlexibilityDays = null, double? comfortEarlyPercentile = null)
     {
         var entity = await _db.UserSettings.FindAsync(userId);
         if (entity == null)
@@ -92,6 +110,12 @@ public class UserSettingsRepository
         entity.TurnOffPercentile = turnOffPercentile;
         entity.AutoApplySchedule = autoApplySchedule;
         entity.MaxComfortGapHours = maxComfortGapHours;
+        if (schedulingMode != null) entity.SchedulingMode = schedulingMode;
+        if (ecoIntervalHours.HasValue) entity.EcoIntervalHours = ecoIntervalHours.Value;
+        if (ecoFlexibilityHours.HasValue) entity.EcoFlexibilityHours = ecoFlexibilityHours.Value;
+        if (comfortIntervalDays.HasValue) entity.ComfortIntervalDays = comfortIntervalDays.Value;
+        if (comfortFlexibilityDays.HasValue) entity.ComfortFlexibilityDays = comfortFlexibilityDays.Value;
+        if (comfortEarlyPercentile.HasValue) entity.ComfortEarlyPercentile = comfortEarlyPercentile.Value;
         await _db.SaveChangesAsync();
     }
 
@@ -129,4 +153,13 @@ public class UserSettingsRepository
     }
 }
 
-public sealed record UserScheduleSettings(int ComfortHours, double TurnOffPercentile, int MaxComfortGapHours);
+public sealed record UserScheduleSettings(
+    int ComfortHours,
+    double TurnOffPercentile,
+    int MaxComfortGapHours,
+    string SchedulingMode = "Classic",
+    int EcoIntervalHours = 24,
+    int EcoFlexibilityHours = 12,
+    int ComfortIntervalDays = 21,
+    int ComfortFlexibilityDays = 7,
+    double ComfortEarlyPercentile = 0.10);

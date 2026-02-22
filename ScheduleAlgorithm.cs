@@ -599,4 +599,405 @@ public static class ScheduleAlgorithm
         var root = new JsonObject { ["0"] = new JsonObject { ["actions"] = actionsCombined } };
         return (root, message);
     }
+
+    // ─── Flexible Eco Scheduling ──────────────────────────────────────
+
+    /// <summary>Result from the flexible eco scheduling algorithm.</summary>
+    public sealed record FlexibleEcoResult(
+        DateTimeOffset? ScheduledHourUtc,  // The hour we want to schedule eco, or null if no schedule needed
+        string State,                       // "scheduled", "waiting", "no_prices"
+        string Message                      // Human-readable explanation
+    );
+
+    /// <summary>
+    /// Parses price data from raw JSON arrays into a flat list of hourly entries.
+    /// Works with both 15-minute and hourly data. Deduplicates by hour
+    /// (tomorrow's data wins when both arrays contain the same hour).
+    /// Returns sorted by start time.
+    /// </summary>
+    internal static List<(DateTimeOffset Start, decimal Price)> ParseHourlyPrices(JsonArray? rawToday, JsonArray? rawTomorrow)
+    {
+        var byHour = new Dictionary<DateTimeOffset, decimal>();
+
+        void AddEntries(JsonArray? raw)
+        {
+            if (raw == null) return;
+            foreach (var item in raw)
+            {
+                if (item == null) continue;
+                var startStr = item["start"]?.ToString();
+                var valueStr = item["value"]?.ToString();
+                if (!DateTimeOffset.TryParse(startStr, out var startTs)) continue;
+                if (!decimal.TryParse(valueStr, System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out var val)) continue;
+
+                // Truncate to hour boundary
+                var hourKey = new DateTimeOffset(startTs.Year, startTs.Month, startTs.Day,
+                    startTs.Hour, 0, 0, startTs.Offset);
+                byHour[hourKey] = val; // last write wins (tomorrow overwrites today for dupes)
+            }
+        }
+
+        AddEntries(rawToday);
+        AddEntries(rawTomorrow);
+
+        return byHour
+            .OrderBy(kvp => kvp.Key)
+            .Select(kvp => (kvp.Key, kvp.Value))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Determines when to schedule the next eco (DHW ~45°C) run within the flexibility window.
+    /// Picks the cheapest available hour in the eco window from today/tomorrow price data.
+    /// </summary>
+    public static FlexibleEcoResult GenerateFlexibleEco(
+        JsonArray? rawToday,
+        JsonArray? rawTomorrow,
+        DateTimeOffset lastEcoRun,
+        int intervalHours,
+        int flexibilityHours,
+        DateTimeOffset? nowOverride = null)
+    {
+        var now = nowOverride ?? DateTimeOffset.UtcNow;
+
+        // Compute eco window
+        var windowStart = lastEcoRun.AddHours(intervalHours - flexibilityHours);
+        var windowEnd = lastEcoRun.AddHours(intervalHours + flexibilityHours);
+
+        // If window hasn't opened yet, return waiting
+        if (now < windowStart)
+        {
+            var hoursUntilOpen = (windowStart - now).TotalHours;
+            return new FlexibleEcoResult(
+                null,
+                "waiting",
+                $"Eco window opens in {hoursUntilOpen:F1} hours (at {windowStart:yyyy-MM-dd HH:00} UTC)");
+        }
+
+        // Parse all available prices
+        var allPrices = ParseHourlyPrices(rawToday, rawTomorrow);
+
+        // Filter to future hours within the eco window
+        var effectiveStart = now > windowStart ? now : windowStart;
+        var candidates = allPrices
+            .Where(p => p.Start >= effectiveStart && p.Start < windowEnd)
+            .ToList();
+
+        if (candidates.Count == 0)
+        {
+            return new FlexibleEcoResult(
+                null,
+                "no_prices",
+                "No price data available in eco window");
+        }
+
+        // Pick the cheapest hour
+        var cheapest = candidates.OrderBy(p => p.Price).First();
+        return new FlexibleEcoResult(
+            cheapest.Start,
+            "scheduled",
+            $"Eco scheduled at {cheapest.Start:HH:00} ({cheapest.Price:F2} SEK/kWh)");
+    }
+
+    // ─── Flexible Comfort Scheduling ──────────────────────────────────
+
+    /// <summary>Result from the flexible comfort scheduling algorithm.</summary>
+    public sealed record FlexibleComfortResult(
+        DateTimeOffset? ScheduledHourUtc,     // The hour we want to schedule comfort, or null
+        string State,                          // "scheduled", "rescheduled", "already_scheduled", "already_ran", "waiting", "waiting_for_cheaper", "no_prices"
+        double WindowProgress,                 // 0.0 to 1.0, how far through the comfort window we are
+        decimal? EffectiveThreshold,           // The current sliding threshold
+        string Message                         // Human-readable explanation
+    );
+
+    /// <summary>
+    /// Determines when to schedule the next comfort (legionella, ~60°C) run.
+    /// Uses a sliding threshold that becomes more lenient as the comfort window progresses.
+    /// Supports re-optimization: if a cheaper hour is found, reschedules.
+    /// </summary>
+    public static FlexibleComfortResult GenerateFlexibleComfort(
+        JsonArray? rawToday,
+        JsonArray? rawTomorrow,
+        DateTimeOffset lastComfortRun,
+        int intervalDays,
+        int flexibilityDays,
+        decimal? historicalBaseThreshold,
+        decimal? historicalMaxPrice,
+        DateTimeOffset? nextScheduledComfortUtc = null,
+        DateTimeOffset? nowOverride = null)
+    {
+        var now = nowOverride ?? DateTimeOffset.UtcNow;
+
+        // 1. Compute comfort window
+        var windowStart = lastComfortRun.AddDays(intervalDays - flexibilityDays);
+        var windowEnd = lastComfortRun.AddDays(intervalDays + flexibilityDays);
+
+        // 2. If window hasn't opened yet → waiting
+        if (now < windowStart)
+        {
+            return new FlexibleComfortResult(
+                null,
+                "waiting",
+                0.0,
+                historicalBaseThreshold,
+                $"Comfort window opens in {(windowStart - now).TotalHours:F1} hours (at {windowStart:yyyy-MM-dd HH:00} UTC)");
+        }
+
+        // 3. If nextScheduledComfortUtc is in the past → already_ran
+        if (nextScheduledComfortUtc.HasValue && nextScheduledComfortUtc.Value <= now)
+        {
+            var windowSpan = (windowEnd - windowStart).TotalHours;
+            var elapsed = (now - windowStart).TotalHours;
+            var progress = windowSpan > 0 ? Math.Clamp(elapsed / windowSpan, 0.0, 1.0) : 1.0;
+            return new FlexibleComfortResult(
+                nextScheduledComfortUtc.Value,
+                "already_ran",
+                progress,
+                null,
+                $"Comfort already ran at {nextScheduledComfortUtc.Value:yyyy-MM-dd HH:00} UTC");
+        }
+
+        // 4. Compute window progress and effective threshold
+        var windowSpanHours = (windowEnd - windowStart).TotalHours;
+        var elapsedHours = (now - windowStart).TotalHours;
+        var windowProgress = windowSpanHours > 0 ? Math.Clamp(elapsedHours / windowSpanHours, 0.0, 1.0) : 1.0;
+
+        decimal? effectiveThreshold = null;
+        if (historicalBaseThreshold.HasValue && historicalMaxPrice.HasValue)
+        {
+            effectiveThreshold = HistoricalPriceAnalyzer.ComputeSlidingThreshold(
+                historicalBaseThreshold.Value, historicalMaxPrice.Value, windowProgress);
+        }
+
+        // 5. Parse available prices, filter to future hours within window
+        var allPrices = ParseHourlyPrices(rawToday, rawTomorrow);
+        var effectiveStart = now > windowStart ? now : windowStart;
+        var hoursRemaining = (windowEnd - now).TotalHours;
+        bool atDeadline = windowProgress >= 0.95 || hoursRemaining < 36;
+
+        // At deadline, relax window end constraint to allow any future price
+        var candidates = allPrices
+            .Where(p => p.Start >= effectiveStart && (atDeadline || p.Start < windowEnd))
+            .ToList();
+
+        if (candidates.Count == 0)
+        {
+            return new FlexibleComfortResult(
+                null,
+                "no_prices",
+                windowProgress,
+                effectiveThreshold,
+                "No price data available in comfort window");
+        }
+
+        // 6. Find cheapest available hour
+        var cheapest = candidates.OrderBy(p => p.Price).First();
+
+        // 7. Re-optimization: if nextScheduledComfortUtc is set and in the future
+        if (nextScheduledComfortUtc.HasValue && nextScheduledComfortUtc.Value > now)
+        {
+            // Look up the price of the currently scheduled hour
+            var scheduledPrice = allPrices
+                .Where(p => p.Start == nextScheduledComfortUtc.Value)
+                .Select(p => (decimal?)p.Price)
+                .FirstOrDefault();
+
+            // If price not found in data (data shifted), treat as reschedulable
+            if (scheduledPrice == null || cheapest.Price < scheduledPrice.Value)
+            {
+                return new FlexibleComfortResult(
+                    cheapest.Start,
+                    "rescheduled",
+                    windowProgress,
+                    effectiveThreshold,
+                    $"Rescheduled comfort to {cheapest.Start:HH:00} ({cheapest.Price:F2} SEK/kWh), cheaper than previous {nextScheduledComfortUtc.Value:HH:00}");
+            }
+            else
+            {
+                return new FlexibleComfortResult(
+                    nextScheduledComfortUtc.Value,
+                    "already_scheduled",
+                    windowProgress,
+                    effectiveThreshold,
+                    $"Comfort already scheduled at {nextScheduledComfortUtc.Value:HH:00} ({scheduledPrice.Value:F2} SEK/kWh), still cheapest");
+            }
+        }
+
+        // 8. No scheduled comfort yet — decide whether to schedule
+
+        if (effectiveThreshold.HasValue && cheapest.Price <= effectiveThreshold.Value)
+        {
+            return new FlexibleComfortResult(
+                cheapest.Start,
+                "scheduled",
+                windowProgress,
+                effectiveThreshold,
+                $"Comfort scheduled at {cheapest.Start:HH:00} ({cheapest.Price:F2} SEK/kWh, threshold {effectiveThreshold.Value:F2})");
+        }
+
+        if (atDeadline)
+        {
+            return new FlexibleComfortResult(
+                cheapest.Start,
+                "scheduled",
+                windowProgress,
+                effectiveThreshold,
+                $"Comfort forced at deadline: {cheapest.Start:HH:00} ({cheapest.Price:F2} SEK/kWh)");
+        }
+
+        // Not cheap enough yet, wait for better prices
+        var msg = effectiveThreshold.HasValue
+            ? $"Cheapest available {cheapest.Price:F2} SEK/kWh exceeds threshold {effectiveThreshold.Value:F2} (progress {windowProgress:P0})"
+            : $"No historical data available, waiting for prices (progress {windowProgress:P0})";
+
+        return new FlexibleComfortResult(
+            null,
+            "waiting_for_cheaper",
+            windowProgress,
+            effectiveThreshold,
+            msg);
+    }
+
+    // ─── Flexible Schedule Composition ────────────────────────────────
+
+    /// <summary>
+    /// Composes eco and comfort scheduling results into a single Daikin-compatible schedule payload.
+    /// Uses "eco", "comfort", and "turn_off" as the three possible domesticHotWaterTemperature values.
+    /// </summary>
+    public static (JsonNode? schedulePayload, string message) ComposeFlexibleSchedule(
+        FlexibleEcoResult? ecoResult,
+        FlexibleComfortResult? comfortResult,
+        DateTimeOffset now)
+    {
+        var todayDate = now.Date;
+        var tomorrowDate = todayDate.AddDays(1);
+        var todayName = todayDate.DayOfWeek.ToString().ToLowerInvariant();
+        var tomorrowName = tomorrowDate.DayOfWeek.ToString().ToLowerInvariant();
+
+        // Build per-day action dictionaries: time → state
+        // SortedDictionary keeps actions ordered by time
+        var dayActions = new Dictionary<string, SortedDictionary<TimeSpan, string>>
+        {
+            [todayName] = new SortedDictionary<TimeSpan, string> { [TimeSpan.Zero] = "turn_off" },
+            [tomorrowName] = new SortedDictionary<TimeSpan, string> { [TimeSpan.Zero] = "turn_off" }
+        };
+
+        bool ecoScheduled = ecoResult?.ScheduledHourUtc != null;
+        bool comfortScheduled = comfortResult?.ScheduledHourUtc != null &&
+            (comfortResult.State == "scheduled" || comfortResult.State == "rescheduled" || comfortResult.State == "already_scheduled");
+
+        // Add eco transitions
+        if (ecoScheduled)
+        {
+            var ecoHour = ecoResult!.ScheduledHourUtc!.Value;
+            var dayName = ecoHour.Date == todayDate ? todayName : tomorrowName;
+            var time = new TimeSpan(ecoHour.Hour, 0, 0);
+            var timeEnd = time.Add(TimeSpan.FromHours(1));
+
+            if (dayActions.ContainsKey(dayName))
+            {
+                dayActions[dayName][time] = "eco";
+                // Only add turn_off after if it doesn't exceed 24h
+                if (timeEnd.TotalHours < 24)
+                    dayActions[dayName][timeEnd] = "turn_off";
+            }
+        }
+
+        // Add comfort transitions (comfort takes priority over eco on same hour)
+        if (comfortScheduled)
+        {
+            var comfortHour = comfortResult!.ScheduledHourUtc!.Value;
+            var dayName = comfortHour.Date == todayDate ? todayName : tomorrowName;
+            var time = new TimeSpan(comfortHour.Hour, 0, 0);
+            var timeEnd = time.Add(TimeSpan.FromHours(1));
+
+            if (dayActions.ContainsKey(dayName))
+            {
+                dayActions[dayName][time] = "comfort"; // overwrites eco if same hour
+                if (timeEnd.TotalHours < 24)
+                    dayActions[dayName][timeEnd] = "turn_off";
+            }
+        }
+
+        // Build Daikin JSON structure
+        var actionsCombined = new JsonObject();
+        foreach (var (dayName, actions) in dayActions)
+        {
+            var dayObj = new JsonObject();
+            foreach (var (time, state) in actions)
+            {
+                var key = time.ToString(@"hh\:mm\:ss");
+                dayObj[key] = new JsonObject { ["domesticHotWaterTemperature"] = state };
+            }
+            actionsCombined[dayName] = dayObj;
+        }
+
+        var root = new JsonObject { ["0"] = new JsonObject { ["actions"] = actionsCombined } };
+
+        // Build message
+        var parts = new List<string>();
+        if (ecoScheduled)
+            parts.Add($"Eco: {ecoResult!.Message}");
+        else if (ecoResult != null)
+            parts.Add($"Eco: {ecoResult.State}");
+
+        if (comfortScheduled)
+            parts.Add($"Comfort: {comfortResult!.Message}");
+        else if (comfortResult != null)
+            parts.Add($"Comfort: {comfortResult.State}");
+
+        if (parts.Count == 0)
+            parts.Add("No eco or comfort scheduled, turn_off only");
+
+        var message = string.Join(" | ", parts);
+        return (root, message);
+    }
+
+    /// <summary>
+    /// Composes a Daikin-compatible schedule JSON for a manual comfort run at a specific time.
+    /// The schedule covers today and tomorrow with turn_off everywhere except a 1-hour comfort window.
+    /// </summary>
+    public static JsonNode ComposeManualComfortSchedule(DateTimeOffset comfortTime)
+    {
+        var todayDate = DateTimeOffset.UtcNow.Date;
+        var tomorrowDate = todayDate.AddDays(1);
+        var todayName = todayDate.DayOfWeek.ToString().ToLowerInvariant();
+        var tomorrowName = tomorrowDate.DayOfWeek.ToString().ToLowerInvariant();
+
+        var comfortDate = comfortTime.UtcDateTime.Date;
+        var comfortDayName = comfortDate.DayOfWeek.ToString().ToLowerInvariant();
+        var comfortHourSpan = new TimeSpan(comfortTime.UtcDateTime.Hour, 0, 0);
+        var comfortEndSpan = comfortHourSpan.Add(TimeSpan.FromHours(1));
+
+        var dayActions = new Dictionary<string, SortedDictionary<TimeSpan, string>>();
+
+        // Initialize both days with turn_off
+        dayActions[todayName] = new SortedDictionary<TimeSpan, string> { [TimeSpan.Zero] = "turn_off" };
+        if (todayName != tomorrowName)
+            dayActions[tomorrowName] = new SortedDictionary<TimeSpan, string> { [TimeSpan.Zero] = "turn_off" };
+
+        // Add comfort at the specified hour (only if it's today or tomorrow)
+        if (dayActions.ContainsKey(comfortDayName))
+        {
+            dayActions[comfortDayName][comfortHourSpan] = "comfort";
+            if (comfortEndSpan.TotalHours < 24)
+                dayActions[comfortDayName][comfortEndSpan] = "turn_off";
+        }
+
+        // Build JSON
+        var actionsCombined = new JsonObject();
+        foreach (var (dayName, actions) in dayActions)
+        {
+            var dayObj = new JsonObject();
+            foreach (var (time, state) in actions)
+            {
+                var key = time.ToString(@"hh\:mm\:ss");
+                dayObj[key] = new JsonObject { ["domesticHotWaterTemperature"] = state };
+            }
+            actionsCombined[dayName] = dayObj;
+        }
+
+        return new JsonObject { ["0"] = new JsonObject { ["actions"] = actionsCombined } };
+    }
 }
