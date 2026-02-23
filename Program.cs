@@ -1,4 +1,4 @@
-
+﻿
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection;
@@ -243,7 +243,6 @@ app.MapPost("/api/user/settings", async (HttpContext ctx, UserSettingsRepository
     await settingsRepo.SaveSettingsAsync(userId, comfortHours, turnOffPercentile, autoApplySchedule, maxComfortGapHours,
         schedulingMode, ecoIntervalHours, ecoFlexibilityHours, comfortIntervalDays, comfortFlexibilityDays, comfortEarlyPercentile);
     return Results.Ok(new { saved = true });
-
 });
 
 app.MapGet("/api/user/flexible-state", async (HttpContext ctx, FlexibleScheduleStateRepository flexRepo, UserSettingsRepository settingsRepo) =>
@@ -314,7 +313,29 @@ if (app.Environment.IsDevelopment() || true)
     app.UseSwagger();
     app.UseSwaggerUI();
 }
-// Static files
+// Serve v2 frontend from wwwroot-v2 under /v2 (must be registered before default static files)
+var v2WebRoot = Path.Combine(app.Environment.ContentRootPath, "wwwroot-v2");
+if (Directory.Exists(v2WebRoot))
+{
+    var v2FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(v2WebRoot);
+    app.UseDefaultFiles(new DefaultFilesOptions
+    {
+        FileProvider = v2FileProvider,
+        RequestPath = "/v2"
+    });
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = v2FileProvider,
+        RequestPath = "/v2"
+    });
+    Console.WriteLine("[Startup] V2 frontend registered at /v2");
+}
+else
+{
+    Console.WriteLine("[Startup] WARNING: wwwroot-v2 not found, v2 frontend disabled");
+}
+
+// Static files (v1 from wwwroot)
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
@@ -739,7 +760,7 @@ adminGroup.MapGet("/users", async (IConfiguration cfg, HttpContext c, UserSettin
         });
     }
 
-    return Results.Json(new { users });
+    return Results.Json(new { users }, new JsonSerializerOptions { PropertyNamingPolicy = null });
 });
 
 adminGroup.MapPost("/users/{userId}/grant", async (IConfiguration cfg, HttpContext c, string userId) =>
@@ -1144,7 +1165,7 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IHttpClientFactory httpClien
                 var devicesJson = await client.GetDevicesAsync(detectedSite);
                 var (deviceId, deviceJsonRaw) = DeviceAutoDetection.GetFirstDevice(devicesJson);
                 detectedDevice = deviceId;
-                
+
                 // Also detect embedded ID from the device
                 if (!string.IsNullOrWhiteSpace(overrideEmbedded))
                     detectedEmbedded = overrideEmbedded;
@@ -1154,7 +1175,7 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IHttpClientFactory httpClien
                     if (detectedEmbedded != null)
                         Console.WriteLine($"[SchedulePut] Auto-detected DHW embeddedId: {detectedEmbedded}");
                 }
-                
+
                 if (detectedDevice != null)
                     Console.WriteLine($"[SchedulePut] Auto-detected device: {detectedDevice}");
             }
@@ -1274,6 +1295,27 @@ app.MapFallback(async (HttpContext ctx) =>
     {
         ctx.Response.StatusCode = 404;
         await ctx.Response.WriteAsync("Not Found");
+        return;
+    }
+    
+    // V2 frontend: serve from wwwroot-v2
+    if (path.StartsWith("/v2", StringComparison.OrdinalIgnoreCase))
+    {
+        // Redirect /v2 to /v2/ so React Router basename works correctly
+        if (path.Equals("/v2", StringComparison.OrdinalIgnoreCase))
+        {
+            ctx.Response.Redirect("/v2/", permanent: false);
+            return;
+        }
+        var v2Index = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot-v2", "index.html");
+        if (File.Exists(v2Index))
+        {
+            ctx.Response.ContentType = "text/html";
+            await ctx.Response.SendFileAsync(v2Index);
+            return;
+        }
+        ctx.Response.StatusCode = 404;
+        await ctx.Response.WriteAsync("V2 frontend not built. Run: cd frontend-v2 && npm run build");
         return;
     }
     
