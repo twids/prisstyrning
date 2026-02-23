@@ -1,8 +1,10 @@
-# Ignore runtime data and user tokens
-data/
+# Ignore runtime data directories (but keep source code in data/)
+data/nordpool/
+data/schedule_history/
+data/tokens/
+data/tokens.2/
+data/migration-backup/
 tokens/
-# Ignore runtime data and price snapshots
-data/
 # .NET
 bin/
 obj/
@@ -36,7 +38,6 @@ appsettings.Development.json
 appsettings.Local.json
 .env
 
-# Price snapshots
-data/prices-*.json
+# Token files
 tokens/daikin.json
 cookies.txt
