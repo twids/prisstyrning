@@ -1230,7 +1230,11 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IHttpClientFactory httpClien
                                     {
                                         if (mp.TryGetProperty("schedule", out var schNode))
                                         {
-                                            if (schNode.TryGetProperty("modes", out var modesNode) && modesNode.ValueKind==JsonValueKind.Object)
+                                            // DHW devices wrap schedule data in a 'value' property – unwrap it (mirrors Extract logic)
+                                            var schTarget = schNode;
+                                            if (schTarget.TryGetProperty("value", out var schValue) && schValue.ValueKind == JsonValueKind.Object)
+                                                schTarget = schValue;
+                                            if (schTarget.TryGetProperty("modes", out var modesNode) && modesNode.ValueKind==JsonValueKind.Object)
                                             {
                                                 // prefer heating, waterHeating, cooling order
                                                 string[] pref = new[]{"heating","waterHeating","cooling","dhw","domesticHotWaterHeating"};
@@ -1238,7 +1242,7 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IHttpClientFactory httpClien
                                                 var picked = pref.FirstOrDefault(p=>available.Contains(p)) ?? available.FirstOrDefault();
                                                 if (picked!=null) modeUsed = picked; else modeUsed = "heating";
                                             }
-                                            else if (schNode.TryGetProperty("schedules", out _))
+                                            else if (schTarget.TryGetProperty("schedules", out _))
                                             {
                                                 modeUsed = "heating"; // generic
                                             }
@@ -1256,8 +1260,16 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IHttpClientFactory httpClien
                 Console.WriteLine($"[SchedulePut] mode auto-detect failed: {exDetect.Message}");
                 modeUsed = "heating"; // fallback
             }
+
+            // Final guard: 'auto' is not a valid API mode — always fall back to 'heating'
+            if (modeUsed == "auto")
+            {
+                Console.WriteLine("[SchedulePut] mode still 'auto' after detection – falling back to 'heating'");
+                modeUsed = "heating";
+            }
         }
 
+        Console.WriteLine($"[SchedulePut] PUT device={gatewayDeviceId} embedded={embeddedId} mode={modeUsed}");
         await client.PutSchedulesAsync(gatewayDeviceId, embeddedId, modeUsed, schedulePayloadJson);
     
     // Save to schedule history
