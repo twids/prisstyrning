@@ -199,7 +199,9 @@ export default function AdminPage() {
                   </td>
                   <td className="px-4 py-3">{user.zone || '—'}</td>
                   <td className="px-4 py-3 whitespace-nowrap">
-                    {user.settings.ComfortHours}h, {(user.settings.TurnOffPercentile * 100).toFixed(0)}%
+                    {user.settings?.ComfortHours ?? '—'}h, {user.settings?.TurnOffPercentile != null
+                      ? `${(user.settings.TurnOffPercentile * 100).toFixed(0)}%`
+                      : '—'}
                   </td>
                   <td className="px-4 py-3">
                     {user.daikinAuthorized ? (
