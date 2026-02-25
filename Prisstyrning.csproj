@@ -37,4 +37,8 @@
   <None Update="appsettings.development.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="wwwroot-v2/**" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
