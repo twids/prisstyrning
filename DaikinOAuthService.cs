@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -8,8 +9,7 @@ using Prisstyrning.Data.Repositories;
 internal class DaikinOAuthService
 {
     private readonly IHttpClientFactory _httpClientFactory;
-    private static readonly object _lock = new();
-    private static readonly Dictionary<string,string> _stateToVerifier = new();
+    private static readonly ConcurrentDictionary<string, (string verifier, DateTime created)> _stateToVerifier = new();
 
     private readonly IConfiguration _cfg;
     private readonly DaikinTokenRepository _tokenRepo;
@@ -42,7 +42,8 @@ internal class DaikinOAuthService
         var state = Guid.NewGuid().ToString("N");
         var nonce = Guid.NewGuid().ToString("N");
         var (codeChallenge, verifier) = CreatePkcePair();
-        lock(_lock) _stateToVerifier[state] = verifier;
+        EvictExpiredStates();
+        _stateToVerifier[state] = (verifier, DateTime.UtcNow);
         var url = $"{authEndpoint}?response_type=code&client_id={Uri.EscapeDataString(clientId)}&redirect_uri={Uri.EscapeDataString(redirectUri)}&scope={Uri.EscapeDataString(scope)}&state={state}&nonce={nonce}&code_challenge={codeChallenge}&code_challenge_method=S256";
         Console.WriteLine($"[DaikinOAuth] Built authorize URL (host only) authHost={new Uri(authEndpoint).Host} redirect={redirectUri} scope='{scope}' state={state.Substring(0,8)}... offline={(includeOffline?"yes":"no")}");
         return url;
@@ -67,11 +68,21 @@ internal class DaikinOAuthService
     public async Task<CallbackResult> HandleCallbackWithSubjectAsync(string code, string state, string? userId, HttpClient? httpClient = null)
     {
         string? verifier;
-        lock(_lock)
+        if (_stateToVerifier.TryRemove(state, out var entry))
         {
-            if(!_stateToVerifier.TryGetValue(state, out verifier)) return new CallbackResult(false, null);
-            _stateToVerifier.Remove(state);
+            verifier = entry.verifier;
+            // Check TTL – reject states older than 10 minutes
+            if (DateTime.UtcNow - entry.created > TimeSpan.FromMinutes(10))
+            {
+                Console.WriteLine($"[DaikinOAuth] State expired (age={(DateTime.UtcNow - entry.created).TotalMinutes:F1}min)");
+                verifier = null;
+            }
         }
+        else
+        {
+            return new CallbackResult(false, null);
+        }
+        if (verifier == null) return new CallbackResult(false, null);
     var clientId = _cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
     var redirectUri = ResolveRedirectUri(_cfg, null);
     var clientSecret = _cfg["Daikin:ClientSecret"];
@@ -438,6 +449,16 @@ internal class DaikinOAuthService
     }
 
     private static string Base64Url(string s) => s.Replace("+","-").Replace("/","_").Replace("=","");
+
+    private static void EvictExpiredStates()
+    {
+        var cutoff = DateTime.UtcNow.AddMinutes(-10);
+        foreach (var key in _stateToVerifier.Keys)
+        {
+            if (_stateToVerifier.TryGetValue(key, out var entry) && entry.created < cutoff)
+                _stateToVerifier.TryRemove(key, out _);
+        }
+    }
 
     private static string ResolveRedirectUri(IConfiguration cfg, HttpContext? ctx)
     {

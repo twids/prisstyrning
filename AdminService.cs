@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
@@ -136,10 +137,22 @@ internal static class AdminService
         if (string.IsNullOrEmpty(configuredPassword))
             return (false, "No admin password configured");
 
-        if (!string.IsNullOrEmpty(passwordHeader) && passwordHeader == configuredPassword)
+        if (!string.IsNullOrEmpty(passwordHeader) && SecureCompare(passwordHeader, configuredPassword))
             return (true, null);
 
         return (false, "Unauthorized");
+    }
+
+    /// <summary>
+    /// Constant-time string comparison to prevent timing attacks on password checks.
+    /// </summary>
+    public static bool SecureCompare(string? a, string? b)
+    {
+        if (a == null || b == null) return false;
+        var aBytes = System.Text.Encoding.UTF8.GetBytes(a);
+        var bBytes = System.Text.Encoding.UTF8.GetBytes(b);
+        // FixedTimeEquals pads shorter input, preventing length-based timing leaks
+        return CryptographicOperations.FixedTimeEquals(aBytes, bBytes);
     }
 
     private static string GetAdminJsonPath(IConfiguration cfg)
