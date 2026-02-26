@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -8,11 +9,12 @@ using Prisstyrning.Data.Repositories;
 internal class DaikinOAuthService
 {
     private readonly IHttpClientFactory _httpClientFactory;
-    private static readonly object _lock = new();
-    private static readonly Dictionary<string,string> _stateToVerifier = new();
+    private static readonly ConcurrentDictionary<string, (string verifier, DateTime created)> _stateToVerifier = new();
+    internal static readonly TimeSpan StateTtl = TimeSpan.FromMinutes(10);
 
     private readonly IConfiguration _cfg;
     private readonly DaikinTokenRepository _tokenRepo;
+    private readonly TimeProvider _timeProvider;
 
     /// <summary>Result of the OAuth callback token exchange, including the OIDC subject if available.</summary>
     public record CallbackResult(bool Success, string? Subject);
@@ -22,11 +24,12 @@ internal class DaikinOAuthService
     private const string DefaultRevokeEndpoint = "https://idp.onecta.daikineurope.com/v1/oidc/revoke"; // revoke
     private const string DefaultIntrospectEndpoint = "https://idp.onecta.daikineurope.com/v1/oidc/introspect"; // introspect
 
-    public DaikinOAuthService(IConfiguration cfg, DaikinTokenRepository tokenRepo, IHttpClientFactory httpClientFactory)
+    public DaikinOAuthService(IConfiguration cfg, DaikinTokenRepository tokenRepo, IHttpClientFactory httpClientFactory, TimeProvider? timeProvider = null)
     {
         _cfg = cfg;
         _tokenRepo = tokenRepo;
         _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public string GetAuthorizationUrl(HttpContext? httpContext = null)
@@ -42,7 +45,8 @@ internal class DaikinOAuthService
         var state = Guid.NewGuid().ToString("N");
         var nonce = Guid.NewGuid().ToString("N");
         var (codeChallenge, verifier) = CreatePkcePair();
-        lock(_lock) _stateToVerifier[state] = verifier;
+        EvictExpiredStates(_timeProvider);
+        _stateToVerifier[state] = (verifier, _timeProvider.GetUtcNow().UtcDateTime);
         var url = $"{authEndpoint}?response_type=code&client_id={Uri.EscapeDataString(clientId)}&redirect_uri={Uri.EscapeDataString(redirectUri)}&scope={Uri.EscapeDataString(scope)}&state={state}&nonce={nonce}&code_challenge={codeChallenge}&code_challenge_method=S256";
         Console.WriteLine($"[DaikinOAuth] Built authorize URL (host only) authHost={new Uri(authEndpoint).Host} redirect={redirectUri} scope='{scope}' state={state.Substring(0,8)}... offline={(includeOffline?"yes":"no")}");
         return url;
@@ -67,11 +71,22 @@ internal class DaikinOAuthService
     public async Task<CallbackResult> HandleCallbackWithSubjectAsync(string code, string state, string? userId, HttpClient? httpClient = null)
     {
         string? verifier;
-        lock(_lock)
+        if (_stateToVerifier.TryRemove(state, out var entry))
         {
-            if(!_stateToVerifier.TryGetValue(state, out verifier)) return new CallbackResult(false, null);
-            _stateToVerifier.Remove(state);
+            verifier = entry.verifier;
+            // Check TTL – reject states older than the configured TTL
+            var age = _timeProvider.GetUtcNow().UtcDateTime - entry.created;
+            if (age > StateTtl)
+            {
+                Console.WriteLine($"[DaikinOAuth] State expired (age={age.TotalMinutes:F1}min)");
+                verifier = null;
+            }
         }
+        else
+        {
+            return new CallbackResult(false, null);
+        }
+        if (verifier == null) return new CallbackResult(false, null);
     var clientId = _cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
     var redirectUri = ResolveRedirectUri(_cfg, null);
     var clientSecret = _cfg["Daikin:ClientSecret"];
@@ -438,6 +453,17 @@ internal class DaikinOAuthService
     }
 
     private static string Base64Url(string s) => s.Replace("+","-").Replace("/","_").Replace("=","");
+
+    internal static void EvictExpiredStates(TimeProvider? timeProvider = null)
+    {
+        var now = (timeProvider ?? TimeProvider.System).GetUtcNow().UtcDateTime;
+        var cutoff = now - StateTtl;
+        foreach (var key in _stateToVerifier.Keys)
+        {
+            if (_stateToVerifier.TryGetValue(key, out var entry) && entry.created < cutoff)
+                _stateToVerifier.TryRemove(key, out _);
+        }
+    }
 
     private static string ResolveRedirectUri(IConfiguration cfg, HttpContext? ctx)
     {
