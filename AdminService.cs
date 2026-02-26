@@ -162,25 +162,36 @@ internal static class AdminService
         return CryptographicOperations.FixedTimeEquals(aHash, bHash);
     }
 
-    private static string GetAdminJsonPath(IConfiguration cfg)
+    /// <summary>
+    /// Returns a validated storage directory path from configuration.
+    /// Rejects values containing path traversal sequences.
+    /// </summary>
+    private static string GetSafeStorageDirectory(IConfiguration cfg)
     {
         var baseDir = cfg["Storage:Directory"] ?? "data";
-        var fullPath = Path.GetFullPath(Path.Combine(baseDir, "admin.json"));
-        // Ensure the resolved path stays within the expected base directory to prevent path traversal
-        var allowedBase = Path.GetFullPath(baseDir);
-        if (!fullPath.StartsWith(allowedBase, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Admin JSON path escapes the storage directory");
-        return fullPath;
+
+        // Reject path traversal sequences in the configured value
+        if (baseDir.Contains("..", StringComparison.Ordinal))
+            throw new InvalidOperationException("Storage directory must not contain '..' path traversal sequences");
+
+        return Path.GetFullPath(baseDir);
+    }
+
+    private static string GetAdminJsonPath(IConfiguration cfg)
+    {
+        var safeDir = GetSafeStorageDirectory(cfg);
+        return Path.Combine(safeDir, "admin.json");
     }
 
     private static JsonObject LoadAdminJson(IConfiguration cfg)
     {
-        var path = GetAdminJsonPath(cfg);
-        if (!File.Exists(path)) return new JsonObject();
+        var safeDir = GetSafeStorageDirectory(cfg);
+        var safePath = Path.Combine(safeDir, "admin.json");
+        if (!File.Exists(safePath)) return new JsonObject();
 
         try
         {
-            var json = File.ReadAllText(path);
+            var json = File.ReadAllText(safePath);
             return JsonNode.Parse(json) as JsonObject ?? new JsonObject();
         }
         catch (Exception ex)
@@ -204,10 +215,10 @@ internal static class AdminService
 
     private static async Task SaveAdminJson(IConfiguration cfg, JsonObject data)
     {
-        var path = GetAdminJsonPath(cfg);
-        var dir = Path.GetDirectoryName(path);
-        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        var safeDir = GetSafeStorageDirectory(cfg);
+        var safePath = Path.Combine(safeDir, "admin.json");
+        if (!Directory.Exists(safeDir)) Directory.CreateDirectory(safeDir);
 
-        await File.WriteAllTextAsync(path, data.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        await File.WriteAllTextAsync(safePath, data.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
     }
 }
