@@ -102,6 +102,23 @@ builder.Services.AddTransient<DailyPriceHangfireJob>();
 builder.Services.AddTransient<InitialBatchHangfireJob>();
 builder.Services.AddTransient<ScheduleUpdateHangfireJob>();
 
+// CORS: restrict API access to same-origin requests only
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.SetIsOriginAllowed(origin =>
+        {
+            // Allow same-origin: requests from the app's own host
+            var uri = new Uri(origin);
+            return uri.Host == "localhost" || uri.Host == "127.0.0.1" || uri.Host == "::1";
+        })
+        .AllowAnyMethod()
+        .AllowAnyHeader()
+        .AllowCredentials();
+    });
+});
+
 // Rate limiting for admin login endpoint
 builder.Services.AddRateLimiter(options =>
 {
@@ -369,6 +386,9 @@ else
 // Static files (v1 from wwwroot)
 app.UseDefaultFiles();
 app.UseStaticFiles();
+
+// CORS middleware
+app.UseCors();
 
 // Rate limiter middleware
 app.UseRateLimiter();

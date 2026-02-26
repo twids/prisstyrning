@@ -144,21 +144,33 @@ internal static class AdminService
     }
 
     /// <summary>
-    /// Constant-time string comparison to prevent timing attacks on password checks.
+    /// Constant-time string comparison using fixed-length hashes to prevent timing attacks on password checks.
     /// </summary>
     public static bool SecureCompare(string? a, string? b)
     {
         if (a == null || b == null) return false;
+
+        // Compare fixed-length SHA-256 hashes of the UTF-8 bytes to avoid length-based timing leaks
         var aBytes = System.Text.Encoding.UTF8.GetBytes(a);
         var bBytes = System.Text.Encoding.UTF8.GetBytes(b);
-        // FixedTimeEquals pads shorter input, preventing length-based timing leaks
-        return CryptographicOperations.FixedTimeEquals(aBytes, bBytes);
+
+        Span<byte> aHash = stackalloc byte[32];
+        Span<byte> bHash = stackalloc byte[32];
+        SHA256.HashData(aBytes, aHash);
+        SHA256.HashData(bBytes, bHash);
+
+        return CryptographicOperations.FixedTimeEquals(aHash, bHash);
     }
 
     private static string GetAdminJsonPath(IConfiguration cfg)
     {
         var baseDir = cfg["Storage:Directory"] ?? "data";
-        return Path.Combine(baseDir, "admin.json");
+        var fullPath = Path.GetFullPath(Path.Combine(baseDir, "admin.json"));
+        // Ensure the resolved path stays within the expected base directory to prevent path traversal
+        var allowedBase = Path.GetFullPath(baseDir);
+        if (!fullPath.StartsWith(allowedBase, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Admin JSON path escapes the storage directory");
+        return fullPath;
     }
 
     private static JsonObject LoadAdminJson(IConfiguration cfg)
