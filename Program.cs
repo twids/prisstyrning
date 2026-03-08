@@ -13,6 +13,7 @@ using Hangfire.InMemory;
 using Hangfire.Dashboard;
 using Microsoft.EntityFrameworkCore;
 using Prisstyrning.Data;
+using Prisstyrning.Data.Entities;
 using Prisstyrning.Data.Repositories;
 using Prisstyrning.Jobs;
 
@@ -611,7 +612,7 @@ scheduleGroup.MapGet("/preview", async (HttpContext c, UserSettingsRepository se
     return Results.Json(new { schedulePayload, generated, message, zone });
 });
 scheduleGroup.MapPost("/apply", async (BatchRunner batchRunner, HttpContext ctx, IServiceScopeFactory scopeFactory) => await HandleApplyScheduleAsync(batchRunner, ctx, builder.Configuration, scopeFactory));
-scheduleGroup.MapPost("/comfort", async (HttpContext ctx, BatchRunner batchRunner, IConfiguration cfg, DaikinOAuthService daikinOAuth) =>
+scheduleGroup.MapPost("/comfort", async (HttpContext ctx, BatchRunner batchRunner, IConfiguration cfg, DaikinOAuthService daikinOAuth, UserScheduleEntryRepository entryRepo, FlexibleScheduleStateRepository flexRepo) =>
 {
     var userId = GetUserId(ctx) ?? "default";
 
@@ -647,6 +648,25 @@ scheduleGroup.MapPost("/comfort", async (HttpContext ctx, BatchRunner batchRunne
 
         var applied = await batchRunner.ApplyScheduleToDaikinAsync(cfg, schedulePayload, userId);
 
+        // Record as user entry and update legionella state
+        try
+        {
+            var entry = new UserScheduleEntry
+            {
+                UserId = userId,
+                ScheduledTimeUtc = comfortTime,
+                State = "comfort",
+                CountsAsLegionella = true,
+                CreatedAtUtc = DateTimeOffset.UtcNow
+            };
+            await entryRepo.AddAsync(entry);
+            await flexRepo.UpdateComfortRunAsync(userId, comfortTime);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ManualComfort] Failed to record entry: {ex.Message}");
+        }
+
         var dayName = comfortTime.ToString("dddd");
         var hourStr = comfortTime.ToString("HH:mm");
         return Results.Json(new
@@ -666,6 +686,132 @@ scheduleGroup.MapPost("/comfort", async (HttpContext ctx, BatchRunner batchRunne
     {
         return Results.BadRequest(new { error = "Missing comfortTime field" });
     }
+});
+
+scheduleGroup.MapGet("/entries", async (HttpContext ctx, UserScheduleEntryRepository entryRepo) =>
+{
+    var userId = GetUserId(ctx) ?? "default";
+    var entries = await entryRepo.GetFutureEntriesAsync(userId);
+    return Results.Json(entries.Select(e => new
+    {
+        e.Id,
+        scheduledTimeUtc = e.ScheduledTimeUtc.ToString("o"),
+        e.State,
+        e.CountsAsLegionella,
+        createdAtUtc = e.CreatedAtUtc.ToString("o")
+    }));
+});
+
+scheduleGroup.MapPost("/entries", async (HttpContext ctx, UserScheduleEntryRepository entryRepo, FlexibleScheduleStateRepository flexRepo, BatchRunner batchRunner, IServiceScopeFactory scopeFactory, DaikinOAuthService daikinOAuth) =>
+{
+    var cfg = (IConfiguration)builder.Configuration;
+    var userId = GetUserId(ctx) ?? "default";
+
+    using var reader = new StreamReader(ctx.Request.Body);
+    var body = await reader.ReadToEndAsync();
+    JsonDocument json;
+    try { json = JsonDocument.Parse(body); }
+    catch { return Results.BadRequest(new { error = "Invalid JSON" }); }
+
+    // Parse scheduledTime
+    var timeStr = json.RootElement.TryGetProperty("scheduledTime", out var timeProp) ? timeProp.GetString() : null;
+    if (string.IsNullOrEmpty(timeStr) || !DateTimeOffset.TryParse(timeStr, out var scheduledTime))
+        return Results.BadRequest(new { error = "Invalid or missing scheduledTime" });
+
+    var now = DateTimeOffset.UtcNow;
+    if (scheduledTime <= now)
+        return Results.BadRequest(new { error = "scheduledTime must be in the future" });
+    if (scheduledTime > now.AddHours(48))
+        return Results.BadRequest(new { error = "scheduledTime must be within the next 48 hours" });
+
+    // Parse state (default: "comfort")
+    var state = json.RootElement.TryGetProperty("state", out var stateProp) ? stateProp.GetString() : "comfort";
+    if (state != "comfort" && state != "eco")
+        return Results.BadRequest(new { error = "state must be 'comfort' or 'eco'" });
+
+    // Parse countsAsLegionella (default: true, only relevant for comfort)
+    var countsAsLegionella = true;
+    if (json.RootElement.TryGetProperty("countsAsLegionella", out var legProp))
+        countsAsLegionella = legProp.GetBoolean();
+    if (state == "eco") countsAsLegionella = false; // eco never counts as legionella
+
+    // Add the entry
+    var entry = new UserScheduleEntry
+    {
+        UserId = userId,
+        ScheduledTimeUtc = scheduledTime,
+        State = state,
+        CountsAsLegionella = countsAsLegionella,
+        CreatedAtUtc = DateTimeOffset.UtcNow
+    };
+
+    try
+    {
+        await entryRepo.AddAsync(entry);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+
+    // If it counts as legionella, update LastComfortRunUtc so the flexible algorithm
+    // resets its comfort window
+    if (countsAsLegionella)
+    {
+        await flexRepo.UpdateComfortRunAsync(userId, scheduledTime);
+        Console.WriteLine($"[ScheduleEntries] Marked comfort as legionella run at {scheduledTime:o}");
+    }
+
+    // Trigger recompose+apply so the entry takes effect immediately
+    bool applied = false;
+    try
+    {
+        var (token, _) = await daikinOAuth.TryGetValidAccessTokenAsync(userId);
+        if (token != null)
+        {
+            var (generated, _, message) = await batchRunner.RunBatchAsync(cfg, userId, applySchedule: true, persist: true, scopeFactory);
+            applied = generated;
+            Console.WriteLine($"[ScheduleEntries] Recompose after add: {message}");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[ScheduleEntries] Recompose failed: {ex.Message}");
+    }
+
+    return Results.Json(new
+    {
+        entry.Id,
+        scheduledTimeUtc = entry.ScheduledTimeUtc.ToString("o"),
+        entry.State,
+        entry.CountsAsLegionella,
+        applied,
+        message = applied ? "Entry added and schedule applied to Daikin" : "Entry added (Daikin apply skipped)"
+    }, statusCode: 201);
+});
+
+scheduleGroup.MapDelete("/entries/{id:int}", async (int id, HttpContext ctx, UserScheduleEntryRepository entryRepo, BatchRunner batchRunner, IServiceScopeFactory scopeFactory, DaikinOAuthService daikinOAuth) =>
+{
+    var cfg = (IConfiguration)builder.Configuration;
+    var userId = GetUserId(ctx) ?? "default";
+    var removed = await entryRepo.RemoveAsync(userId, id);
+    if (!removed)
+        return Results.NotFound(new { error = "Entry not found or not owned by user" });
+
+    // Trigger recompose+apply to remove the entry from the active schedule
+    bool applied = false;
+    try
+    {
+        var (token, _) = await daikinOAuth.TryGetValidAccessTokenAsync(userId);
+        if (token != null)
+        {
+            var (generated, _, message) = await batchRunner.RunBatchAsync(cfg, userId, applySchedule: true, persist: true, scopeFactory);
+            applied = generated;
+        }
+    }
+    catch { }
+
+    return Results.Ok(new { removed = true, applied });
 });
 
 // Admin group
