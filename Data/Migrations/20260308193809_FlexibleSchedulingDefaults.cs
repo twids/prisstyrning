@@ -51,7 +51,7 @@ namespace Prisstyrning.Data.Migrations
                 table: "UserSettings",
                 type: "double precision",
                 nullable: false,
-                defaultValue: 0.10000000000000001,
+                defaultValueSql: "0.1",
                 oldClrType: typeof(double),
                 oldType: "double precision");
 
@@ -74,6 +74,7 @@ namespace Prisstyrning.Data.Migrations
                 table: "UserSettings",
                 type: "integer",
                 nullable: false,
+                defaultValue: 0,
                 oldClrType: typeof(int),
                 oldType: "integer",
                 oldDefaultValue: 24);
@@ -83,6 +84,7 @@ namespace Prisstyrning.Data.Migrations
                 table: "UserSettings",
                 type: "integer",
                 nullable: false,
+                defaultValue: 0,
                 oldClrType: typeof(int),
                 oldType: "integer",
                 oldDefaultValue: 12);
@@ -92,6 +94,7 @@ namespace Prisstyrning.Data.Migrations
                 table: "UserSettings",
                 type: "integer",
                 nullable: false,
+                defaultValue: 0,
                 oldClrType: typeof(int),
                 oldType: "integer",
                 oldDefaultValue: 21);
@@ -101,6 +104,7 @@ namespace Prisstyrning.Data.Migrations
                 table: "UserSettings",
                 type: "integer",
                 nullable: false,
+                defaultValue: 0,
                 oldClrType: typeof(int),
                 oldType: "integer",
                 oldDefaultValue: 7);
@@ -110,9 +114,10 @@ namespace Prisstyrning.Data.Migrations
                 table: "UserSettings",
                 type: "double precision",
                 nullable: false,
+                defaultValue: 0.0,
                 oldClrType: typeof(double),
                 oldType: "double precision",
-                oldDefaultValue: 0.10000000000000001);
+                oldDefaultValueSql: "0.1");
         }
     }
 }

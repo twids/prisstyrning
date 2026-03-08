@@ -157,7 +157,7 @@ namespace Prisstyrning.Data.Migrations
                     b.Property<double>("ComfortEarlyPercentile")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("double precision")
-                        .HasDefaultValue(0.10000000000000001);
+                        .HasDefaultValueSql("0.1");
 
                     b.Property<int>("ComfortFlexibilityDays")
                         .ValueGeneratedOnAdd()
