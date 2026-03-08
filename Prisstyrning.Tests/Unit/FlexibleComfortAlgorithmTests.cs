@@ -444,5 +444,51 @@ public class FlexibleComfortAlgorithmTests
         Assert.Equal(1, result.ScheduledHourUtc!.Value.Hour);
     }
 
+    [Fact]
+    public void GenerateFlexibleComfort_FirstRunBackdatedDefault_Schedules()
+    {
+        // Bug scenario: on first run, LastComfortRunUtc is null.
+        // If defaulted to 'now', with interval=7 days and flexibility=2 days,
+        // window opens at now + 5 days — always in the future → perpetual "waiting".
+        // Fix: backdate to now - intervalDays so window is already open.
+        var now = new DateTimeOffset(2026, 3, 8, 10, 0, 0, TimeSpan.Zero);
+        int intervalDays = 7;
+        int flexibilityDays = 2;
+
+        var todayStart = new DateTimeOffset(2026, 3, 8, 0, 0, 0, TimeSpan.Zero);
+        var rawToday = CreatePriceArray(todayStart,
+            0.50m, 0.40m, 0.30m, 0.20m, 0.10m, 0.15m, 0.25m, 0.35m,
+            0.45m, 0.55m, 0.65m, 0.75m, 0.85m, 0.95m, 1.05m, 1.15m,
+            1.25m, 1.35m, 1.45m, 1.55m, 1.65m, 1.75m, 1.85m, 1.95m);
+
+        // Using lastComfortRun = now → window opens at now + 5 days → waiting
+        var resultBad = ScheduleAlgorithm.GenerateFlexibleComfort(
+            rawToday: rawToday,
+            rawTomorrow: null,
+            lastComfortRun: now,
+            intervalDays: intervalDays,
+            flexibilityDays: flexibilityDays,
+            historicalBaseThreshold: 0.50m,
+            historicalMaxPrice: 2.00m,
+            nowOverride: now);
+
+        Assert.Equal("waiting", resultBad.State);
+
+        // Using lastComfortRun = now - intervalDays → window is fully open → should schedule
+        var backdated = now.AddDays(-intervalDays);
+        var resultGood = ScheduleAlgorithm.GenerateFlexibleComfort(
+            rawToday: rawToday,
+            rawTomorrow: null,
+            lastComfortRun: backdated,
+            intervalDays: intervalDays,
+            flexibilityDays: flexibilityDays,
+            historicalBaseThreshold: 0.50m,
+            historicalMaxPrice: 2.00m,
+            nowOverride: now);
+
+        Assert.Equal("scheduled", resultGood.State);
+        Assert.NotNull(resultGood.ScheduledHourUtc);
+    }
+
     #endregion
 }
