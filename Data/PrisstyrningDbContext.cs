@@ -13,6 +13,7 @@ public class PrisstyrningDbContext : DbContext
     public DbSet<ScheduleHistoryEntry> ScheduleHistory => Set<ScheduleHistoryEntry>();
     public DbSet<DaikinToken> DaikinTokens => Set<DaikinToken>();
     public DbSet<FlexibleScheduleState> FlexibleScheduleStates => Set<FlexibleScheduleState>();
+    public DbSet<UserScheduleEntry> UserScheduleEntries => Set<UserScheduleEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -60,6 +61,16 @@ public class PrisstyrningDbContext : DbContext
             e.HasKey(x => x.Id);
             e.Property(x => x.UserId).HasMaxLength(100).IsRequired();
             e.Property(x => x.SchedulePayloadJson).HasColumnType("jsonb");
+            e.HasIndex(x => x.UserId);
+        });
+
+        // UserScheduleEntry
+        modelBuilder.Entity<UserScheduleEntry>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.UserId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.State).HasMaxLength(10).HasDefaultValue("comfort");
+            e.Property(x => x.CountsAsLegionella).HasDefaultValue(true);
             e.HasIndex(x => x.UserId);
         });
 
