@@ -249,16 +249,21 @@ export default function SettingsPage() {
               helpText={`Scheduling window: comfort runs between ${Math.max(0, formData.comfortIntervalDays - formData.comfortFlexibilityDays)}d and ${formData.comfortIntervalDays + formData.comfortFlexibilityDays}d after last run`}
             />
 
-            <Slider
-              label="Early Comfort Threshold"
-              value={formData.comfortEarlyPercentile}
-              onChange={(v) => setFormData({ ...formData, comfortEarlyPercentile: v })}
-              min={0.01}
-              max={0.50}
-              step={0.01}
-              displayValue={`${(formData.comfortEarlyPercentile * 100).toFixed(0)}th percentile`}
-              helpText="When the comfort window opens, only trigger if the price is below this historical percentile. The threshold relaxes as the window progresses."
-            />
+            {(() => {
+              const patiencePct = `${(formData.comfortEarlyPercentile * 100).toFixed(0)}%`;
+              return (
+                <Slider
+                  label="Price Patience"
+                  value={formData.comfortEarlyPercentile}
+                  onChange={(v) => setFormData({ ...formData, comfortEarlyPercentile: v })}
+                  min={0.01}
+                  max={0.50}
+                  step={0.01}
+                  displayValue={patiencePct}
+                  helpText={`Lower = more patient. The system will wait for a price in the cheapest ${patiencePct} of recent history before scheduling a comfort run. As the deadline approaches, it becomes less picky and will eventually pick the cheapest available hour.`}
+                />
+              );
+            })()}
           </div>
         </Card>
       )}
