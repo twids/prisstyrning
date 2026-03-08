@@ -90,6 +90,7 @@ builder.Services.AddScoped<PriceRepository>();
 builder.Services.AddScoped<ScheduleHistoryRepository>();
 builder.Services.AddScoped<DaikinTokenRepository>();
 builder.Services.AddScoped<FlexibleScheduleStateRepository>();
+builder.Services.AddScoped<UserScheduleEntryRepository>();
 builder.Services.AddScoped<DaikinOAuthService>();
 builder.Services.AddHostedService<JsonMigrationService>();
 
