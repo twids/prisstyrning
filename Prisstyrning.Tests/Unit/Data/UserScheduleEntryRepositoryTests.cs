@@ -185,5 +185,33 @@ public class UserScheduleEntryRepositoryTests : IDisposable
         Assert.True(remaining[0].ScheduledTimeUtc > now);
     }
 
+    [Fact]
+    public async Task CleanupThenFetch_RemovesPastKeepsFuture()
+    {
+        var repo = CreateRepo();
+        var past = new UserScheduleEntry
+        {
+            UserId = "user1",
+            ScheduledTimeUtc = DateTimeOffset.UtcNow.AddHours(-2),
+            State = "comfort",
+            CreatedAtUtc = DateTimeOffset.UtcNow.AddHours(-3)
+        };
+        var future = new UserScheduleEntry
+        {
+            UserId = "user1",
+            ScheduledTimeUtc = DateTimeOffset.UtcNow.AddHours(5),
+            State = "eco",
+            CreatedAtUtc = DateTimeOffset.UtcNow
+        };
+        await repo.AddAsync(past);
+        await repo.AddAsync(future);
+
+        await repo.CleanupPastEntriesAsync("user1");
+        var entries = await repo.GetFutureEntriesAsync("user1");
+
+        Assert.Single(entries);
+        Assert.Equal("eco", entries[0].State);
+    }
+
     #endregion
 }

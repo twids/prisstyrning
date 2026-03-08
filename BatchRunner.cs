@@ -154,11 +154,12 @@ internal class BatchRunner
             Console.WriteLine($"[Batch/Flexible] Comfort marked as completed at {flexState.NextScheduledComfortUtc.Value:yyyy-MM-dd HH:00}");
         }
 
-        // 6.5 Fetch user schedule entries
+        // 6.5 Fetch user schedule entries (cleanup past entries first)
         IReadOnlyList<UserScheduleEntry> userEntries;
         using (var scope = scopeFactory.CreateScope())
         {
             var entryRepo = scope.ServiceProvider.GetRequiredService<UserScheduleEntryRepository>();
+            await entryRepo.CleanupPastEntriesAsync(userId ?? "default");
             userEntries = await entryRepo.GetFutureEntriesAsync(userId ?? "default");
         }
         if (userEntries.Count > 0)
