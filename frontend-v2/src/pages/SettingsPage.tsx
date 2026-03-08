@@ -250,14 +250,14 @@ export default function SettingsPage() {
             />
 
             <Slider
-              label="Early Comfort Threshold"
+              label="Price Patience"
               value={formData.comfortEarlyPercentile}
               onChange={(v) => setFormData({ ...formData, comfortEarlyPercentile: v })}
               min={0.01}
               max={0.50}
               step={0.01}
-              displayValue={`${(formData.comfortEarlyPercentile * 100).toFixed(0)}th percentile`}
-              helpText="When the comfort window opens, only trigger if the price is below this historical percentile. The threshold relaxes as the window progresses."
+              displayValue={`${(formData.comfortEarlyPercentile * 100).toFixed(0)}%`}
+              helpText={`Lower = more patient. The system will wait for a price in the cheapest ${(formData.comfortEarlyPercentile * 100).toFixed(0)}% of recent history before scheduling a comfort run. As the deadline approaches, it becomes less picky and will eventually pick the cheapest available hour.`}
             />
           </div>
         </Card>
