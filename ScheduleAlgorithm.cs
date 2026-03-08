@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
+using Prisstyrning.Data.Entities;
 
 public static class ScheduleAlgorithm
 {
@@ -868,7 +869,8 @@ public static class ScheduleAlgorithm
     public static (JsonNode? schedulePayload, string message) ComposeFlexibleSchedule(
         FlexibleEcoResult? ecoResult,
         FlexibleComfortResult? comfortResult,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        IReadOnlyList<UserScheduleEntry>? userEntries = null)
     {
         var todayDate = now.Date;
         var tomorrowDate = todayDate.AddDays(1);
@@ -920,6 +922,25 @@ public static class ScheduleAlgorithm
             }
         }
 
+        // Add user-defined schedule entries (highest priority — overwrites eco/comfort)
+        if (userEntries != null)
+        {
+            foreach (var entry in userEntries)
+            {
+                var entryDate = entry.ScheduledTimeUtc.UtcDateTime.Date;
+                var dayName = entryDate == todayDate ? todayName :
+                              entryDate == tomorrowDate ? tomorrowName : null;
+                if (dayName == null || !dayActions.ContainsKey(dayName)) continue;
+
+                var time = new TimeSpan(entry.ScheduledTimeUtc.UtcDateTime.Hour, 0, 0);
+                var timeEnd = time.Add(TimeSpan.FromHours(1));
+
+                dayActions[dayName][time] = entry.State;
+                if (timeEnd.TotalHours < 24)
+                    dayActions[dayName][timeEnd] = "turn_off";
+            }
+        }
+
         // Build Daikin JSON structure
         var actionsCombined = new JsonObject();
         foreach (var (dayName, actions) in dayActions)
@@ -946,6 +967,9 @@ public static class ScheduleAlgorithm
             parts.Add($"Comfort: {comfortResult!.Message}");
         else if (comfortResult != null)
             parts.Add($"Comfort: {comfortResult.State}");
+
+        if (userEntries != null && userEntries.Count > 0)
+            parts.Add($"User entries: {userEntries.Count}");
 
         if (parts.Count == 0)
             parts.Add("No eco or comfort scheduled, turn_off only");
