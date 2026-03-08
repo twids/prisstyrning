@@ -185,8 +185,7 @@ internal static class AdminService
 
     private static JsonObject LoadAdminJson(IConfiguration cfg)
     {
-        var safeDir = GetSafeStorageDirectory(cfg);
-        var safePath = Path.Combine(safeDir, "admin.json");
+        var safePath = GetAdminJsonPath(cfg);
         if (!File.Exists(safePath)) return new JsonObject();
 
         try
@@ -215,9 +214,9 @@ internal static class AdminService
 
     private static async Task SaveAdminJson(IConfiguration cfg, JsonObject data)
     {
-        var safeDir = GetSafeStorageDirectory(cfg);
-        var safePath = Path.Combine(safeDir, "admin.json");
-        if (!Directory.Exists(safeDir)) Directory.CreateDirectory(safeDir);
+        var safePath = GetAdminJsonPath(cfg);
+        var dir = Path.GetDirectoryName(safePath)!;
+        if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
 
         await File.WriteAllTextAsync(safePath, data.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
     }
