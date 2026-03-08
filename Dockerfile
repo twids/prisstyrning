@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 ## Multi-stage Dockerfile for Prisstyrning (.NET 8 ASP.NET Core + React frontend)
 ## Build frontend with Node.js, then backend with .NET SDK
 
@@ -7,7 +8,7 @@ WORKDIR /frontend
 
 # Copy frontend package files and install dependencies
 COPY frontend/package*.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci
 
 # Copy frontend source and build
 COPY frontend/ ./
@@ -20,7 +21,7 @@ WORKDIR /frontend-v2
 
 # Copy frontend-v2 package files and install dependencies
 COPY frontend-v2/package*.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci
 
 # Copy frontend-v2 source and build
 COPY frontend-v2/ ./
@@ -33,7 +34,7 @@ WORKDIR /src
 
 # Copy csproj and restore first for better layer caching
 COPY Prisstyrning.csproj ./
-RUN dotnet restore Prisstyrning.csproj
+RUN --mount=type=cache,target=/root/.nuget/packages dotnet restore Prisstyrning.csproj
 
 # Copy the full backend source
 COPY . .
