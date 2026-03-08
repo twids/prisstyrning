@@ -28,7 +28,7 @@ Fixes gitignore casing, constant-time password comparison, rate limiting on admi
     - **Tests to Write:** Build verification
     - **Steps:**
         1. Add security headers middleware (X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Content-Security-Policy)
-        2. No separate CORS middleware needed since it's a single-origin app — headers alone suffice
+        2. Configure a restrictive same-origin CORS policy using `AddCors` and `UseCors()` in `Program.cs`
 
 4. **Phase 4: Generic error messages & debug endpoint restriction**
     - **Objective:** Stop returning `ex.Message` to clients; restrict debug endpoints behind admin auth

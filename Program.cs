@@ -102,19 +102,20 @@ builder.Services.AddTransient<DailyPriceHangfireJob>();
 builder.Services.AddTransient<InitialBatchHangfireJob>();
 builder.Services.AddTransient<ScheduleUpdateHangfireJob>();
 
-// CORS: restrict API access to same-origin requests only
+// CORS: restrict API access to same-origin requests only (exact scheme+host+port match)
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
     {
         policy.SetIsOriginAllowed(origin =>
         {
-            // Allow same-origin: requests from the app's own host
             if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri))
             {
                 return false;
             }
-            return uri.Host == "localhost" || uri.Host == "127.0.0.1" || uri.Host == "::1";
+            // Only allow the exact origin matching the app's listen address
+            var isLocalhost = uri.Host == "localhost" || uri.Host == "127.0.0.1" || uri.Host == "::1";
+            return isLocalhost && uri.Port == listenPort;
         })
         .AllowAnyMethod()
         .AllowAnyHeader()
@@ -122,14 +123,21 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Rate limiting for admin login endpoint
+// Rate limiting for admin login endpoint (partitioned per remote IP)
 builder.Services.AddRateLimiter(options =>
 {
-    options.AddFixedWindowLimiter("admin-login", opt =>
+    options.AddPolicy("admin-login", httpContext =>
     {
-        opt.PermitLimit = 5;
-        opt.Window = TimeSpan.FromMinutes(1);
-        opt.QueueLimit = 0;
+        var remoteIp = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: remoteIp,
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            });
     });
     options.OnRejected = async (context, cancellationToken) =>
     {
@@ -347,15 +355,18 @@ catch (Exception ex)
     Console.WriteLine($"[Startup] DB preload failed: {ex.Message}");
 }
 
-// Security headers middleware
+// Security headers middleware (skip CSP for Swagger in Development to allow inline scripts)
 app.Use(async (ctx, next) =>
 {
     ctx.Response.Headers["X-Frame-Options"] = "DENY";
     ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
     ctx.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
     ctx.Response.Headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
-    // CSP: allow self + inline styles (needed for some UI frameworks) + CDN assets if used
-    ctx.Response.Headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'";
+    // Skip CSP for Swagger UI paths — Swagger injects inline scripts that CSP would block
+    if (!ctx.Request.Path.StartsWithSegments("/swagger"))
+    {
+        ctx.Response.Headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'";
+    }
     await next();
 });
 

@@ -148,7 +148,7 @@ public class OAuthStateTtlTests
     }
 
     [Fact]
-    public void EvictExpiredStates_RemovesStaleEntries()
+    public async Task EvictExpiredStates_RemovesStaleEntries()
     {
         // Arrange: create multiple states, then advance time to expire them
         var config = CreateConfig();
@@ -173,15 +173,25 @@ public class OAuthStateTtlTests
             DaikinOAuthService.EvictExpiredStates(fakeTime);
 
             // Stale states should have been evicted -- trying to use them should fail
-            // (they were removed by eviction, not by TryRemove in callback)
-            var result1 = service.HandleCallbackAsync("code", state1, userId: "u").Result;
-            var result2 = service.HandleCallbackAsync("code", state2, userId: "u").Result;
+            var result1 = await service.HandleCallbackAsync("code", state1, userId: "u");
+            var result2 = await service.HandleCallbackAsync("code", state2, userId: "u");
             Assert.False(result1, "Expired state1 should be evicted");
             Assert.False(result2, "Expired state2 should be evicted");
 
-            // Fresh state should still be usable (though token exchange will fail, the state lookup should succeed)
-            // We just verify it wasn't evicted by checking it's not immediately rejected
-            // (the actual token exchange would fail without a valid mock, but state is found)
+            // Fresh state3 should still be usable — verify it wasn't evicted by using it with a mock token endpoint
+            var mockHandler = new MockHttpMessageHandler();
+            mockHandler.AddRoute("idp.onecta.daikineurope.com/v1/oidc/token",
+                HttpStatusCode.OK,
+                JsonSerializer.Serialize(new
+                {
+                    access_token = "test-access-token",
+                    refresh_token = "test-refresh-token",
+                    expires_in = 3600,
+                    token_type = "Bearer"
+                }));
+            var mockHttpClient = new HttpClient(mockHandler);
+            var result3 = await service.HandleCallbackAsync("code", state3, userId: "u", mockHttpClient);
+            Assert.True(result3, "Fresh state3 should survive eviction and succeed");
         }
     }
 
