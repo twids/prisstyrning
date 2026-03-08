@@ -206,6 +206,48 @@ public class FlexibleEcoAlgorithmTests
         Assert.Equal("no_prices", result.State);
     }
 
+    [Fact]
+    public void GenerateFlexibleEco_FirstRunDefaultNow_WouldWait_ButBackdatedDefault_Schedules()
+    {
+        // Bug scenario: on first run, LastEcoRunUtc is null.
+        // If defaulted to 'now', with interval=19h and flexibility=4h,
+        // window opens at now + 15h — always in the future → perpetual "waiting".
+        // Fix: backdate to now - intervalHours so window is already open.
+        var now = new DateTimeOffset(2026, 3, 8, 10, 0, 0, TimeSpan.Zero);
+        int intervalHours = 19;
+        int flexibilityHours = 4;
+
+        var todayStart = new DateTimeOffset(2026, 3, 8, 0, 0, 0, TimeSpan.Zero);
+        var rawToday = CreatePriceArray(todayStart,
+            0.50m, 0.40m, 0.30m, 0.20m, 0.10m, 0.15m, 0.25m, 0.35m,
+            0.45m, 0.55m, 0.65m, 0.75m, 0.85m, 0.95m, 1.05m, 1.15m,
+            1.25m, 1.35m, 1.45m, 1.55m, 1.65m, 1.75m, 1.85m, 1.95m);
+
+        // Using lastEcoRun = now → window opens at now + 15h → waiting
+        var resultBad = ScheduleAlgorithm.GenerateFlexibleEco(
+            rawToday: rawToday,
+            rawTomorrow: null,
+            lastEcoRun: now,
+            intervalHours: intervalHours,
+            flexibilityHours: flexibilityHours,
+            nowOverride: now);
+
+        Assert.Equal("waiting", resultBad.State);
+
+        // Using lastEcoRun = now - intervalHours → window is fully open → scheduled
+        var backdated = now.AddHours(-intervalHours);
+        var resultGood = ScheduleAlgorithm.GenerateFlexibleEco(
+            rawToday: rawToday,
+            rawTomorrow: null,
+            lastEcoRun: backdated,
+            intervalHours: intervalHours,
+            flexibilityHours: flexibilityHours,
+            nowOverride: now);
+
+        Assert.Equal("scheduled", resultGood.State);
+        Assert.NotNull(resultGood.ScheduledHourUtc);
+    }
+
     #endregion
 
     #region ParseHourlyPrices

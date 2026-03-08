@@ -118,9 +118,9 @@ internal class BatchRunner
                 priceRepo, zone2, settings.ComfortEarlyPercentile);
         }
 
-        // 3. Determine last run times (use now for first run)
-        var lastEcoRun = flexState.LastEcoRunUtc ?? now;
-        var lastComfortRun = flexState.LastComfortRunUtc ?? now;
+        // 3. Determine last run times (backdate on first run so the window is already open)
+        var lastEcoRun = flexState.LastEcoRunUtc ?? now.AddHours(-settings.EcoIntervalHours);
+        var lastComfortRun = flexState.LastComfortRunUtc ?? now.AddDays(-settings.ComfortIntervalDays);
 
         // 4. Run flexible eco algorithm
         var ecoResult = ScheduleAlgorithm.GenerateFlexibleEco(
