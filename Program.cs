@@ -809,7 +809,10 @@ scheduleGroup.MapDelete("/entries/{id:int}", async (int id, HttpContext ctx, Use
             applied = generated;
         }
     }
-    catch { }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[ScheduleEntries] Recompose after delete failed: {ex.Message}");
+    }
 
     return Results.Ok(new { removed = true, applied });
 });
