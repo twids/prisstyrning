@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 ## Multi-stage Dockerfile for Prisstyrning (.NET 8 ASP.NET Core + React frontend)
 ## Build frontend with Node.js, then backend with .NET SDK
 
