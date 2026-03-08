@@ -110,7 +110,10 @@ builder.Services.AddCors(options =>
         policy.SetIsOriginAllowed(origin =>
         {
             // Allow same-origin: requests from the app's own host
-            var uri = new Uri(origin);
+            if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri))
+            {
+                return false;
+            }
             return uri.Host == "localhost" || uri.Host == "127.0.0.1" || uri.Host == "::1";
         })
         .AllowAnyMethod()
