@@ -1,5 +1,5 @@
 import { Disclosure, DisclosureButton, DisclosurePanel } from '@headlessui/react';
-import { format } from 'date-fns';
+import { formatDateTimeFull } from '../dateFormat';
 import { useScheduleHistory } from '../hooks/useScheduleHistory';
 import ScheduleGrid from './ScheduleGrid';
 
@@ -40,7 +40,7 @@ export default function ScheduleHistoryList() {
               <div className="border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
                 <DisclosureButton className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
                   <div className="flex items-center gap-3">
-                    <span className="text-sm">{format(timestamp, 'PPpp')}</span>
+                    <span className="text-sm">{formatDateTimeFull(timestamp)}</span>
                     <span className="px-2 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-xs font-medium">{entry.date}</span>
                   </div>
                   <svg className={`w-4 h-4 text-gray-500 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

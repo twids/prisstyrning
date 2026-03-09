@@ -15,6 +15,7 @@ import { useFlexibleState } from '../hooks/useFlexibleState';
 import { useUserSettings } from '../hooks/useUserSettings';
 import { useManualComfort } from '../hooks/useManualComfort';
 import { useToast } from '../context/ToastContext';
+import { formatDateTime } from '../dateFormat';
 
 export default function DashboardPage() {
   const { isAuthorized, startAuth, refresh, isRefreshing } = useAuth();
@@ -183,11 +184,11 @@ export default function DashboardPage() {
             <div>
               <h3 className="font-medium mb-1">Eco (Daily DHW)</h3>
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                Last scheduled: {flexibleState.LastEcoRunUtc ? new Date(flexibleState.LastEcoRunUtc).toLocaleString() : 'Never (waiting for first interval)'}
+                Last scheduled: {flexibleState.LastEcoRunUtc ? formatDateTime(flexibleState.LastEcoRunUtc) : 'Never (waiting for first interval)'}
               </p>
               {flexibleState.EcoWindow.Start && flexibleState.EcoWindow.End && (
                 <p className="text-sm text-gray-500 dark:text-gray-400">
-                  Next window: {new Date(flexibleState.EcoWindow.Start).toLocaleString()} – {new Date(flexibleState.EcoWindow.End).toLocaleString()}
+                  Next window: {formatDateTime(flexibleState.EcoWindow.Start)} – {formatDateTime(flexibleState.EcoWindow.End)}
                 </p>
               )}
             </div>
@@ -196,17 +197,17 @@ export default function DashboardPage() {
             <div>
               <h3 className="font-medium mb-1">Comfort (Legionella)</h3>
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                Last run: {flexibleState.LastComfortRunUtc ? new Date(flexibleState.LastComfortRunUtc).toLocaleString() : 'Never (waiting for first interval)'}
+                Last run: {flexibleState.LastComfortRunUtc ? formatDateTime(flexibleState.LastComfortRunUtc) : 'Never (waiting for first interval)'}
               </p>
               {flexibleState.NextScheduledComfortUtc && (
                 <p className="text-sm text-blue-600 dark:text-blue-400">
-                  Next scheduled: {new Date(flexibleState.NextScheduledComfortUtc).toLocaleString()}
+                  Next scheduled: {formatDateTime(flexibleState.NextScheduledComfortUtc)}
                 </p>
               )}
               {flexibleState.ComfortWindow.Start && flexibleState.ComfortWindow.End && (
                 <>
                   <p className="text-sm text-gray-500 dark:text-gray-400">
-                    Window: {new Date(flexibleState.ComfortWindow.Start).toLocaleString()} – {new Date(flexibleState.ComfortWindow.End).toLocaleString()}
+                    Window: {formatDateTime(flexibleState.ComfortWindow.Start)} – {formatDateTime(flexibleState.ComfortWindow.End)}
                   </p>
                   {flexibleState.ComfortWindow.Progress !== null && (
                     <div className="mt-2">

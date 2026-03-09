@@ -1,6 +1,7 @@
 import { LineChart } from '@mui/x-charts/LineChart';
 import { Card, CardContent, Typography, CircularProgress, Alert } from '@mui/material';
 import { usePrices } from '../hooks/usePrices';
+import { formatTime, formatDateTime } from '../dateFormat';
 
 export default function PriceChart() {
   const { data, isLoading, error } = usePrices();
@@ -66,10 +67,7 @@ export default function PriceChart() {
               data: xAxisData,
               scaleType: 'time',
               valueFormatter: (value: number) =>
-                new Date(value).toLocaleTimeString('sv-SE', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                }),
+                formatTime(value),
             },
           ]}
           series={[
@@ -94,7 +92,7 @@ export default function PriceChart() {
           margin={{ top: 20, right: 20, bottom: 40, left: 60 }}
         />
         <Typography variant="caption" color="text.secondary" sx={{ mt: 2 }}>
-          Last updated: {data.updated ? new Date(data.updated).toLocaleString('sv-SE') : 'N/A'}
+          Last updated: {data.updated ? formatDateTime(data.updated) : 'N/A'}
         </Typography>
       </CardContent>
     </Card>
