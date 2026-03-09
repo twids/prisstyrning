@@ -177,8 +177,8 @@ internal class BatchRunner
             using var scope = scopeFactory.CreateScope();
             var flexRepo = scope.ServiceProvider.GetRequiredService<FlexibleScheduleStateRepository>();
 
-            // If eco was scheduled, update LastEcoRunUtc
-            if (ecoResult.State == "scheduled" && ecoResult.ScheduledHourUtc.HasValue)
+            // If eco was scheduled or expired, update LastEcoRunUtc to advance the window
+            if ((ecoResult.State == "scheduled" || ecoResult.State == "expired") && ecoResult.ScheduledHourUtc.HasValue)
             {
                 await flexRepo.UpdateEcoRunAsync(userId ?? "default", ecoResult.ScheduledHourUtc.Value);
                 Console.WriteLine($"[Batch/Flexible] Recorded scheduled eco hour at {ecoResult.ScheduledHourUtc.Value:yyyy-MM-dd HH:00}");
