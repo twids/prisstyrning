@@ -2,6 +2,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsi
 import Card from './Card';
 import { usePrices } from '../hooks/usePrices';
 import { useTheme } from '../context/ThemeContext';
+import { formatTime, formatDateTime } from '../dateFormat';
 
 export default function PriceChart() {
   const { data, isLoading, error } = usePrices();
@@ -42,7 +43,7 @@ export default function PriceChart() {
 
   const chartData = allItems.map(p => ({
     time: new Date(p.start).getTime(),
-    label: new Date(p.start).toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' }),
+    label: formatTime(p.start),
     today: p.day === 'today' ? p.value : undefined,
     tomorrow: p.day === 'tomorrow' ? p.value : undefined,
   }));
@@ -74,7 +75,7 @@ export default function PriceChart() {
         </LineChart>
       </ResponsiveContainer>
       <p className="text-xs text-gray-500 mt-3">
-        Last updated: {data.updated ? new Date(data.updated).toLocaleString('sv-SE') : 'N/A'}
+        Last updated: {data.updated ? formatDateTime(data.updated) : 'N/A'}
       </p>
     </Card>
   );

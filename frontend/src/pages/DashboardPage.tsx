@@ -15,6 +15,7 @@ import { useCurrentSchedule } from '../hooks/useCurrentSchedule';
 import { useFlexibleState } from '../hooks/useFlexibleState';
 import { useUserSettings } from '../hooks/useUserSettings';
 import { useManualComfort } from '../hooks/useManualComfort';
+import { formatDateTime } from '../dateFormat';
 
 export default function DashboardPage() {
   const { isAuthorized, startAuth, refresh, isRefreshing } = useAuth();
@@ -254,12 +255,12 @@ export default function DashboardPage() {
               </Typography>
               <Typography variant="body2" color="text.secondary">
                 Last scheduled: {flexibleState.LastEcoRunUtc
-                  ? new Date(flexibleState.LastEcoRunUtc).toLocaleString()
+                  ? formatDateTime(flexibleState.LastEcoRunUtc)
                   : 'Never (waiting for first interval)'}
               </Typography>
               {flexibleState.EcoWindow.Start && flexibleState.EcoWindow.End && (
                 <Typography variant="body2" color="text.secondary">
-                  Next window: {new Date(flexibleState.EcoWindow.Start).toLocaleString()} – {new Date(flexibleState.EcoWindow.End).toLocaleString()}
+                  Next window: {formatDateTime(flexibleState.EcoWindow.Start)} – {formatDateTime(flexibleState.EcoWindow.End)}
                 </Typography>
               )}
             </Box>
@@ -273,18 +274,18 @@ export default function DashboardPage() {
               </Typography>
               <Typography variant="body2" color="text.secondary">
                 Last run: {flexibleState.LastComfortRunUtc
-                  ? new Date(flexibleState.LastComfortRunUtc).toLocaleString()
+                  ? formatDateTime(flexibleState.LastComfortRunUtc)
                   : 'Never (waiting for first interval)'}
               </Typography>
               {flexibleState.NextScheduledComfortUtc && (
                 <Typography variant="body2" color="primary.main">
-                  Next scheduled: {new Date(flexibleState.NextScheduledComfortUtc).toLocaleString()}
+                  Next scheduled: {formatDateTime(flexibleState.NextScheduledComfortUtc)}
                 </Typography>
               )}
               {flexibleState.ComfortWindow.Start && flexibleState.ComfortWindow.End && (
                 <>
                   <Typography variant="body2" color="text.secondary">
-                    Window: {new Date(flexibleState.ComfortWindow.Start).toLocaleString()} – {new Date(flexibleState.ComfortWindow.End).toLocaleString()}
+                    Window: {formatDateTime(flexibleState.ComfortWindow.Start)} – {formatDateTime(flexibleState.ComfortWindow.End)}
                   </Typography>
                   {flexibleState.ComfortWindow.Progress !== null && (
                     <Box sx={{ mt: 1 }}>

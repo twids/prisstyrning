@@ -2,7 +2,7 @@ import { Chip, CircularProgress, Tooltip } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import { useAuth } from '../hooks/useAuth';
-import { format } from 'date-fns';
+import { formatDateTimeFull } from '../dateFormat';
 
 export default function AuthStatusChip() {
   const { isAuthorized, expiresAt, isLoading } = useAuth();
@@ -24,7 +24,7 @@ export default function AuthStatusChip() {
 
   const expiresAtDate = expiresAt ? new Date(expiresAt) : null;
   const tooltipText = expiresAtDate
-    ? `Expires: ${format(expiresAtDate, 'PPpp')}`
+    ? `Expires: ${formatDateTimeFull(expiresAtDate)}`
     : 'Authorized';
 
   return (

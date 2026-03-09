@@ -31,6 +31,7 @@ import DialogContentText from '@mui/material/DialogContentText';
 import DialogActions from '@mui/material/DialogActions';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../api/client';
+import { formatDateTime } from '../dateFormat';
 import type { AdminUser } from '../types/api';
 
 export default function AdminPage() {
@@ -283,13 +284,7 @@ export default function AdminPage() {
                     {user.createdAt ? (
                       <Tooltip title={`${new Date(user.createdAt).toISOString()}`}>
                         <Typography variant="body2">
-                          {new Date(user.createdAt).toLocaleString(undefined, {
-                            year: 'numeric',
-                            month: '2-digit',
-                            day: '2-digit',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
+                          {formatDateTime(user.createdAt)}
                         </Typography>
                       </Tooltip>
                     ) : (
