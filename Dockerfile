@@ -45,7 +45,7 @@ COPY --from=frontend-v2-build /wwwroot-v2 ./wwwroot-v2
 
 # Publish backend (framework-dependent)
 ARG BUILD_CONFIG=Release
-RUN dotnet publish Prisstyrning.csproj -c $BUILD_CONFIG -o /app/publish --no-restore
+RUN --mount=type=cache,target=/root/.nuget/packages dotnet publish Prisstyrning.csproj -c $BUILD_CONFIG -o /app/publish
 
 # Stage 4: Final runtime image
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
