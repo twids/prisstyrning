@@ -300,7 +300,7 @@ public class FlexibleEcoAlgorithmTests
     }
 
     [Fact]
-    public void GenerateFlexibleEco_AllPricesInPast_ReturnsNoPrices()
+    public void GenerateFlexibleEco_AllPricesInPast_ReturnsExpired()
     {
         // Arrange: all price hours are before 'now'
         var lastEcoRun = new DateTimeOffset(2026, 2, 20, 10, 0, 0, TimeSpan.Zero);
@@ -323,9 +323,9 @@ public class FlexibleEcoAlgorithmTests
             flexibilityHours: 12,
             nowOverride: now);
 
-        // Assert: all prices in the past → no prices in window
+        // Assert: window expired, all prices in the past → expired with no scheduled hour
         Assert.Null(result.ScheduledHourUtc);
-        Assert.Equal("no_prices", result.State);
+        Assert.Equal("expired", result.State);
     }
 
     [Fact]
@@ -425,6 +425,65 @@ public class FlexibleEcoAlgorithmTests
         Assert.Equal(3, result.Count);
         Assert.True(result[0].Start < result[1].Start);
         Assert.True(result[1].Start < result[2].Start);
+    }
+
+    #endregion
+
+    #region Expired Window
+
+    [Fact]
+    public void ExpiredWindow_WithFuturePrices_ForcesSchedule()
+    {
+        // Arrange: lastEcoRun far in the past so window has completely passed
+        // lastEcoRun = Feb 19 10:00, interval=24h, flex=4h
+        // windowStart = Feb 20 06:00, windowEnd = Feb 20 14:00
+        // now = Feb 21 10:00 → well past windowEnd
+        var lastEcoRun = new DateTimeOffset(2026, 2, 19, 10, 0, 0, TimeSpan.Zero);
+        var now = new DateTimeOffset(2026, 2, 21, 10, 0, 0, TimeSpan.Zero);
+
+        // Prices for today (Feb 21): cheapest future hour is 14:00 (0.03)
+        var todayStart = new DateTimeOffset(2026, 2, 21, 0, 0, 0, TimeSpan.Zero);
+        var rawToday = CreatePriceArray(todayStart,
+            0.50m, 0.40m, 0.30m, 0.20m, 0.10m, 0.15m, 0.25m, 0.35m,
+            0.45m, 0.55m, 0.65m, 0.75m, 0.85m, 0.95m, 0.03m, 1.15m,
+            1.25m, 1.35m, 1.45m, 1.55m, 1.65m, 1.75m, 1.85m, 1.95m);
+
+        // Act
+        var result = ScheduleAlgorithm.GenerateFlexibleEco(
+            rawToday: rawToday,
+            rawTomorrow: null,
+            lastEcoRun: lastEcoRun,
+            intervalHours: 24,
+            flexibilityHours: 4,
+            nowOverride: now);
+
+        // Assert: expired state, forced cheapest future hour (14:00)
+        Assert.NotNull(result.ScheduledHourUtc);
+        Assert.Equal("expired", result.State);
+        Assert.Equal(14, result.ScheduledHourUtc!.Value.Hour);
+        Assert.Contains("expired", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ExpiredWindow_WithoutPrices_ReturnsExpired()
+    {
+        // Arrange: lastEcoRun far in the past, no price data at all
+        var lastEcoRun = new DateTimeOffset(2026, 2, 19, 10, 0, 0, TimeSpan.Zero);
+        var now = new DateTimeOffset(2026, 2, 21, 10, 0, 0, TimeSpan.Zero);
+
+        // Act
+        var result = ScheduleAlgorithm.GenerateFlexibleEco(
+            rawToday: null,
+            rawTomorrow: null,
+            lastEcoRun: lastEcoRun,
+            intervalHours: 24,
+            flexibilityHours: 4,
+            nowOverride: now);
+
+        // Assert: expired with no scheduled hour
+        Assert.Null(result.ScheduledHourUtc);
+        Assert.Equal("expired", result.State);
+        Assert.Contains("expired", result.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     #endregion
