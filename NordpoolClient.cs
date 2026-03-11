@@ -5,12 +5,10 @@ using System.Globalization;
 internal class NordpoolClient
 {
     private readonly HttpClient _http;
-    private readonly string _currency;
     private readonly string? _apiKey;
-    public NordpoolClient(HttpClient httpClient, string? currency = null, string? apiKey = null)
+    public NordpoolClient(HttpClient httpClient, string? apiKey = null)
     {
         _http = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
-        _currency = string.IsNullOrWhiteSpace(currency) ? "SEK" : currency!;
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey.Trim();
         // Note: Most headers configured via IHttpClientFactory in Program.cs
         // Only add instance-specific x-api-key header if provided

@@ -52,6 +52,7 @@ internal class NordpoolPriceHangfireJob
     {
         var currency = _cfg["Price:Nordpool:Currency"] ?? "SEK";
         var defaultZone = _cfg["Price:Nordpool:DefaultZone"] ?? "SE3";
+        if (!UserSettingsRepository.IsValidZone(defaultZone)) defaultZone = "SE3";
         var zones = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { defaultZone };
         
         try
@@ -69,7 +70,7 @@ internal class NordpoolPriceHangfireJob
 
         var label = attempt > 0 ? $"retry #{attempt}" : "initial";
         Console.WriteLine($"[NordpoolPriceHangfireJob] ({label}) fetching zones={string.Join(',', zones)} currency={currency}");
-        var client = new NordpoolClient(_httpClientFactory.CreateClient("Nordpool"), currency);
+        var client = new NordpoolClient(_httpClientFactory.CreateClient("Nordpool"));
 
         bool anyMissingTomorrow = false;
 

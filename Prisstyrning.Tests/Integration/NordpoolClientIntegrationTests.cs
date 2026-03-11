@@ -22,7 +22,7 @@ public class NordpoolClientIntegrationTests
         mockHandler.AddRoute("elprisetjustnu.se", HttpStatusCode.OK, mockResponse);
         
         var httpClient = new HttpClient(mockHandler);
-        var client = new NordpoolClient(currency: "SEK", httpClient: httpClient);
+        var client = new NordpoolClient(httpClient);
         
         var result = await client.GetDailyPricesAsync(new DateTime(2026, 2, 7), "SE3");
         
@@ -42,7 +42,7 @@ public class NordpoolClientIntegrationTests
         mockHandler.AddRoute("elprisetjustnu.se", HttpStatusCode.NotFound, "Not found");
         
         var httpClient = new HttpClient(mockHandler);
-        var client = new NordpoolClient(currency: "SEK", httpClient: httpClient);
+        var client = new NordpoolClient(httpClient);
         
         var result = await client.GetDailyPricesAsync(new DateTime(2030, 12, 31), "SE3");
         
@@ -68,7 +68,7 @@ public class NordpoolClientIntegrationTests
         mockHandler.AddRoute("2026/02-08_SE3", HttpStatusCode.OK, tomorrowMock);
         
         var httpClient = new HttpClient(mockHandler);
-        var client = new NordpoolClient(currency: "SEK", httpClient: httpClient);
+        var client = new NordpoolClient(httpClient);
         
         var (today, tomorrow) = await client.GetTodayTomorrowAsync("SE3");
         
@@ -88,7 +88,7 @@ public class NordpoolClientIntegrationTests
         mockHandler.AddRoute("elprisetjustnu.se", HttpStatusCode.OK, mockResponse);
         
         var httpClient = new HttpClient(mockHandler);
-        var client = new NordpoolClient(currency: "SEK", httpClient: httpClient);
+        var client = new NordpoolClient(httpClient);
         
         var (_, attempts) = await client.GetDailyPricesDetailedAsync(
             new DateTime(2026, 2, 7), "SE3");
@@ -108,7 +108,7 @@ public class NordpoolClientIntegrationTests
             "Server Error");
         
         var httpClient = new HttpClient(mockHandler);
-        var client = new NordpoolClient(currency: "SEK", httpClient: httpClient);
+        var client = new NordpoolClient(httpClient);
         
         var result = await client.GetDailyPricesAsync(new DateTime(2026, 2, 7), "SE3");
         
@@ -139,7 +139,7 @@ public class NordpoolClientIntegrationTests
         mockHandler.AddRoute("elprisetjustnu.se", HttpStatusCode.OK, mockResponse);
         
         var httpClient = new HttpClient(mockHandler);
-        var client = new NordpoolClient(currency: "SEK", httpClient: httpClient);
+        var client = new NordpoolClient(httpClient);
         
         var result = await client.GetDailyPricesAsync(new DateTime(2026, 2, 7), "SE3");
         
@@ -163,7 +163,7 @@ public class NordpoolClientIntegrationTests
             @"[{""time_start"":""2026-02-07T00:00:00Z"",""SEK_per_kWh"":0.50}]");
         
         var httpClient = new HttpClient(mockHandler);
-        var client = new NordpoolClient(currency: "SEK", httpClient: httpClient);
+        var client = new NordpoolClient(httpClient);
         
         var stockholmTz = TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm");
         var (today, tomorrow) = await client.GetTodayTomorrowAsync("SE3", stockholmTz);
@@ -180,7 +180,7 @@ public class NordpoolClientIntegrationTests
             @"[{""time_start"":""2026-02-07T00:00:00Z"",""SEK_per_kWh"":0.45}]");
         
         var httpClient = new HttpClient(mockHandler);
-        var client = new NordpoolClient(currency: "SEK", httpClient: httpClient);
+        var client = new NordpoolClient(httpClient);
         
         var attempts = await client.GetRawCandidateResponsesAsync(
             new DateTime(2026, 2, 7), "SE3");

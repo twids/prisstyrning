@@ -22,19 +22,6 @@ public class NordpoolClientTests
         Assert.Throws<ArgumentNullException>(() => new NordpoolClient(null!));
     }
 
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("   ")]
-    public void Constructor_DefaultsCurrencyToSEK_WhenNullOrWhitespace(string? currency)
-    {
-        var handler = new MockHttpMessageHandler();
-        var httpClient = new HttpClient(handler);
-        // Should not throw; currency defaults to "SEK" internally
-        var client = new NordpoolClient(httpClient, currency);
-        Assert.NotNull(client);
-    }
-
     [Fact]
     public void Constructor_AddsApiKeyHeader_WhenProvided()
     {

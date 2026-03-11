@@ -484,10 +484,9 @@ app.MapGet("/api/prices/_debug/fetch", async (IHttpClientFactory httpClientFacto
     var dateStr = ctx.Request.Query["date"].FirstOrDefault();
     DateTime date = DateTime.TryParse(dateStr, out var d) ? d : DateTime.Today;
     var currency = cfg["Price:Nordpool:Currency"] ?? "SEK";
-    var pageId = cfg["Price:Nordpool:PageId"];
-    var client = new NordpoolClient(httpClientFactory.CreateClient("Nordpool"), currency);
+    var client = new NordpoolClient(httpClientFactory.CreateClient("Nordpool"));
     var (prices, attempts) = await client.GetDailyPricesDetailedAsync(date, zone);
-    return Results.Json(new { date = date.ToString("yyyy-MM-dd"), zone, priceCount = prices.Count, prices, attempts, currency, pageId, userId });
+    return Results.Json(new { date = date.ToString("yyyy-MM-dd"), zone, priceCount = prices.Count, prices, attempts, currency, userId });
 });
 app.MapGet("/api/prices/_debug/raw", async (IHttpClientFactory httpClientFactory, HttpContext ctx, IConfiguration cfg) =>
 {
@@ -495,8 +494,7 @@ app.MapGet("/api/prices/_debug/raw", async (IHttpClientFactory httpClientFactory
     var dateStr = ctx.Request.Query["date"].FirstOrDefault();
     DateTime date = DateTime.TryParse(dateStr, out var d) ? d : DateTime.Today;
     var currency = cfg["Price:Nordpool:Currency"] ?? "SEK";
-    var pageId = cfg["Price:Nordpool:PageId"];
-    var client = new NordpoolClient(httpClientFactory.CreateClient("Nordpool"), currency);
+    var client = new NordpoolClient(httpClientFactory.CreateClient("Nordpool"));
     return Results.Json(await client.GetRawCandidateResponsesAsync(date));
 });
 pricesGroup.MapGet("/memory", () =>
