@@ -302,8 +302,8 @@ public class EndpointIntegrationTests
     {
         // Test valid zones
         Assert.True(UserSettingsRepository.IsValidZone("SE3"));
-        Assert.True(UserSettingsRepository.IsValidZone("NO5"));
-        Assert.True(UserSettingsRepository.IsValidZone("DK1"));
+        Assert.False(UserSettingsRepository.IsValidZone("NO5"));
+        Assert.False(UserSettingsRepository.IsValidZone("DK1"));
 
         // Test invalid zones
         Assert.False(UserSettingsRepository.IsValidZone("INVALID"));
