@@ -2,11 +2,12 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsi
 import Card from './Card';
 import { usePrices } from '../hooks/usePrices';
 import { useTheme } from '../context/ThemeContext';
-import { formatTime, formatDateTime } from '../dateFormat';
+import { useFormatters } from '../context/TimezoneContext';
 
 export default function PriceChart() {
   const { data, isLoading, error } = usePrices();
   const { resolved: themeMode } = useTheme();
+  const { formatTime, formatDateTime } = useFormatters();
 
   if (isLoading) {
     return (

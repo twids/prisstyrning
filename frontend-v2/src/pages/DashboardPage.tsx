@@ -15,9 +15,10 @@ import { useFlexibleState } from '../hooks/useFlexibleState';
 import { useUserSettings } from '../hooks/useUserSettings';
 import { useManualComfort } from '../hooks/useManualComfort';
 import { useToast } from '../context/ToastContext';
-import { formatDateTime } from '../dateFormat';
+import { useFormatters } from '../context/TimezoneContext';
 
 export default function DashboardPage() {
+  const { formatDateTime } = useFormatters();
   const { isAuthorized, startAuth, refresh, isRefreshing } = useAuth();
   const schedulePreview = useSchedulePreview();
   const { showToast } = useToast();

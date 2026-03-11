@@ -4,10 +4,11 @@ import Card from '../components/Card';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { apiClient } from '../api/client';
 import { useToast } from '../context/ToastContext';
-import { formatDateTime } from '../dateFormat';
+import { useFormatters } from '../context/TimezoneContext';
 import type { AdminUser } from '../types/api';
 
 export default function AdminPage() {
+  const { formatDateTime } = useFormatters();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const [password, setPassword] = useState('');
