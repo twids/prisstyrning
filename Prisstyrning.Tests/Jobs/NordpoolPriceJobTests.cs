@@ -167,7 +167,7 @@ public class NordpoolPriceJobTests : IDisposable
         using var fs = new TempFileSystem();
         var cfg = fs.GetTestConfig();
 
-        // Mock handler that returns today's prices but empty tomorrow
+        // Mock handler that returns empty price data for all requests
         var handler = new MockHttpMessageHandler();
         handler.AddRoute("elprisetjustnu.se", System.Net.HttpStatusCode.OK, "[]");
         var httpFactory = MockServiceFactory.CreateMockHttpClientFactory(handler);
