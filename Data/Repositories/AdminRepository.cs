@@ -127,7 +127,7 @@ public class AdminRepository
         if (string.IsNullOrEmpty(configuredPassword))
             return (false, "No admin password configured");
 
-        if (!string.IsNullOrEmpty(passwordHeader) && passwordHeader == configuredPassword)
+        if (!string.IsNullOrEmpty(passwordHeader) && AdminService.SecureCompare(passwordHeader, configuredPassword))
             return (true, null);
 
         return (false, "Unauthorized");
