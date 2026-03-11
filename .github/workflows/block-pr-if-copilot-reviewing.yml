@@ -4,6 +4,9 @@ name: Block Merge If Copilot Reviewing
     types: [opened, synchronize, labeled, unlabeled]
   pull_request_review:
     types: [submitted]
+permissions:
+  pull-requests: read
+  issues: read
 jobs:
   copilot-block:
     runs-on: ubuntu-latest
