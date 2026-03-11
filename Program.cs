@@ -68,16 +68,6 @@ builder.Services.AddHttpClient("Daikin", client =>
     client.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0");
 });
 
-builder.Services.AddHttpClient("HomeAssistant", client =>
-{
-    client.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0");
-});
-
-builder.Services.AddHttpClient("Entsoe", client =>
-{
-    client.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0");
-});
-
 // Register application services
 builder.Services.AddScoped<BatchRunner>();
 
