@@ -175,15 +175,15 @@ public class FlexibleComfortAlgorithmTests
         // Arrange: lastComfortRun at Feb 15 00:00, interval=7, flexibility=2
         // windowStart = Feb 20 00:00, windowEnd = Feb 24 00:00 (96h window)
         // Now = Feb 22 00:00 → progress = 48/96 = 0.5
-        // effectiveThreshold at 0.5 = 0.50 + (2.00-0.50)*0.5 = 0.50 + 0.75 = 1.25
-        // Provide a moderate price (1.00) which is below 1.25 → should schedule
+        // effectiveThreshold at 0.5 (cubic) = 0.50 + (2.00-0.50)*(0.5³) = 0.50 + 0.1875 = 0.6875
+        // Provide a cheap price (0.60) which is below 0.6875 → should schedule
         var lastComfortRun = new DateTimeOffset(2026, 2, 15, 0, 0, 0, TimeSpan.Zero);
         var now = new DateTimeOffset(2026, 2, 22, 0, 0, 0, TimeSpan.Zero);
 
         var todayStart = new DateTimeOffset(2026, 2, 22, 0, 0, 0, TimeSpan.Zero);
         var rawToday = CreatePriceArray(todayStart,
             1.50m, 1.45m, 1.40m, 1.35m, 1.30m, 1.25m, 1.20m, 1.15m,
-            1.10m, 1.05m, 1.00m, 1.05m, 1.10m, 1.15m, 1.20m, 1.25m,
+            1.10m, 1.05m, 0.60m, 1.05m, 1.10m, 1.15m, 1.20m, 1.25m,
             1.30m, 1.35m, 1.40m, 1.45m, 1.50m, 1.55m, 1.60m, 1.65m);
 
         // Act
@@ -197,7 +197,7 @@ public class FlexibleComfortAlgorithmTests
             historicalMaxPrice: 2.00m,
             nowOverride: now);
 
-        // Assert: cheapest future = 1.00 at hour 10, threshold = 1.25 → 1.00 ≤ 1.25 → scheduled
+        // Assert: cheapest future = 0.60 at hour 10, cubic threshold = 0.6875 → 0.60 ≤ 0.6875 → scheduled
         Assert.NotNull(result.ScheduledHourUtc);
         Assert.Equal("scheduled", result.State);
         Assert.Equal(10, result.ScheduledHourUtc!.Value.Hour);

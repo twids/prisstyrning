@@ -26,6 +26,14 @@ class ApiClient {
     return this.get(`/api/prices/timeseries${params}`);
   }
 
+  async getPriceThreshold(percentile: number): Promise<T.PriceThresholdResponse> {
+    return this.get(`/api/prices/threshold?percentile=${percentile}`);
+  }
+
+  async getPriceTrend(): Promise<T.PriceTrendResponse> {
+    return this.get('/api/prices/trend');
+  }
+
   async getZone(): Promise<T.ZoneResponse> {
     return this.get('/api/prices/zone');
   }
