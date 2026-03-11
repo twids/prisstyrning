@@ -2,18 +2,21 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Prisstyrning.Data;
 
 #nullable disable
 
-namespace Prisstyrning.Data.Migrations
+namespace Prisstyrning.data.Migrations
 {
     [DbContext(typeof(PrisstyrningDbContext))]
-    partial class PrisstyrningDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260311201056_AddTimezoneToUserSettings")]
+    partial class AddTimezoneToUserSettings
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -194,9 +197,7 @@ namespace Prisstyrning.Data.Migrations
 
                     b.Property<string>("Timezone")
                         .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("text")
-                        .HasDefaultValue("auto");
+                        .HasColumnType("text");
 
                     b.Property<double>("TurnOffPercentile")
                         .HasColumnType("double precision");

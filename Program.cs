@@ -185,7 +185,8 @@ app.MapGet("/api/user/settings", async (HttpContext ctx, UserSettingsRepository 
         EcoFlexibilityHours = entity.EcoFlexibilityHours,
         ComfortIntervalDays = entity.ComfortIntervalDays,
         ComfortFlexibilityDays = entity.ComfortFlexibilityDays,
-        ComfortEarlyPercentile = entity.ComfortEarlyPercentile
+        ComfortEarlyPercentile = entity.ComfortEarlyPercentile,
+        Timezone = entity.Timezone
     }, new JsonSerializerOptions { PropertyNamingPolicy = null });
 });
 
@@ -204,6 +205,7 @@ app.MapPost("/api/user/settings", async (HttpContext ctx, UserSettingsRepository
     string? rawCid = body["ComfortIntervalDays"]?.ToString();
     string? rawCfd = body["ComfortFlexibilityDays"]?.ToString();
     string? rawCep = body["ComfortEarlyPercentile"]?.ToString();
+    string? rawTz = body["Timezone"]?.ToString();
     var errors = new List<string>();
     int comfortHours = 3;
     if (!string.IsNullOrWhiteSpace(rawCh))
@@ -239,9 +241,17 @@ app.MapPost("/api/user/settings", async (HttpContext ctx, UserSettingsRepository
     double? comfortEarlyPercentile = null;
     if (!string.IsNullOrWhiteSpace(rawCep))
     { if (!double.TryParse(rawCep, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var cep) || cep < 0.01 || cep > 0.50) { errors.Add("ComfortEarlyPercentile must be a number between 0.01 and 0.50"); } else { comfortEarlyPercentile = cep; } }
+    string? timezone = null;
+    if (!string.IsNullOrWhiteSpace(rawTz))
+    {
+        var validTimezones = new[] { "auto", "Europe/Stockholm", "Europe/Oslo", "Europe/Copenhagen", "Europe/Helsinki" };
+        if (!validTimezones.Contains(rawTz)) { errors.Add("Timezone must be one of: auto, Europe/Stockholm, Europe/Oslo, Europe/Copenhagen, Europe/Helsinki"); }
+        else { timezone = rawTz; }
+    }
     if (errors.Count > 0) return Results.BadRequest(new { error = "Validation failed", errors });
     await settingsRepo.SaveSettingsAsync(userId, comfortHours, turnOffPercentile, autoApplySchedule, maxComfortGapHours,
-        schedulingMode, ecoIntervalHours, ecoFlexibilityHours, comfortIntervalDays, comfortFlexibilityDays, comfortEarlyPercentile);
+        schedulingMode, ecoIntervalHours, ecoFlexibilityHours, comfortIntervalDays, comfortFlexibilityDays, comfortEarlyPercentile,
+        timezone);
     return Results.Ok(new { saved = true });
 });
 

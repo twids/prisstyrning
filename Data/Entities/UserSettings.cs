@@ -14,4 +14,5 @@ public class UserSettings
     public int ComfortIntervalDays { get; set; } = 21;
     public int ComfortFlexibilityDays { get; set; } = 7;
     public double ComfortEarlyPercentile { get; set; } = 0.10;
+    public string Timezone { get; set; } = "auto";
 }
