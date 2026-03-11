@@ -3,6 +3,7 @@ import { Stack, Paper, Typography, Button, Alert, Box, Snackbar, TextField, Divi
 
 import AuthStatusChip from '../components/AuthStatusChip';
 import PriceChart from '../components/PriceChart';
+import TrendChart from '../components/TrendChart';
 import ScheduleGrid from '../components/ScheduleGrid';
 import ScheduleLegend from '../components/ScheduleLegend';
 import ScheduleHistoryList from '../components/ScheduleHistoryList';
@@ -158,6 +159,8 @@ export default function DashboardPage() {
 
       {/* Price Chart */}
       <PriceChart />
+
+      <TrendChart />
 
       {/* Schedule Preview */}
       <Paper sx={{ p: 3 }}>
