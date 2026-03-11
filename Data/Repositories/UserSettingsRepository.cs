@@ -98,7 +98,8 @@ public class UserSettingsRepository
 
     public async Task SaveSettingsAsync(string userId, int comfortHours, double turnOffPercentile, bool autoApplySchedule, int maxComfortGapHours,
         string? schedulingMode = null, int? ecoIntervalHours = null, int? ecoFlexibilityHours = null,
-        int? comfortIntervalDays = null, int? comfortFlexibilityDays = null, double? comfortEarlyPercentile = null)
+        int? comfortIntervalDays = null, int? comfortFlexibilityDays = null, double? comfortEarlyPercentile = null,
+        string? timezone = null)
     {
         var entity = await _db.UserSettings.FindAsync(userId);
         if (entity == null)
@@ -116,6 +117,7 @@ public class UserSettingsRepository
         if (comfortIntervalDays.HasValue) entity.ComfortIntervalDays = comfortIntervalDays.Value;
         if (comfortFlexibilityDays.HasValue) entity.ComfortFlexibilityDays = comfortFlexibilityDays.Value;
         if (comfortEarlyPercentile.HasValue) entity.ComfortEarlyPercentile = comfortEarlyPercentile.Value;
+        if (timezone != null) entity.Timezone = timezone;
         await _db.SaveChangesAsync();
     }
 

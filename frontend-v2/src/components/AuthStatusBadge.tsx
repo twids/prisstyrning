@@ -1,7 +1,8 @@
 import { useAuth } from '../hooks/useAuth';
-import { formatDateTimeFull } from '../dateFormat';
+import { useFormatters } from '../context/TimezoneContext';
 
 export default function AuthStatusBadge() {
+  const { formatDateTimeFull } = useFormatters();
   const { isAuthorized, expiresAt, isLoading } = useAuth();
 
   if (isLoading) {

@@ -44,6 +44,7 @@ export interface UserSettings {
   ComfortIntervalDays: number;
   ComfortFlexibilityDays: number;
   ComfortEarlyPercentile: number;
+  Timezone: string;
 }
 
 export interface SchedulePreviewResponse {
