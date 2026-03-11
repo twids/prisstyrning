@@ -21,10 +21,20 @@ export function TimezoneProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo(() => {
     const raw = settings?.Timezone ?? 'auto';
-    const resolved = raw === 'auto'
-      ? Intl.DateTimeFormat().resolvedOptions().timeZone
-      : raw;
-    return { timezone: resolved, setting: raw };
+    const systemTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const resolved = raw === 'auto' ? systemTimezone : raw;
+
+    let safeTimezone = systemTimezone;
+    try {
+      // Validate that resolved is a supported IANA timezone. This will throw on invalid values.
+      // eslint-disable-next-line no-new
+      new Intl.DateTimeFormat(undefined, { timeZone: resolved });
+      safeTimezone = resolved;
+    } catch {
+      safeTimezone = systemTimezone;
+    }
+
+    return { timezone: safeTimezone, setting: raw };
   }, [settings?.Timezone]);
 
   return (

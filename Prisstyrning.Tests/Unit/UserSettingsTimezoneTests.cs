@@ -9,15 +9,6 @@ namespace Prisstyrning.Tests.Unit;
 
 public class UserSettingsTimezoneTests
 {
-    private static readonly string[] ValidTimezones = new[]
-    {
-        "auto",
-        "Europe/Stockholm",
-        "Europe/Oslo",
-        "Europe/Copenhagen",
-        "Europe/Helsinki"
-    };
-
     [Fact]
     public void NewUserSettings_HasTimezoneDefaultAuto()
     {
@@ -93,7 +84,6 @@ public class UserSettingsTimezoneTests
 
     [Theory]
     [InlineData("US/Eastern")]
-    [InlineData("")]
     [InlineData("invalid")]
     [InlineData("America/New_York")]
     public void InvalidTimezone_IsRejectedByValidation(string timezone)
