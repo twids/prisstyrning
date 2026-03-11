@@ -132,7 +132,8 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 // Schedule recurring jobs
 RecurringJob.AddOrUpdate<NordpoolPriceHangfireJob>("nordpool-price-job", 
     job => job.ExecuteAsync(), 
-    "0 */6 * * *"); // Every 6 hours
+    "0 13 * * *", // Daily at 13:00 CET (when Nordpool publishes day-ahead prices)
+    new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm") });
 
 RecurringJob.AddOrUpdate<ScheduleUpdateHangfireJob>("schedule-update-job-midnight",
     job => job.ExecuteAsync(),
