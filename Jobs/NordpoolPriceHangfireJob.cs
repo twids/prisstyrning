@@ -35,12 +35,14 @@ internal class NordpoolPriceHangfireJob
     }
 
     /// <summary>Entry point for the recurring 13:00 schedule.</summary>
+    [DisableConcurrentExecution(timeoutInSeconds: 300)]
     public async Task ExecuteAsync()
     {
         await FetchPricesAsync(attempt: 0);
     }
 
     /// <summary>Entry point for exponential-backoff retries scheduled by the main run.</summary>
+    [DisableConcurrentExecution(timeoutInSeconds: 300)]
     public async Task RetryFetchAsync(int attempt)
     {
         await FetchPricesAsync(attempt);
@@ -142,7 +144,11 @@ internal class NordpoolPriceHangfireJob
         {
             try
             {
-                var retentionDays = _cfg.GetValue("Price:RetentionDays", 90);
+                var configuredRetentionDays = _cfg.GetValue("Price:RetentionDays", 90);
+                const int maxRetentionDays = 365;
+                var retentionDays = configuredRetentionDays <= 0
+                    ? 90
+                    : Math.Min(configuredRetentionDays, maxRetentionDays);
                 var cutoff = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-retentionDays));
                 using var cleanupScope = _scopeFactory.CreateScope();
                 var cleanupRepo = cleanupScope.ServiceProvider.GetRequiredService<PriceRepository>();

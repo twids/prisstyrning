@@ -1,4 +1,3 @@
-using System.Linq.Expressions;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -286,7 +285,7 @@ internal class StubBackgroundJobClient : IBackgroundJobClient
     {
         if (state is ScheduledState scheduled)
         {
-            ScheduledJobs.Add((job, scheduled.EnqueueAt - DateTimeOffset.UtcNow));
+            ScheduledJobs.Add((job, scheduled.EnqueueAt - DateTime.UtcNow));
         }
         return Guid.NewGuid().ToString();
     }
