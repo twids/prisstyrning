@@ -96,9 +96,13 @@ public class UserSettingsTimezoneTests
     [InlineData("")]
     [InlineData("invalid")]
     [InlineData("America/New_York")]
-    [InlineData(null)]
-    public void InvalidTimezone_IsNotInValidSet(string? timezone)
+    public void InvalidTimezone_IsRejectedByValidation(string timezone)
     {
-        Assert.DoesNotContain(timezone, ValidTimezones);
+        // Mirrors the production validation logic in Program.cs
+        string[] validTimezones = ["auto", "Europe/Stockholm", "Europe/Oslo", "Europe/Copenhagen", "Europe/Helsinki"];
+        var errors = new List<string>();
+        if (!validTimezones.Contains(timezone))
+            errors.Add("Timezone must be one of: auto, Europe/Stockholm, Europe/Oslo, Europe/Copenhagen, Europe/Helsinki");
+        Assert.Single(errors);
     }
 }

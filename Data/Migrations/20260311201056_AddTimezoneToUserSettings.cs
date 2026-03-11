@@ -2,7 +2,7 @@
 
 #nullable disable
 
-namespace Prisstyrning.data.Migrations
+namespace Prisstyrning.Data.Migrations
 {
     /// <inheritdoc />
     public partial class AddTimezoneToUserSettings : Migration

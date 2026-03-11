@@ -21,6 +21,7 @@ const int MaxUserIdLength = 100;
 const int MaxScheduleRawDisplayLength = 400;
 const int DefaultListenPort = 5000;
 const string UserCookieName = "ps_user";
+string[] ValidTimezones = ["auto", "Europe/Stockholm", "Europe/Oslo", "Europe/Copenhagen", "Europe/Helsinki"];
 
 // Register /api/user/settings endpoints after app is declared
 
@@ -244,8 +245,7 @@ app.MapPost("/api/user/settings", async (HttpContext ctx, UserSettingsRepository
     string? timezone = null;
     if (!string.IsNullOrWhiteSpace(rawTz))
     {
-        var validTimezones = new[] { "auto", "Europe/Stockholm", "Europe/Oslo", "Europe/Copenhagen", "Europe/Helsinki" };
-        if (!validTimezones.Contains(rawTz)) { errors.Add("Timezone must be one of: auto, Europe/Stockholm, Europe/Oslo, Europe/Copenhagen, Europe/Helsinki"); }
+        if (!ValidTimezones.Contains(rawTz)) { errors.Add("Timezone must be one of: auto, Europe/Stockholm, Europe/Oslo, Europe/Copenhagen, Europe/Helsinki"); }
         else { timezone = rawTz; }
     }
     if (errors.Count > 0) return Results.BadRequest(new { error = "Validation failed", errors });

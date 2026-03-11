@@ -9,7 +9,7 @@ using Prisstyrning.Data;
 
 #nullable disable
 
-namespace Prisstyrning.data.Migrations
+namespace Prisstyrning.Data.Migrations
 {
     [DbContext(typeof(PrisstyrningDbContext))]
     [Migration("20260311201056_AddTimezoneToUserSettings")]
@@ -197,7 +197,9 @@ namespace Prisstyrning.data.Migrations
 
                     b.Property<string>("Timezone")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("auto");
 
                     b.Property<double>("TurnOffPercentile")
                         .HasColumnType("double precision");
