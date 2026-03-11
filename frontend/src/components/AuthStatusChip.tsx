@@ -2,9 +2,10 @@ import { Chip, CircularProgress, Tooltip } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import { useAuth } from '../hooks/useAuth';
-import { formatDateTimeFull } from '../dateFormat';
+import { useFormatters } from '../context/TimezoneContext';
 
 export default function AuthStatusChip() {
+  const { formatDateTimeFull } = useFormatters();
   const { isAuthorized, expiresAt, isLoading } = useAuth();
 
   if (isLoading) {

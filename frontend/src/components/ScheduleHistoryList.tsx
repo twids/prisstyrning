@@ -10,11 +10,12 @@ import {
   Alert,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import { formatDateTimeFull } from '../dateFormat';
+import { useFormatters } from '../context/TimezoneContext';
 import { useScheduleHistory } from '../hooks/useScheduleHistory';
 import ScheduleGrid from './ScheduleGrid';
 
 export default function ScheduleHistoryList() {
+  const { formatDateTimeFull } = useFormatters();
   const { data, isLoading, error } = useScheduleHistory();
   const [expanded, setExpanded] = useState<string | false>(false);
 
