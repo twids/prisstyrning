@@ -2,19 +2,46 @@ name: Block Merge If Copilot Reviewing
 "on":
   pull_request:
     types: [opened, synchronize, labeled, unlabeled]
+  pull_request_review:
+    types: [submitted]
 jobs:
   copilot-block:
     runs-on: ubuntu-latest
     steps:
-      - name: Check for Copilot review label
+      - name: Wait for Copilot review to complete
         uses: actions/github-script@v7
         with:
           script: |
-            const labels = await github.rest.issues.listLabelsOnIssue({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number
-            });
-            if (labels.data.some(l => l.name === 'Copilot: Reviewing')) {
-              core.setFailed('Copilot is reviewing this PR - cannot merge until review is complete.');
+            const pollIntervalMs = 30_000; // 30 seconds
+            const timeoutMs = 10 * 60_000; // 10 minutes
+            const prNumber = context.issue.number;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            async function isCopilotReviewing() {
+              // Check requested reviewers for 'copilot'
+              const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+              const requestedLogins = pr.requested_reviewers.map(r => r.login.toLowerCase());
+              if (requestedLogins.includes('copilot')) return true;
+
+              // Check for 'Copilot: Reviewing' label
+              const { data: labels } = await github.rest.issues.listLabelsOnIssue({
+                owner, repo, issue_number: prNumber
+              });
+              if (labels.some(l => l.name === 'Copilot: Reviewing')) return true;
+
+              return false;
             }
+
+            const start = Date.now();
+            while (await isCopilotReviewing()) {
+              const elapsed = Date.now() - start;
+              if (elapsed >= timeoutMs) {
+                core.setFailed(`Copilot review still pending after ${timeoutMs / 60_000} minutes — timed out.`);
+                return;
+              }
+              const remaining = Math.round((timeoutMs - elapsed) / 1000);
+              core.info(`Copilot is still reviewing. Waiting… (${remaining}s remaining)`);
+              await new Promise(r => setTimeout(r, pollIntervalMs));
+            }
+            core.info('Copilot review complete (or not requested). Proceeding.');
