@@ -8,34 +8,39 @@ namespace Prisstyrning.Jobs;
 
 /// <summary>
 /// Hangfire job that fetches Nordpool electricity prices for all configured zones.
-/// Runs daily at ~13:00 CET (when day-ahead prices are published) with exponential
-/// backoff retries if tomorrow's prices are not yet available.
+/// Runs daily at 13:00 Europe/Stockholm time (CET/CEST, when day-ahead prices
+/// are published) with exponential backoff retries if tomorrow's prices are not
+/// yet available.
 /// </summary>
 internal class NordpoolPriceHangfireJob
 {
-    private const int MaxRetryAttempts = 5;
-    private const double RetryBaseMinutes = 5; // 5, 10, 20, 40, 80 min
+    internal const int MaxRetryAttempts = 5;
+    internal const double RetryBaseMinutes = 5; // 5, 10, 20, 40, 80 min
 
     private readonly IConfiguration _cfg;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IBackgroundJobClient _backgroundJobClient;
 
-    public NordpoolPriceHangfireJob(IConfiguration cfg, IServiceScopeFactory scopeFactory, IHttpClientFactory httpClientFactory)
+    public NordpoolPriceHangfireJob(
+        IConfiguration cfg,
+        IServiceScopeFactory scopeFactory,
+        IHttpClientFactory httpClientFactory,
+        IBackgroundJobClient backgroundJobClient)
     {
         _cfg = cfg;
         _scopeFactory = scopeFactory;
         _httpClientFactory = httpClientFactory;
+        _backgroundJobClient = backgroundJobClient;
     }
 
     /// <summary>Entry point for the recurring 13:00 schedule.</summary>
-    [DisableConcurrentExecution(300)]
     public async Task ExecuteAsync()
     {
         await FetchPricesAsync(attempt: 0);
     }
 
     /// <summary>Entry point for exponential-backoff retries scheduled by the main run.</summary>
-    [DisableConcurrentExecution(300)]
     public async Task RetryFetchAsync(int attempt)
     {
         await FetchPricesAsync(attempt);
@@ -124,7 +129,7 @@ internal class NordpoolPriceHangfireJob
         {
             var delayMinutes = RetryBaseMinutes * Math.Pow(2, attempt);
             Console.WriteLine($"[NordpoolPriceHangfireJob] tomorrow prices incomplete, scheduling retry #{attempt + 1} in {delayMinutes:F0}min");
-            BackgroundJob.Schedule<NordpoolPriceHangfireJob>(
+            _backgroundJobClient.Schedule<NordpoolPriceHangfireJob>(
                 j => j.RetryFetchAsync(attempt + 1), TimeSpan.FromMinutes(delayMinutes));
         }
         else if (anyMissingTomorrow)
