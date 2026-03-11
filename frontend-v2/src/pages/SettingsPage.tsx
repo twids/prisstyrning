@@ -9,6 +9,14 @@ import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../context/ToastContext';
 import { usePriceThreshold } from '../hooks/usePriceThreshold';
 
+const TIMEZONES = [
+  { value: 'auto', label: 'Auto (browser)' },
+  { value: 'Europe/Stockholm', label: 'Europe/Stockholm (Sweden)' },
+  { value: 'Europe/Oslo', label: 'Europe/Oslo (Norway)' },
+  { value: 'Europe/Copenhagen', label: 'Europe/Copenhagen (Denmark)' },
+  { value: 'Europe/Helsinki', label: 'Europe/Helsinki (Finland)' },
+];
+
 const ZONES = [
   'SE1', 'SE2', 'SE3', 'SE4',
   'NO1', 'NO2', 'NO3', 'NO4', 'NO5',
@@ -34,6 +42,7 @@ export default function SettingsPage() {
     comfortIntervalDays: 21,
     comfortFlexibilityDays: 7,
     comfortEarlyPercentile: 0.10,
+    timezone: 'auto',
   });
 
   const [revokeDialog, setRevokeDialog] = useState(false);
@@ -65,6 +74,7 @@ export default function SettingsPage() {
         comfortIntervalDays: settings.ComfortIntervalDays ?? 21,
         comfortFlexibilityDays: settings.ComfortFlexibilityDays ?? 7,
         comfortEarlyPercentile: settings.ComfortEarlyPercentile ?? 0.10,
+        timezone: settings.Timezone ?? 'auto',
       }));
     }
   }, [settings]);
@@ -91,6 +101,7 @@ export default function SettingsPage() {
         ComfortIntervalDays: formData.comfortIntervalDays,
         ComfortFlexibilityDays: formData.comfortFlexibilityDays,
         ComfortEarlyPercentile: formData.comfortEarlyPercentile,
+        Timezone: formData.timezone,
       });
 
       if (formData.selectedZone !== zone) {
@@ -174,6 +185,20 @@ export default function SettingsPage() {
               className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors"
             />
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Maximum gap between consecutive comfort hours (1-72)</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Timezone</label>
+            <select
+              value={formData.timezone}
+              onChange={(e) => setFormData({ ...formData, timezone: e.target.value })}
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors"
+            >
+              {TIMEZONES.map((tz) => (
+                <option key={tz.value} value={tz.value}>{tz.label}</option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Timezone for displaying dates and times</p>
           </div>
 
           <div>

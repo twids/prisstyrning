@@ -1,9 +1,10 @@
 import { Disclosure, DisclosureButton, DisclosurePanel } from '@headlessui/react';
-import { formatDateTimeFull } from '../dateFormat';
+import { useFormatters } from '../context/TimezoneContext';
 import { useScheduleHistory } from '../hooks/useScheduleHistory';
 import ScheduleGrid from './ScheduleGrid';
 
 export default function ScheduleHistoryList() {
+  const { formatDateTimeFull } = useFormatters();
   const { data, isLoading, error } = useScheduleHistory();
 
   if (isLoading) {
