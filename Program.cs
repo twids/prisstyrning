@@ -23,6 +23,7 @@ const int MaxUserIdLength = 100;
 const int MaxScheduleRawDisplayLength = 400;
 const int DefaultListenPort = 5000;
 const string UserCookieName = "ps_user";
+string[] ValidTimezones = ["auto", "Europe/Stockholm", "Europe/Oslo", "Europe/Copenhagen", "Europe/Helsinki"];
 
 // Register /api/user/settings endpoints after app is declared
 
@@ -232,7 +233,8 @@ app.MapGet("/api/user/settings", async (HttpContext ctx, UserSettingsRepository 
         EcoFlexibilityHours = entity.EcoFlexibilityHours,
         ComfortIntervalDays = entity.ComfortIntervalDays,
         ComfortFlexibilityDays = entity.ComfortFlexibilityDays,
-        ComfortEarlyPercentile = entity.ComfortEarlyPercentile
+        ComfortEarlyPercentile = entity.ComfortEarlyPercentile,
+        Timezone = entity.Timezone
     }, new JsonSerializerOptions { PropertyNamingPolicy = null });
 });
 
@@ -251,6 +253,7 @@ app.MapPost("/api/user/settings", async (HttpContext ctx, UserSettingsRepository
     string? rawCid = body["ComfortIntervalDays"]?.ToString();
     string? rawCfd = body["ComfortFlexibilityDays"]?.ToString();
     string? rawCep = body["ComfortEarlyPercentile"]?.ToString();
+    string? rawTz = body["Timezone"]?.ToString();
     var errors = new List<string>();
     int comfortHours = 3;
     if (!string.IsNullOrWhiteSpace(rawCh))
@@ -286,13 +289,20 @@ app.MapPost("/api/user/settings", async (HttpContext ctx, UserSettingsRepository
     double? comfortEarlyPercentile = null;
     if (!string.IsNullOrWhiteSpace(rawCep))
     { if (!double.TryParse(rawCep, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var cep) || cep < 0.01 || cep > 0.50) { errors.Add("ComfortEarlyPercentile must be a number between 0.01 and 0.50"); } else { comfortEarlyPercentile = cep; } }
+    string? timezone = null;
+    if (!string.IsNullOrWhiteSpace(rawTz))
+    {
+        if (!ValidTimezones.Contains(rawTz)) { errors.Add("Timezone must be one of: auto, Europe/Stockholm, Europe/Oslo, Europe/Copenhagen, Europe/Helsinki"); }
+        else { timezone = rawTz; }
+    }
     if (errors.Count > 0) return Results.BadRequest(new { error = "Validation failed", errors });
     await settingsRepo.SaveSettingsAsync(userId, comfortHours, turnOffPercentile, autoApplySchedule, maxComfortGapHours,
-        schedulingMode, ecoIntervalHours, ecoFlexibilityHours, comfortIntervalDays, comfortFlexibilityDays, comfortEarlyPercentile);
+        schedulingMode, ecoIntervalHours, ecoFlexibilityHours, comfortIntervalDays, comfortFlexibilityDays, comfortEarlyPercentile,
+        timezone);
     return Results.Ok(new { saved = true });
 });
 
-app.MapGet("/api/user/flexible-state", async (HttpContext ctx, FlexibleScheduleStateRepository flexRepo, UserSettingsRepository settingsRepo) =>
+app.MapGet("/api/user/flexible-state", async (HttpContext ctx, FlexibleScheduleStateRepository flexRepo, UserSettingsRepository settingsRepo, PriceRepository priceRepo, IConfiguration cfg) =>
 {
     var userId = GetUserId(ctx) ?? "default";
     var state = await flexRepo.GetOrCreateAsync(userId);
@@ -321,6 +331,30 @@ app.MapGet("/api/user/flexible-state", async (HttpContext ctx, FlexibleScheduleS
         }
     }
 
+    // Compute threshold data
+    decimal? currentThreshold = null;
+    decimal? baseThreshold = null;
+    double trendFactor = 1.0;
+    string currency = cfg["Price:Nordpool:Currency"] ?? "SEK";
+
+    var zone = await settingsRepo.GetUserZoneAsync(userId);
+    var histStats = await HistoricalPriceAnalyzer.GetHistoricalStatsAsync(priceRepo, zone, settings.ComfortEarlyPercentile);
+    if (histStats.PercentileThreshold.HasValue && histStats.MaxPrice.HasValue)
+    {
+        trendFactor = histStats.TrendFactor;
+        baseThreshold = histStats.PercentileThreshold.Value;
+        var adjustedBase = HistoricalPriceAnalyzer.ApplyTrendFactor(baseThreshold.Value, trendFactor);
+        if (comfortWindowProgress.HasValue)
+        {
+            currentThreshold = HistoricalPriceAnalyzer.ComputeSlidingThreshold(
+                adjustedBase, histStats.MaxPrice.Value, comfortWindowProgress.Value);
+        }
+        else
+        {
+            currentThreshold = adjustedBase; // Window not open yet, show strict threshold
+        }
+    }
+
     return Results.Json(new
     {
         LastEcoRunUtc = state.LastEcoRunUtc,
@@ -328,7 +362,11 @@ app.MapGet("/api/user/flexible-state", async (HttpContext ctx, FlexibleScheduleS
         NextScheduledComfortUtc = state.NextScheduledComfortUtc,
         EcoWindow = new { Start = ecoWindowStart, End = ecoWindowEnd },
         ComfortWindow = new { Start = comfortWindowStart, End = comfortWindowEnd, Progress = comfortWindowProgress },
-        SchedulingMode = settings.SchedulingMode
+        SchedulingMode = settings.SchedulingMode,
+        CurrentThreshold = currentThreshold,
+        BaseThreshold = baseThreshold,
+        TrendFactor = trendFactor,
+        Currency = currency
     }, new JsonSerializerOptions { PropertyNamingPolicy = null });
 });
 
@@ -542,6 +580,72 @@ pricesGroup.MapGet("/timeseries", async (HttpContext ctx, PriceRepository priceR
     Add(tomorrow, "tomorrow");
     var ordered = items.OrderBy(i => i.start).Select(i => new { start = i.start, value = i.value, day = i.day }).ToList();
     return Results.Json(new { updated, count = ordered.Count, items = ordered, source = forceLatest ? "latest" : "memory" });
+});
+
+pricesGroup.MapGet("/threshold", async (HttpContext ctx, PriceRepository priceRepo, UserSettingsRepository settingsRepo, IConfiguration cfg) =>
+{
+    var percentileStr = ctx.Request.Query["percentile"].FirstOrDefault();
+    var percentile = 0.1;
+    if (double.TryParse(percentileStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var p))
+        percentile = Math.Clamp(p, 0.01, 0.99);
+
+    var userId = GetUserId(ctx);
+    var zone = await settingsRepo.GetUserZoneAsync(userId);
+    var currency = cfg["Price:Nordpool:Currency"] ?? "SEK";
+    var histStats = await HistoricalPriceAnalyzer.GetHistoricalStatsAsync(priceRepo, zone, percentile);
+
+    if (histStats.PercentileThreshold.HasValue)
+    {
+        return Results.Json(new
+        {
+            percentile,
+            threshold = histStats.PercentileThreshold.Value,
+            maxPrice = histStats.MaxPrice!.Value,
+            trendFactor = histStats.TrendFactor,
+            currency,
+            lookbackDays = 60,
+            zone
+        });
+    }
+    return Results.Json(new
+    {
+        percentile,
+        threshold = (decimal?)null,
+        maxPrice = (decimal?)null,
+        trendFactor = 1.0,
+        currency,
+        lookbackDays = 60,
+        zone
+    });
+});
+
+pricesGroup.MapGet("/trend", async (HttpContext ctx, PriceRepository priceRepo, UserSettingsRepository settingsRepo) =>
+{
+    var userId = GetUserId(ctx);
+    var zone = await settingsRepo.GetUserZoneAsync(userId);
+    var histStats = await HistoricalPriceAnalyzer.GetHistoricalStatsAsync(priceRepo, zone, 0.5);
+
+    if (histStats.DailyAverages != null && histStats.DailyAverages.Count > 0)
+    {
+        return Results.Json(new
+        {
+            zone,
+            trendFactor = histStats.TrendFactor,
+            lookbackDays = 60,
+            dailyAverages = histStats.DailyAverages.Select(da => new
+            {
+                date = da.Date.ToString("yyyy-MM-dd"),
+                avgPrice = da.AvgPrice
+            }).ToList()
+        });
+    }
+    return Results.Json(new
+    {
+        zone,
+        trendFactor = 1.0,
+        lookbackDays = 60,
+        dailyAverages = Array.Empty<object>()
+    });
 });
 
 // Auth group

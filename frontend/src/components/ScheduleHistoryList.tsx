@@ -10,7 +10,7 @@ import {
   Alert,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import { format } from 'date-fns';
+import { formatDateTimeFull } from '../dateFormat';
 import { useScheduleHistory } from '../hooks/useScheduleHistory';
 import ScheduleGrid from './ScheduleGrid';
 
@@ -62,7 +62,7 @@ export default function ScheduleHistoryList() {
             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, width: '100%' }}>
                 <Typography>
-                  {format(timestamp, 'PPpp')}
+                  {formatDateTimeFull(timestamp)}
                 </Typography>
                 <Chip label={entry.date} size="small" />
               </Box>

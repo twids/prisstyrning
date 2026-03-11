@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Prisstyrning.Data;
@@ -11,9 +12,11 @@ using Prisstyrning.Data;
 namespace Prisstyrning.Data.Migrations
 {
     [DbContext(typeof(PrisstyrningDbContext))]
-    partial class PrisstyrningDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260308192641_AddNextScheduledComfortUtc")]
+    partial class AddNextScheduledComfortUtc
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -155,32 +158,22 @@ namespace Prisstyrning.Data.Migrations
                         .HasColumnType("boolean");
 
                     b.Property<double>("ComfortEarlyPercentile")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("double precision")
-                        .HasDefaultValueSql("0.1");
+                        .HasColumnType("double precision");
 
                     b.Property<int>("ComfortFlexibilityDays")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(7);
+                        .HasColumnType("integer");
 
                     b.Property<int>("ComfortHours")
                         .HasColumnType("integer");
 
                     b.Property<int>("ComfortIntervalDays")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(21);
+                        .HasColumnType("integer");
 
                     b.Property<int>("EcoFlexibilityHours")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(12);
+                        .HasColumnType("integer");
 
                     b.Property<int>("EcoIntervalHours")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(24);
+                        .HasColumnType("integer");
 
                     b.Property<int>("MaxComfortGapHours")
                         .HasColumnType("integer");
@@ -191,12 +184,6 @@ namespace Prisstyrning.Data.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)")
                         .HasDefaultValue("Classic");
-
-                    b.Property<string>("Timezone")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("text")
-                        .HasDefaultValue("auto");
 
                     b.Property<double>("TurnOffPercentile")
                         .HasColumnType("double precision");

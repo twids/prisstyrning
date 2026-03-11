@@ -7,6 +7,15 @@ import { useUserSettings } from '../hooks/useUserSettings';
 import { useZone } from '../hooks/useZone';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../context/ToastContext';
+import { usePriceThreshold } from '../hooks/usePriceThreshold';
+
+const TIMEZONES = [
+  { value: 'auto', label: 'Auto (browser)' },
+  { value: 'Europe/Stockholm', label: 'Europe/Stockholm (Sweden)' },
+  { value: 'Europe/Oslo', label: 'Europe/Oslo (Norway)' },
+  { value: 'Europe/Copenhagen', label: 'Europe/Copenhagen (Denmark)' },
+  { value: 'Europe/Helsinki', label: 'Europe/Helsinki (Finland)' },
+];
 
 const ZONES = [
   'SE1', 'SE2', 'SE3', 'SE4',
@@ -33,9 +42,22 @@ export default function SettingsPage() {
     comfortIntervalDays: 21,
     comfortFlexibilityDays: 7,
     comfortEarlyPercentile: 0.10,
+    timezone: 'auto',
   });
 
   const [revokeDialog, setRevokeDialog] = useState(false);
+
+  const turnOffThreshold = usePriceThreshold(formData.turnOffPercentile);
+  const comfortThreshold = usePriceThreshold(
+    formData.comfortEarlyPercentile,
+    formData.schedulingMode === 'Flexible'
+  );
+
+  const trendLabel = (factor: number) => {
+    if (factor < 0.9) return { icon: '↓', text: 'prices falling', color: 'text-green-600 dark:text-green-400' };
+    if (factor > 1.1) return { icon: '↑', text: 'prices rising', color: 'text-red-600 dark:text-red-400' };
+    return { icon: '→', text: 'stable', color: 'text-gray-500 dark:text-gray-400' };
+  };
 
   // Initialize form from settings
   useEffect(() => {
@@ -52,6 +74,7 @@ export default function SettingsPage() {
         comfortIntervalDays: settings.ComfortIntervalDays ?? 21,
         comfortFlexibilityDays: settings.ComfortFlexibilityDays ?? 7,
         comfortEarlyPercentile: settings.ComfortEarlyPercentile ?? 0.10,
+        timezone: settings.Timezone ?? 'auto',
       }));
     }
   }, [settings]);
@@ -78,6 +101,7 @@ export default function SettingsPage() {
         ComfortIntervalDays: formData.comfortIntervalDays,
         ComfortFlexibilityDays: formData.comfortFlexibilityDays,
         ComfortEarlyPercentile: formData.comfortEarlyPercentile,
+        Timezone: formData.timezone,
       });
 
       if (formData.selectedZone !== zone) {
@@ -131,16 +155,23 @@ export default function SettingsPage() {
             helpText="Number of hours per day to heat water to comfort temperature"
           />
 
-          <Slider
-            label="Turn Off Percentile"
-            value={formData.turnOffPercentile}
-            onChange={(v) => setFormData({ ...formData, turnOffPercentile: v })}
-            min={0.5}
-            max={0.99}
-            step={0.01}
-            displayValue={`${(formData.turnOffPercentile * 100).toFixed(0)}%`}
-            helpText="Price threshold for turning off DHW heating (higher = less turn-off)"
-          />
+          <div>
+            <Slider
+              label="Turn Off Percentile"
+              value={formData.turnOffPercentile}
+              onChange={(v) => setFormData({ ...formData, turnOffPercentile: v })}
+              min={0.5}
+              max={0.99}
+              step={0.01}
+              displayValue={`${(formData.turnOffPercentile * 100).toFixed(0)}%`}
+              helpText="Price threshold for turning off DHW heating (higher = less turn-off). Based on 60-day rolling price history — this value changes as new prices are recorded."
+            />
+            {turnOffThreshold.data?.threshold != null && (
+              <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                Currently ≈ {turnOffThreshold.data.threshold.toFixed(1)} öre/kWh
+              </p>
+            )}
+          </div>
 
           <div>
             <label className="block text-sm font-medium mb-1">Max Comfort Gap (hours)</label>
@@ -154,6 +185,20 @@ export default function SettingsPage() {
               className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors"
             />
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Maximum gap between consecutive comfort hours (1-72)</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Timezone</label>
+            <select
+              value={formData.timezone}
+              onChange={(e) => setFormData({ ...formData, timezone: e.target.value })}
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors"
+            >
+              {TIMEZONES.map((tz) => (
+                <option key={tz.value} value={tz.value}>{tz.label}</option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Timezone for displaying dates and times</p>
           </div>
 
           <div>
@@ -249,16 +294,38 @@ export default function SettingsPage() {
               helpText={`Scheduling window: comfort runs between ${Math.max(0, formData.comfortIntervalDays - formData.comfortFlexibilityDays)}d and ${formData.comfortIntervalDays + formData.comfortFlexibilityDays}d after last run`}
             />
 
-            <Slider
-              label="Early Comfort Threshold"
-              value={formData.comfortEarlyPercentile}
-              onChange={(v) => setFormData({ ...formData, comfortEarlyPercentile: v })}
-              min={0.01}
-              max={0.50}
-              step={0.01}
-              displayValue={`${(formData.comfortEarlyPercentile * 100).toFixed(0)}th percentile`}
-              helpText="When the comfort window opens, only trigger if the price is below this historical percentile. The threshold relaxes as the window progresses."
-            />
+            {(() => {
+              const patiencePct = `${(formData.comfortEarlyPercentile * 100).toFixed(0)}%`;
+              const trend = comfortThreshold.data?.trendFactor != null
+                ? trendLabel(comfortThreshold.data.trendFactor)
+                : null;
+              return (
+                <div>
+                  <Slider
+                    label="Price Patience"
+                    value={formData.comfortEarlyPercentile}
+                    onChange={(v) => setFormData({ ...formData, comfortEarlyPercentile: v })}
+                    min={0.01}
+                    max={0.50}
+                    step={0.01}
+                    displayValue={patiencePct}
+                    helpText={`Lower = more patient. The system waits for a price in the cheapest ${patiencePct} of the last 60 days before scheduling a comfort run. As the deadline approaches, it becomes less picky (cubic curve). This threshold changes as new prices are recorded.`}
+                  />
+                  {comfortThreshold.data?.threshold != null && (
+                    <div className="mt-1 flex items-center gap-3">
+                      <p className="text-xs text-blue-600 dark:text-blue-400">
+                        Currently ≈ {comfortThreshold.data.threshold.toFixed(1)} öre/kWh
+                      </p>
+                      {trend && (
+                        <p className={`text-xs ${trend.color}`}>
+                          {trend.icon} Trend: {trend.text}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         </Card>
       )}

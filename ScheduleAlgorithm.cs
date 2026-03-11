@@ -665,18 +665,49 @@ public static class ScheduleAlgorithm
         var windowStart = lastEcoRun.AddHours(intervalHours - flexibilityHours);
         var windowEnd = lastEcoRun.AddHours(intervalHours + flexibilityHours);
 
-        // If window hasn't opened yet, return waiting
+        // Parse all available prices (needed for both look-ahead and normal scheduling)
+        var allPrices = ParseHourlyPrices(rawToday, rawTomorrow);
+
+        // If window has passed (missed), force-schedule using any available future price
+        if (now >= windowEnd)
+        {
+            var futurePrices = allPrices.Where(p => p.Start >= now).ToList();
+            if (futurePrices.Count > 0)
+            {
+                var forced = futurePrices.OrderBy(p => p.Price).First();
+                return new FlexibleEcoResult(
+                    forced.Start,
+                    "expired",
+                    $"Eco window expired, forced cheapest future hour at {forced.Start:HH:00} ({forced.Price:F2} SEK/kWh)");
+            }
+            return new FlexibleEcoResult(
+                null,
+                "expired",
+                "Eco window expired and no future prices available");
+        }
+
+        // If window hasn't opened yet, try to pre-schedule using available price data
         if (now < windowStart)
         {
+            var futureCandidates = allPrices
+                .Where(p => p.Start >= windowStart && p.Start < windowEnd)
+                .ToList();
+
+            if (futureCandidates.Count > 0)
+            {
+                var preScheduled = futureCandidates.OrderBy(p => p.Price).First();
+                return new FlexibleEcoResult(
+                    preScheduled.Start,
+                    "scheduled",
+                    $"Pre-scheduled eco at {preScheduled.Start:HH:00} ({preScheduled.Price:F2} SEK/kWh), window opens at {windowStart:yyyy-MM-dd HH:00} UTC");
+            }
+
             var hoursUntilOpen = (windowStart - now).TotalHours;
             return new FlexibleEcoResult(
                 null,
                 "waiting",
                 $"Eco window opens in {hoursUntilOpen:F1} hours (at {windowStart:yyyy-MM-dd HH:00} UTC)");
         }
-
-        // Parse all available prices
-        var allPrices = ParseHourlyPrices(rawToday, rawTomorrow);
 
         // Filter to future hours within the eco window
         var effectiveStart = now > windowStart ? now : windowStart;

@@ -23,6 +23,12 @@ public class PrisstyrningDbContext : DbContext
             e.Property(x => x.UserId).HasMaxLength(100);
             e.Property(x => x.Zone).HasMaxLength(10).HasDefaultValue("SE3");
             e.Property(x => x.SchedulingMode).HasMaxLength(20).HasDefaultValue("Classic");
+            e.Property(x => x.EcoIntervalHours).HasDefaultValue(24);
+            e.Property(x => x.EcoFlexibilityHours).HasDefaultValue(12);
+            e.Property(x => x.ComfortIntervalDays).HasDefaultValue(21);
+            e.Property(x => x.ComfortFlexibilityDays).HasDefaultValue(7);
+            e.Property(x => x.ComfortEarlyPercentile).HasDefaultValueSql("0.1");
+            e.Property(x => x.Timezone).HasDefaultValue("auto");
         });
 
         // FlexibleScheduleState

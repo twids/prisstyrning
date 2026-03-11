@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Prisstyrning.Data.Repositories;
 
@@ -9,10 +10,25 @@ using Prisstyrning.Data.Repositories;
 public static class HistoricalPriceAnalyzer
 {
     /// <summary>
-    /// Result of historical price analysis containing both the percentile threshold
-    /// and the maximum observed price.
+    /// Result of historical price analysis containing the percentile threshold,
+    /// the maximum observed price, a trend factor, and daily averages.
     /// </summary>
-    public sealed record HistoricalPriceStats(decimal? PercentileThreshold, decimal? MaxPrice);
+    public sealed record HistoricalPriceStats(
+        decimal? PercentileThreshold,
+        decimal? MaxPrice,
+        double TrendFactor,
+        List<(DateOnly Date, decimal AvgPrice)>? DailyAverages);
+
+    private sealed record CachedZoneData(
+        decimal[] SortedPrices,
+        (DateOnly Date, decimal Price)[] DatedPrices,
+        decimal MaxPrice,
+        double TrendFactor,
+        List<(DateOnly Date, decimal AvgPrice)> DailyAverages,
+        DateTimeOffset ComputedAtUtc);
+
+    private static readonly ConcurrentDictionary<string, CachedZoneData> _zoneCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromHours(1);
 
     /// <summary>
     /// Computes the value at the given percentile from a collection of prices
@@ -56,31 +72,19 @@ public static class HistoricalPriceAnalyzer
     public static async Task<HistoricalPriceStats> GetHistoricalStatsAsync(
         PriceRepository repo, string zone, double percentile, int lookbackDays = 60)
     {
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var from = today.AddDays(-lookbackDays);
+        var cached = await GetOrComputeZoneCacheAsync(repo, zone, lookbackDays);
+        if (cached == null)
+            return new HistoricalPriceStats(null, null, 1.0, null);
 
-        var snapshots = await repo.GetByDateRangeAsync(zone, from, today);
-
-        var allPrices = new List<decimal>();
-        foreach (var snapshot in snapshots)
-        {
-            ExtractPricesFromJson(snapshot.TodayPricesJson, allPrices);
-        }
-
-        if (allPrices.Count == 0)
-            return new HistoricalPriceStats(null, null);
-
-        var threshold = ComputePercentile(allPrices, percentile);
-        var maxPrice = allPrices.Max();
-
-        return new HistoricalPriceStats(threshold, maxPrice);
+        var threshold = ComputePercentile(cached.SortedPrices, percentile);
+        return new HistoricalPriceStats(threshold, cached.MaxPrice, cached.TrendFactor, cached.DailyAverages);
     }
 
     /// <summary>
     /// Computes the sliding price threshold at the given comfort window progress.
     /// At progress=0 (window just opened), returns baseThreshold (strict, only cheap prices trigger).
     /// At progress=1 (deadline), returns maxPrice (accept any available price).
-    /// Linear interpolation between base and max.
+    /// Cubic interpolation (x³) between base and max — stays low early, rises steeply near deadline.
     /// </summary>
     /// <param name="baseThreshold">The base percentile threshold (strict, historically cheap).</param>
     /// <param name="maxPrice">The maximum observed historical price.</param>
@@ -89,8 +93,54 @@ public static class HistoricalPriceAnalyzer
     public static decimal ComputeSlidingThreshold(decimal baseThreshold, decimal maxPrice, double windowProgress)
     {
         var clamped = Math.Clamp(windowProgress, 0.0, 1.0);
-        return baseThreshold + (maxPrice - baseThreshold) * (decimal)clamped;
+        return baseThreshold + (maxPrice - baseThreshold) * (decimal)(clamped * clamped * clamped);
     }
+
+    /// <summary>
+    /// Computes a trend factor from dated price data.
+    /// Returns avg(recent N days) / avg(baseline M days), clamped to [0.5, 2.0].
+    /// &gt; 1.0 = prices rising, &lt; 1.0 = prices falling, ~1.0 = stable.
+    /// </summary>
+    public static double ComputeTrendFactor(
+        IEnumerable<(DateOnly Date, decimal Price)> datedPrices,
+        int recentDays = 7, int baselineDays = 30)
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var recentCutoff = today.AddDays(-recentDays);
+        var baselineCutoff = today.AddDays(-baselineDays);
+
+        var grouped = datedPrices
+            .GroupBy(p => p.Date)
+            .Select(g => (Date: g.Key, Avg: g.Average(p => (double)p.Price)))
+            .ToList();
+
+        var recentAvgs = grouped.Where(g => g.Date >= recentCutoff && g.Date <= today).ToList();
+        var baselineAvgs = grouped.Where(g => g.Date >= baselineCutoff && g.Date <= today).ToList();
+
+        if (recentAvgs.Count == 0 || baselineAvgs.Count == 0)
+            return 1.0;
+
+        var recentAvg = recentAvgs.Average(g => g.Avg);
+        var baselineAvg = baselineAvgs.Average(g => g.Avg);
+
+        if (baselineAvg == 0.0)
+            return 1.0;
+
+        return Math.Clamp(recentAvg / baselineAvg, 0.5, 2.0);
+    }
+
+    /// <summary>
+    /// Applies a trend factor to a base threshold, clamping the factor to [0.5, 2.0].
+    /// </summary>
+    public static decimal ApplyTrendFactor(decimal baseThreshold, double trendFactor)
+    {
+        return baseThreshold * (decimal)Math.Clamp(trendFactor, 0.5, 2.0);
+    }
+
+    /// <summary>
+    /// Clears the zone price cache. Intended for testing.
+    /// </summary>
+    internal static void ClearCache() => _zoneCache.Clear();
 
     /// <summary>
     /// Extracts price values from a TodayPricesJson string.
@@ -119,5 +169,75 @@ public static class HistoricalPriceAnalyzer
         {
             // Skip malformed JSON silently
         }
+    }
+
+    /// <summary>
+    /// Extracts price values from a TodayPricesJson string, tagged with the snapshot date.
+    /// </summary>
+    private static void ExtractDatedPricesFromJson(string json, DateOnly date, List<(DateOnly Date, decimal Price)> datedPrices)
+    {
+        if (string.IsNullOrWhiteSpace(json) || json == "[]")
+            return;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            foreach (var element in doc.RootElement.EnumerateArray())
+            {
+                if (element.TryGetProperty("value", out var valueProp))
+                {
+                    if (valueProp.TryGetDecimal(out var price))
+                    {
+                        datedPrices.Add((date, price));
+                    }
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // Skip malformed JSON silently
+        }
+    }
+
+    private static async Task<CachedZoneData?> GetOrComputeZoneCacheAsync(
+        PriceRepository repo, string zone, int lookbackDays = 60)
+    {
+        var cacheKey = zone.Trim().ToUpperInvariant();
+
+        if (_zoneCache.TryGetValue(cacheKey, out var existing) &&
+            DateTimeOffset.UtcNow - existing.ComputedAtUtc < CacheTtl)
+        {
+            return existing;
+        }
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var from = today.AddDays(-lookbackDays);
+
+        var snapshots = await repo.GetByDateRangeAsync(zone, from, today);
+
+        var datedPrices = new List<(DateOnly Date, decimal Price)>();
+        foreach (var snapshot in snapshots)
+        {
+            ExtractDatedPricesFromJson(snapshot.TodayPricesJson, snapshot.Date, datedPrices);
+        }
+
+        if (datedPrices.Count == 0)
+            return null;
+
+        var sortedPrices = datedPrices.Select(dp => dp.Price).OrderBy(p => p).ToArray();
+        var maxPrice = sortedPrices[^1];
+        var trendFactor = ComputeTrendFactor(datedPrices);
+        var dailyAverages = datedPrices
+            .GroupBy(dp => dp.Date)
+            .Select(g => (Date: g.Key, AvgPrice: Math.Round(g.Average(p => p.Price), 4)))
+            .OrderBy(g => g.Date)
+            .ToList();
+
+        var cached = new CachedZoneData(
+            sortedPrices, datedPrices.ToArray(), maxPrice,
+            trendFactor, dailyAverages, DateTimeOffset.UtcNow);
+
+        _zoneCache[cacheKey] = cached;
+        return cached;
     }
 }

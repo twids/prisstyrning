@@ -1,11 +1,17 @@
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
 import Card from './Card';
 import { usePrices } from '../hooks/usePrices';
 import { useTheme } from '../context/ThemeContext';
+import { useFormatters } from '../context/TimezoneContext';
 
-export default function PriceChart() {
+interface PriceChartProps {
+  threshold?: number | null;
+}
+
+export default function PriceChart({ threshold }: PriceChartProps) {
   const { data, isLoading, error } = usePrices();
   const { resolved: themeMode } = useTheme();
+  const { formatTime, formatDateTime } = useFormatters();
 
   if (isLoading) {
     return (
@@ -42,7 +48,7 @@ export default function PriceChart() {
 
   const chartData = allItems.map(p => ({
     time: new Date(p.start).getTime(),
-    label: new Date(p.start).toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' }),
+    label: formatTime(p.start),
     today: p.day === 'today' ? p.value : undefined,
     tomorrow: p.day === 'tomorrow' ? p.value : undefined,
   }));
@@ -71,10 +77,24 @@ export default function PriceChart() {
           <Legend wrapperStyle={{ fontSize: '0.875rem', color: themeMode === 'dark' ? '#d1d5db' : '#374151' }} />
           <Line type="monotone" dataKey="today" name="Today" stroke="#3b82f6" strokeWidth={2} dot={false} connectNulls={false} />
           <Line type="monotone" dataKey="tomorrow" name="Tomorrow" stroke="#f59e0b" strokeWidth={2} dot={false} connectNulls={false} />
+          {threshold != null && (
+            <ReferenceLine 
+              y={threshold} 
+              stroke="#10b981" 
+              strokeDasharray="6 4" 
+              strokeWidth={1.5} 
+              label={{
+                value: `Target: ${threshold.toFixed(0)} öre`,
+                position: 'insideTopRight',
+                fill: themeMode === 'dark' ? '#6ee7b7' : '#059669',
+                fontSize: 11,
+              }}
+            />
+          )}
         </LineChart>
       </ResponsiveContainer>
       <p className="text-xs text-gray-500 mt-3">
-        Last updated: {data.updated ? new Date(data.updated).toLocaleString('sv-SE') : 'N/A'}
+        Last updated: {data.updated ? formatDateTime(data.updated) : 'N/A'}
       </p>
     </Card>
   );

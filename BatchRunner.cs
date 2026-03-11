@@ -118,9 +118,9 @@ internal class BatchRunner
                 priceRepo, zone2, settings.ComfortEarlyPercentile);
         }
 
-        // 3. Determine last run times (use now for first run)
-        var lastEcoRun = flexState.LastEcoRunUtc ?? now;
-        var lastComfortRun = flexState.LastComfortRunUtc ?? now;
+        // 3. Determine last run times (backdate on first run so the window is already open)
+        var lastEcoRun = flexState.LastEcoRunUtc ?? now.AddHours(-settings.EcoIntervalHours);
+        var lastComfortRun = flexState.LastComfortRunUtc ?? now.AddDays(-settings.ComfortIntervalDays);
 
         // 4. Run flexible eco algorithm
         var ecoResult = ScheduleAlgorithm.GenerateFlexibleEco(
@@ -177,8 +177,8 @@ internal class BatchRunner
             using var scope = scopeFactory.CreateScope();
             var flexRepo = scope.ServiceProvider.GetRequiredService<FlexibleScheduleStateRepository>();
 
-            // If eco was scheduled, update LastEcoRunUtc
-            if (ecoResult.State == "scheduled" && ecoResult.ScheduledHourUtc.HasValue)
+            // If eco was scheduled or expired, update LastEcoRunUtc to advance the window
+            if ((ecoResult.State == "scheduled" || ecoResult.State == "expired") && ecoResult.ScheduledHourUtc.HasValue)
             {
                 await flexRepo.UpdateEcoRunAsync(userId ?? "default", ecoResult.ScheduledHourUtc.Value);
                 Console.WriteLine($"[Batch/Flexible] Recorded scheduled eco hour at {ecoResult.ScheduledHourUtc.Value:yyyy-MM-dd HH:00}");
