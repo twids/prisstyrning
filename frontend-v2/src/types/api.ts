@@ -138,6 +138,28 @@ export interface AdminUsersResponse {
   users: AdminUser[];
 }
 
+export interface PriceThresholdResponse {
+  percentile: number;
+  threshold: number | null;
+  maxPrice: number | null;
+  trendFactor: number;
+  currency: string;
+  lookbackDays: number;
+  zone: string;
+}
+
+export interface DailyAverage {
+  date: string;
+  avgPrice: number;
+}
+
+export interface PriceTrendResponse {
+  zone: string;
+  trendFactor: number;
+  lookbackDays: number;
+  dailyAverages: DailyAverage[];
+}
+
 export interface FlexibleState {
   LastEcoRunUtc: string | null;
   LastComfortRunUtc: string | null;
@@ -152,4 +174,8 @@ export interface FlexibleState {
     Progress: number | null;
   };
   SchedulingMode: string;
+  CurrentThreshold: number | null;
+  BaseThreshold: number | null;
+  TrendFactor: number;
+  Currency: string;
 }
