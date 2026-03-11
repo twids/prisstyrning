@@ -51,7 +51,6 @@ internal class NordpoolPriceHangfireJob
     private async Task FetchPricesAsync(int attempt)
     {
         var currency = _cfg["Price:Nordpool:Currency"] ?? "SEK";
-        var page = _cfg["Price:Nordpool:PageId"];
         var defaultZone = _cfg["Price:Nordpool:DefaultZone"] ?? "SE3";
         var zones = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { defaultZone };
         
@@ -70,7 +69,7 @@ internal class NordpoolPriceHangfireJob
 
         var label = attempt > 0 ? $"retry #{attempt}" : "initial";
         Console.WriteLine($"[NordpoolPriceHangfireJob] ({label}) fetching zones={string.Join(',', zones)} currency={currency}");
-        var client = new NordpoolClient(_httpClientFactory.CreateClient("Nordpool"), currency, page);
+        var client = new NordpoolClient(_httpClientFactory.CreateClient("Nordpool"), currency);
 
         bool anyMissingTomorrow = false;
 
