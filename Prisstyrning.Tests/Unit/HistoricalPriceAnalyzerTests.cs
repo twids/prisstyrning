@@ -75,7 +75,7 @@ public class HistoricalPriceAnalyzerTests
 
     #endregion
 
-    #region ComputeSlidingThreshold
+    #region ComputeSlidingThreshold (Cubic)
 
     [Fact]
     public void ComputeSlidingThreshold_AtWindowStart_ReturnsBaseThreshold()
@@ -100,15 +100,15 @@ public class HistoricalPriceAnalyzerTests
     }
 
     [Fact]
-    public void ComputeSlidingThreshold_AtMidpoint_ReturnsInterpolatedValue()
+    public void ComputeSlidingThreshold_AtMidpoint_ReturnsCubicValue()
     {
         var baseThreshold = 0.25m;
         var maxPrice = 2.50m;
 
         var result = HistoricalPriceAnalyzer.ComputeSlidingThreshold(baseThreshold, maxPrice, 0.5);
 
-        // Midpoint: 0.25 + (2.50 - 0.25) * 0.5 = 0.25 + 1.125 = 1.375
-        Assert.Equal(1.375m, result);
+        // Cubic midpoint: 0.25 + (2.50 - 0.25) * (0.5^3) = 0.25 + 2.25 * 0.125 = 0.53125
+        Assert.Equal(0.53125m, result);
     }
 
     [Fact]
@@ -131,6 +131,145 @@ public class HistoricalPriceAnalyzerTests
         var result = HistoricalPriceAnalyzer.ComputeSlidingThreshold(baseThreshold, maxPrice, -0.5);
 
         Assert.Equal(baseThreshold, result);
+    }
+
+    [Fact]
+    public void ComputeSlidingThreshold_AtQuarter_ReturnsCubicValue()
+    {
+        var baseThreshold = 0.25m;
+        var maxPrice = 2.50m;
+
+        var result = HistoricalPriceAnalyzer.ComputeSlidingThreshold(baseThreshold, maxPrice, 0.25);
+
+        // 0.25 + 2.25 * (0.25^3) = 0.25 + 2.25 * 0.015625 = 0.25 + 0.03515625 = 0.28515625
+        Assert.Equal(0.28515625m, result);
+    }
+
+    [Fact]
+    public void ComputeSlidingThreshold_At90Percent_StillBelowMax()
+    {
+        var baseThreshold = 0.25m;
+        var maxPrice = 2.50m;
+
+        var result = HistoricalPriceAnalyzer.ComputeSlidingThreshold(baseThreshold, maxPrice, 0.9);
+
+        // 0.25 + 2.25 * (0.9^3) = 0.25 + 2.25 * 0.729 = 0.25 + 1.64025 = 1.89025
+        Assert.Equal(1.89025m, result);
+    }
+
+    #endregion
+
+    #region ComputeTrendFactor
+
+    [Fact]
+    public void ComputeTrendFactor_StablePrices_ReturnsNearOne()
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var prices = Enumerable.Range(0, 30)
+            .Select(i => (Date: today.AddDays(-i), Price: 1.0m))
+            .ToList();
+
+        var result = HistoricalPriceAnalyzer.ComputeTrendFactor(prices);
+
+        Assert.Equal(1.0, result, 2);
+    }
+
+    [Fact]
+    public void ComputeTrendFactor_FallingPrices_ReturnsBelowOne()
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        // Recent 7 days: avg = 0.5, baseline 30 days includes older higher prices
+        var prices = new List<(DateOnly Date, decimal Price)>();
+        for (int i = 0; i < 7; i++)
+            prices.Add((today.AddDays(-i), 0.50m));
+        for (int i = 7; i < 30; i++)
+            prices.Add((today.AddDays(-i), 2.00m));
+
+        var result = HistoricalPriceAnalyzer.ComputeTrendFactor(prices);
+
+        Assert.True(result < 1.0, $"Expected < 1.0, got {result}");
+    }
+
+    [Fact]
+    public void ComputeTrendFactor_RisingPrices_ReturnsAboveOne()
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var prices = new List<(DateOnly Date, decimal Price)>();
+        for (int i = 0; i < 7; i++)
+            prices.Add((today.AddDays(-i), 3.00m));
+        for (int i = 7; i < 30; i++)
+            prices.Add((today.AddDays(-i), 1.00m));
+
+        var result = HistoricalPriceAnalyzer.ComputeTrendFactor(prices);
+
+        Assert.True(result > 1.0, $"Expected > 1.0, got {result}");
+    }
+
+    [Fact]
+    public void ComputeTrendFactor_NoData_ReturnsOne()
+    {
+        var result = HistoricalPriceAnalyzer.ComputeTrendFactor(
+            Enumerable.Empty<(DateOnly Date, decimal Price)>());
+
+        Assert.Equal(1.0, result);
+    }
+
+    [Fact]
+    public void ComputeTrendFactor_ClampedAt2()
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var prices = new List<(DateOnly Date, decimal Price)>();
+        for (int i = 0; i < 7; i++)
+            prices.Add((today.AddDays(-i), 100.00m));
+        for (int i = 7; i < 30; i++)
+            prices.Add((today.AddDays(-i), 1.00m));
+
+        var result = HistoricalPriceAnalyzer.ComputeTrendFactor(prices);
+
+        Assert.Equal(2.0, result);
+    }
+
+    [Fact]
+    public void ComputeTrendFactor_ClampedAt05()
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var prices = new List<(DateOnly Date, decimal Price)>();
+        for (int i = 0; i < 7; i++)
+            prices.Add((today.AddDays(-i), 0.01m));
+        for (int i = 7; i < 30; i++)
+            prices.Add((today.AddDays(-i), 10.00m));
+
+        var result = HistoricalPriceAnalyzer.ComputeTrendFactor(prices);
+
+        Assert.Equal(0.5, result);
+    }
+
+    #endregion
+
+    #region ApplyTrendFactor
+
+    [Fact]
+    public void ApplyTrendFactor_MultiplyBase()
+    {
+        var result = HistoricalPriceAnalyzer.ApplyTrendFactor(1.00m, 1.5);
+
+        Assert.Equal(1.50m, result);
+    }
+
+    [Fact]
+    public void ApplyTrendFactor_ClampsHighFactor()
+    {
+        var result = HistoricalPriceAnalyzer.ApplyTrendFactor(1.00m, 5.0);
+
+        Assert.Equal(2.00m, result);
+    }
+
+    [Fact]
+    public void ApplyTrendFactor_ClampsLowFactor()
+    {
+        var result = HistoricalPriceAnalyzer.ApplyTrendFactor(1.00m, 0.1);
+
+        Assert.Equal(0.50m, result);
     }
 
     #endregion

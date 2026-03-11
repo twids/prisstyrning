@@ -7,23 +7,48 @@ using Prisstyrning.Data.Repositories;
 namespace Prisstyrning.Jobs;
 
 /// <summary>
-/// Hangfire job that fetches Nordpool electricity prices for all configured zones
+/// Hangfire job that fetches Nordpool electricity prices for all configured zones.
+/// Runs daily at 13:00 Europe/Stockholm time (CET/CEST, when day-ahead prices
+/// are published) with exponential backoff retries if tomorrow's prices are not
+/// yet available.
 /// </summary>
 internal class NordpoolPriceHangfireJob
 {
+    internal const int MaxRetryAttempts = 5;
+    internal const double RetryBaseMinutes = 5; // 5, 10, 20, 40, 80 min
+
     private readonly IConfiguration _cfg;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IBackgroundJobClient _backgroundJobClient;
 
-    public NordpoolPriceHangfireJob(IConfiguration cfg, IServiceScopeFactory scopeFactory, IHttpClientFactory httpClientFactory)
+    public NordpoolPriceHangfireJob(
+        IConfiguration cfg,
+        IServiceScopeFactory scopeFactory,
+        IHttpClientFactory httpClientFactory,
+        IBackgroundJobClient backgroundJobClient)
     {
         _cfg = cfg;
         _scopeFactory = scopeFactory;
         _httpClientFactory = httpClientFactory;
+        _backgroundJobClient = backgroundJobClient;
     }
 
-    [DisableConcurrentExecution(60)] // Prevent overlapping executions with 60s timeout
+    /// <summary>Entry point for the recurring 13:00 schedule.</summary>
+    [DisableConcurrentExecution(timeoutInSeconds: 300)]
     public async Task ExecuteAsync()
+    {
+        await FetchPricesAsync(attempt: 0);
+    }
+
+    /// <summary>Entry point for exponential-backoff retries scheduled by the main run.</summary>
+    [DisableConcurrentExecution(timeoutInSeconds: 300)]
+    public async Task RetryFetchAsync(int attempt)
+    {
+        await FetchPricesAsync(attempt);
+    }
+
+    private async Task FetchPricesAsync(int attempt)
     {
         var currency = _cfg["Price:Nordpool:Currency"] ?? "SEK";
         var page = _cfg["Price:Nordpool:PageId"];
@@ -32,21 +57,23 @@ internal class NordpoolPriceHangfireJob
         
         try
         {
-            // Discover user zones from database
             using var scope = _scopeFactory.CreateScope();
             var settingsRepo = scope.ServiceProvider.GetRequiredService<UserSettingsRepository>();
             var userZones = await settingsRepo.GetAllUserZonesAsync();
             foreach (var z in userZones)
             {
                 if (UserSettingsRepository.IsValidZone(z)) zones.Add(z.Trim().ToUpperInvariant());
-                if (zones.Count > 20) break; // safety cap
+                if (zones.Count > 20) break;
             }
         }
         catch { }
 
-        Console.WriteLine($"[NordpoolPriceHangfireJob] fetching zones={string.Join(',', zones)} currency={currency}");
+        var label = attempt > 0 ? $"retry #{attempt}" : "initial";
+        Console.WriteLine($"[NordpoolPriceHangfireJob] ({label}) fetching zones={string.Join(',', zones)} currency={currency}");
         var client = new NordpoolClient(_httpClientFactory.CreateClient("Nordpool"), currency, page);
-        
+
+        bool anyMissingTomorrow = false;
+
         foreach (var zone in zones)
         {
             try
@@ -63,12 +90,10 @@ internal class NordpoolPriceHangfireJob
                 {
                     today = System.Text.Json.JsonSerializer.Deserialize<JsonArray>(snapshot.TodayPricesJson);
                     tomorrow = System.Text.Json.JsonSerializer.Deserialize<JsonArray>(snapshot.TomorrowPricesJson);
-                    // After 13:00, if tomorrow data is missing, fetch new data
-                    var now = DateTimeOffset.Now;
-                    if (now.Hour >= 13 && (tomorrow == null || tomorrow.Count == 0))
+                    if (tomorrow == null || tomorrow.Count == 0)
                     {
                         needUpdate = true;
-                        Console.WriteLine($"[NordpoolPriceHangfireJob] saknar morgondagens priser för zone={zone}, hämtar...");
+                        Console.WriteLine($"[NordpoolPriceHangfireJob] tomorrow prices missing for zone={zone}, fetching...");
                     }
                 }
                 else
@@ -83,6 +108,9 @@ internal class NordpoolPriceHangfireJob
                     tomorrow = fetched.tomorrow;
                     await priceRepo.SaveSnapshotAsync(zone, todayDate, today ?? new JsonArray(), tomorrow ?? new JsonArray());
                 }
+
+                if (tomorrow == null || tomorrow.Count == 0)
+                    anyMissingTomorrow = true;
                 
                 if (string.Equals(zone, defaultZone, StringComparison.OrdinalIgnoreCase))
                 {
@@ -94,6 +122,43 @@ internal class NordpoolPriceHangfireJob
             catch (Exception ex)
             {
                 Console.WriteLine($"[NordpoolPriceHangfireJob] zone={zone} error={ex.Message}");
+                anyMissingTomorrow = true; // treat errors as missing, so we retry
+            }
+        }
+
+        // Schedule retry with exponential backoff if tomorrow's prices are still missing
+        if (anyMissingTomorrow && attempt < MaxRetryAttempts)
+        {
+            var delayMinutes = RetryBaseMinutes * Math.Pow(2, attempt);
+            Console.WriteLine($"[NordpoolPriceHangfireJob] tomorrow prices incomplete, scheduling retry #{attempt + 1} in {delayMinutes:F0}min");
+            _backgroundJobClient.Schedule<NordpoolPriceHangfireJob>(
+                j => j.RetryFetchAsync(attempt + 1), TimeSpan.FromMinutes(delayMinutes));
+        }
+        else if (anyMissingTomorrow)
+        {
+            Console.WriteLine($"[NordpoolPriceHangfireJob] tomorrow prices still missing after {MaxRetryAttempts} retries, giving up until next scheduled run");
+        }
+
+        // Cleanup old price snapshots (only on initial run, not retries)
+        if (attempt == 0)
+        {
+            try
+            {
+                var configuredRetentionDays = _cfg.GetValue("Price:RetentionDays", 90);
+                const int maxRetentionDays = 365;
+                var retentionDays = configuredRetentionDays <= 0
+                    ? 90
+                    : Math.Min(configuredRetentionDays, maxRetentionDays);
+                var cutoff = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-retentionDays));
+                using var cleanupScope = _scopeFactory.CreateScope();
+                var cleanupRepo = cleanupScope.ServiceProvider.GetRequiredService<PriceRepository>();
+                var deleted = await cleanupRepo.DeleteOlderThanAsync(cutoff);
+                if (deleted > 0)
+                    Console.WriteLine($"[NordpoolPriceHangfireJob] cleaned up {deleted} price snapshots older than {cutoff}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[NordpoolPriceHangfireJob] price cleanup error: {ex.Message}");
             }
         }
     }

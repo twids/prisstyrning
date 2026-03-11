@@ -4,9 +4,11 @@ import Card from '../components/Card';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { apiClient } from '../api/client';
 import { useToast } from '../context/ToastContext';
+import { useFormatters } from '../context/TimezoneContext';
 import type { AdminUser } from '../types/api';
 
 export default function AdminPage() {
+  const { formatDateTime } = useFormatters();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const [password, setPassword] = useState('');
@@ -272,13 +274,7 @@ export default function AdminPage() {
                   <td className="px-4 py-3 whitespace-nowrap">
                     {user.createdAt ? (
                       <span title={new Date(user.createdAt).toISOString()}>
-                        {new Date(user.createdAt).toLocaleString(undefined, {
-                          year: 'numeric',
-                          month: '2-digit',
-                          day: '2-digit',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
+                        {formatDateTime(user.createdAt)}
                       </span>
                     ) : (
                       '—'

@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider } from './context/ThemeContext';
+import { TimezoneProvider } from './context/TimezoneContext';
 import { ToastProvider } from './context/ToastContext';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -23,6 +24,7 @@ function App() {
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <ThemeProvider>
+          <TimezoneProvider>
           <ToastProvider>
             <BrowserRouter basename="/v2">
               <Layout>
@@ -35,6 +37,7 @@ function App() {
               </Layout>
             </BrowserRouter>
           </ToastProvider>
+          </TimezoneProvider>
         </ThemeProvider>
       </QueryClientProvider>
     </ErrorBoundary>

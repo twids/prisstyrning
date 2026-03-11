@@ -1,7 +1,8 @@
 import { useAuth } from '../hooks/useAuth';
-import { format } from 'date-fns';
+import { useFormatters } from '../context/TimezoneContext';
 
 export default function AuthStatusBadge() {
+  const { formatDateTimeFull } = useFormatters();
   const { isAuthorized, expiresAt, isLoading } = useAuth();
 
   if (isLoading) {
@@ -18,7 +19,7 @@ export default function AuthStatusBadge() {
   }
 
   const expiresAtDate = expiresAt ? new Date(expiresAt) : null;
-  const tooltipText = expiresAtDate ? `Expires: ${format(expiresAtDate, 'PPpp')}` : 'Authorized';
+  const tooltipText = expiresAtDate ? `Expires: ${formatDateTimeFull(expiresAtDate)}` : 'Authorized';
 
   return (
     <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400" title={tooltipText}>

@@ -29,6 +29,7 @@ public class PrisstyrningDbContext : DbContext
             e.Property(x => x.ComfortIntervalDays).HasDefaultValue(21);
             e.Property(x => x.ComfortFlexibilityDays).HasDefaultValue(7);
             e.Property(x => x.ComfortEarlyPercentile).HasDefaultValueSql("0.1");
+            e.Property(x => x.Timezone).HasDefaultValue("auto");
         });
 
         // FlexibleScheduleState

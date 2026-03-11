@@ -5,6 +5,8 @@ data/tokens/
 data/tokens.2/
 data/migration-backup/
 tokens/
+appsettings.development.json
+appsettings.Development.json
 # .NET
 bin/
 obj/
@@ -34,7 +36,6 @@ frontend-v2/.vite/
 frontend-v2/node_modules/
 
 # Others
-appsettings.Development.json
 appsettings.Local.json
 .env
 

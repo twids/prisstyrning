@@ -8,6 +8,8 @@ using Microsoft.AspNetCore.WebUtilities;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Linq;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
 using Hangfire;
 using Hangfire.InMemory;
 using Hangfire.Dashboard;
@@ -22,6 +24,7 @@ const int MaxUserIdLength = 100;
 const int MaxScheduleRawDisplayLength = 400;
 const int DefaultListenPort = 5000;
 const string UserCookieName = "ps_user";
+string[] ValidTimezones = ["auto", "Europe/Stockholm", "Europe/Oslo", "Europe/Copenhagen", "Europe/Helsinki"];
 
 // Register /api/user/settings endpoints after app is declared
 
@@ -102,6 +105,51 @@ builder.Services.AddTransient<DailyPriceHangfireJob>();
 builder.Services.AddTransient<InitialBatchHangfireJob>();
 builder.Services.AddTransient<ScheduleUpdateHangfireJob>();
 
+// CORS: restrict API access to same-origin requests only (exact scheme+host+port match)
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.SetIsOriginAllowed(origin =>
+        {
+            if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri))
+            {
+                return false;
+            }
+            // Only allow the exact origin matching the app's listen address
+            var isLocalhost = uri.Host == "localhost" || uri.Host == "127.0.0.1" || uri.Host == "::1";
+            return isLocalhost && uri.Port == listenPort;
+        })
+        .AllowAnyMethod()
+        .AllowAnyHeader()
+        .AllowCredentials();
+    });
+});
+
+// Rate limiting for admin login endpoint (partitioned per remote IP)
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddPolicy("admin-login", httpContext =>
+    {
+        var remoteIp = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: remoteIp,
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            });
+    });
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        await context.HttpContext.Response.WriteAsJsonAsync(
+            new { error = "Too many attempts. Please try again later." }, cancellationToken);
+    };
+});
+
 var app = builder.Build();
 
 // Apply EF Core migrations on startup (with retry for container orchestration)
@@ -134,7 +182,8 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 // Schedule recurring jobs
 RecurringJob.AddOrUpdate<NordpoolPriceHangfireJob>("nordpool-price-job", 
     job => job.ExecuteAsync(), 
-    "0 */6 * * *"); // Every 6 hours
+    "0 13 * * *", // Daily at 13:00 Europe/Stockholm local time (CET/CEST, when Nordpool publishes day-ahead prices)
+    new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm") });
 
 RecurringJob.AddOrUpdate<ScheduleUpdateHangfireJob>("schedule-update-job-midnight",
     job => job.ExecuteAsync(),
@@ -187,7 +236,8 @@ app.MapGet("/api/user/settings", async (HttpContext ctx, UserSettingsRepository 
         EcoFlexibilityHours = entity.EcoFlexibilityHours,
         ComfortIntervalDays = entity.ComfortIntervalDays,
         ComfortFlexibilityDays = entity.ComfortFlexibilityDays,
-        ComfortEarlyPercentile = entity.ComfortEarlyPercentile
+        ComfortEarlyPercentile = entity.ComfortEarlyPercentile,
+        Timezone = entity.Timezone
     }, new JsonSerializerOptions { PropertyNamingPolicy = null });
 });
 
@@ -206,6 +256,7 @@ app.MapPost("/api/user/settings", async (HttpContext ctx, UserSettingsRepository
     string? rawCid = body["ComfortIntervalDays"]?.ToString();
     string? rawCfd = body["ComfortFlexibilityDays"]?.ToString();
     string? rawCep = body["ComfortEarlyPercentile"]?.ToString();
+    string? rawTz = body["Timezone"]?.ToString();
     var errors = new List<string>();
     int comfortHours = 3;
     if (!string.IsNullOrWhiteSpace(rawCh))
@@ -241,13 +292,20 @@ app.MapPost("/api/user/settings", async (HttpContext ctx, UserSettingsRepository
     double? comfortEarlyPercentile = null;
     if (!string.IsNullOrWhiteSpace(rawCep))
     { if (!double.TryParse(rawCep, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var cep) || cep < 0.01 || cep > 0.50) { errors.Add("ComfortEarlyPercentile must be a number between 0.01 and 0.50"); } else { comfortEarlyPercentile = cep; } }
+    string? timezone = null;
+    if (!string.IsNullOrWhiteSpace(rawTz))
+    {
+        if (!ValidTimezones.Contains(rawTz)) { errors.Add("Timezone must be one of: auto, Europe/Stockholm, Europe/Oslo, Europe/Copenhagen, Europe/Helsinki"); }
+        else { timezone = rawTz; }
+    }
     if (errors.Count > 0) return Results.BadRequest(new { error = "Validation failed", errors });
     await settingsRepo.SaveSettingsAsync(userId, comfortHours, turnOffPercentile, autoApplySchedule, maxComfortGapHours,
-        schedulingMode, ecoIntervalHours, ecoFlexibilityHours, comfortIntervalDays, comfortFlexibilityDays, comfortEarlyPercentile);
+        schedulingMode, ecoIntervalHours, ecoFlexibilityHours, comfortIntervalDays, comfortFlexibilityDays, comfortEarlyPercentile,
+        timezone);
     return Results.Ok(new { saved = true });
 });
 
-app.MapGet("/api/user/flexible-state", async (HttpContext ctx, FlexibleScheduleStateRepository flexRepo, UserSettingsRepository settingsRepo) =>
+app.MapGet("/api/user/flexible-state", async (HttpContext ctx, FlexibleScheduleStateRepository flexRepo, UserSettingsRepository settingsRepo, PriceRepository priceRepo, IConfiguration cfg) =>
 {
     var userId = GetUserId(ctx) ?? "default";
     var state = await flexRepo.GetOrCreateAsync(userId);
@@ -276,6 +334,30 @@ app.MapGet("/api/user/flexible-state", async (HttpContext ctx, FlexibleScheduleS
         }
     }
 
+    // Compute threshold data
+    decimal? currentThreshold = null;
+    decimal? baseThreshold = null;
+    double trendFactor = 1.0;
+    string currency = cfg["Price:Nordpool:Currency"] ?? "SEK";
+
+    var zone = await settingsRepo.GetUserZoneAsync(userId);
+    var histStats = await HistoricalPriceAnalyzer.GetHistoricalStatsAsync(priceRepo, zone, settings.ComfortEarlyPercentile);
+    if (histStats.PercentileThreshold.HasValue && histStats.MaxPrice.HasValue)
+    {
+        trendFactor = histStats.TrendFactor;
+        baseThreshold = histStats.PercentileThreshold.Value;
+        var adjustedBase = HistoricalPriceAnalyzer.ApplyTrendFactor(baseThreshold.Value, trendFactor);
+        if (comfortWindowProgress.HasValue)
+        {
+            currentThreshold = HistoricalPriceAnalyzer.ComputeSlidingThreshold(
+                adjustedBase, histStats.MaxPrice.Value, comfortWindowProgress.Value);
+        }
+        else
+        {
+            currentThreshold = adjustedBase; // Window not open yet, show strict threshold
+        }
+    }
+
     return Results.Json(new
     {
         LastEcoRunUtc = state.LastEcoRunUtc,
@@ -283,7 +365,11 @@ app.MapGet("/api/user/flexible-state", async (HttpContext ctx, FlexibleScheduleS
         NextScheduledComfortUtc = state.NextScheduledComfortUtc,
         EcoWindow = new { Start = ecoWindowStart, End = ecoWindowEnd },
         ComfortWindow = new { Start = comfortWindowStart, End = comfortWindowEnd, Progress = comfortWindowProgress },
-        SchedulingMode = settings.SchedulingMode
+        SchedulingMode = settings.SchedulingMode,
+        CurrentThreshold = currentThreshold,
+        BaseThreshold = baseThreshold,
+        TrendFactor = trendFactor,
+        Currency = currency
     }, new JsonSerializerOptions { PropertyNamingPolicy = null });
 });
 
@@ -310,7 +396,22 @@ catch (Exception ex)
     Console.WriteLine($"[Startup] DB preload failed: {ex.Message}");
 }
 
-if (app.Environment.IsDevelopment() || true)
+// Security headers middleware (skip CSP for Swagger in Development to allow inline scripts)
+app.Use(async (ctx, next) =>
+{
+    ctx.Response.Headers["X-Frame-Options"] = "DENY";
+    ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    ctx.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+    ctx.Response.Headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
+    // Skip CSP for Swagger UI paths — Swagger injects inline scripts that CSP would block
+    if (!ctx.Request.Path.StartsWithSegments("/swagger"))
+    {
+        ctx.Response.Headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'";
+    }
+    await next();
+});
+
+if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
@@ -340,6 +441,12 @@ else
 // Static files (v1 from wwwroot)
 app.UseDefaultFiles();
 app.UseStaticFiles();
+
+// CORS middleware
+app.UseCors();
+
+// Rate limiter middleware
+app.UseRateLimiter();
 
 // Simple per-user cookie (NOT secure auth – just isolation). In production replace with real auth (OIDC, etc.).
 app.Use(async (ctx, next) =>
@@ -383,6 +490,7 @@ pricesGroup.MapGet("/latest", () =>
 // Diagnostic endpoint for Nordpool fetch debugging
 app.MapGet("/api/prices/_debug/fetch", async (IHttpClientFactory httpClientFactory, HttpContext ctx, IConfiguration cfg, UserSettingsRepository settingsRepo) =>
 {
+    if (!IsAdminRequest(ctx, cfg)) return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
     var userId = GetUserId(ctx);
     var zone = await settingsRepo.GetUserZoneAsync(userId) ?? "SE3";
     var dateStr = ctx.Request.Query["date"].FirstOrDefault();
@@ -393,14 +501,15 @@ app.MapGet("/api/prices/_debug/fetch", async (IHttpClientFactory httpClientFacto
     var (prices, attempts) = await client.GetDailyPricesDetailedAsync(date, zone);
     return Results.Json(new { date = date.ToString("yyyy-MM-dd"), zone, priceCount = prices.Count, prices, attempts, currency, pageId, userId });
 });
-app.MapGet("/api/prices/_debug/raw", (IHttpClientFactory httpClientFactory, HttpContext ctx, IConfiguration cfg) =>
+app.MapGet("/api/prices/_debug/raw", async (IHttpClientFactory httpClientFactory, HttpContext ctx, IConfiguration cfg) =>
 {
+    if (!IsAdminRequest(ctx, cfg)) return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
     var dateStr = ctx.Request.Query["date"].FirstOrDefault();
     DateTime date = DateTime.TryParse(dateStr, out var d) ? d : DateTime.Today;
     var currency = cfg["Price:Nordpool:Currency"] ?? "SEK";
     var pageId = cfg["Price:Nordpool:PageId"];
     var client = new NordpoolClient(httpClientFactory.CreateClient("Nordpool"), currency, pageId);
-    return client.GetRawCandidateResponsesAsync(date);
+    return Results.Json(await client.GetRawCandidateResponsesAsync(date));
 });
 pricesGroup.MapGet("/memory", () =>
 {
@@ -421,7 +530,7 @@ pricesGroup.MapPost("/zone", async (HttpContext c, UserSettingsRepository settin
         var userId = GetUserId(c);
         await settingsRepo.SetUserZoneAsync(userId, zone!);
         return Results.Ok(new { saved = true, zone });
-    } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+    } catch (Exception ex) { Console.WriteLine($"[API Error] {ex}"); return Results.BadRequest(new { error = "An internal error occurred" }); }
 });
 // Get latest persisted Nordpool snapshot for zone
 pricesGroup.MapGet("/nordpool/latest", async (HttpContext c, IConfiguration cfg, UserSettingsRepository settingsRepo, PriceRepository priceRepo, string? zone) => {
@@ -476,10 +585,76 @@ pricesGroup.MapGet("/timeseries", async (HttpContext ctx, PriceRepository priceR
     return Results.Json(new { updated, count = ordered.Count, items = ordered, source = forceLatest ? "latest" : "memory" });
 });
 
+pricesGroup.MapGet("/threshold", async (HttpContext ctx, PriceRepository priceRepo, UserSettingsRepository settingsRepo, IConfiguration cfg) =>
+{
+    var percentileStr = ctx.Request.Query["percentile"].FirstOrDefault();
+    var percentile = 0.1;
+    if (double.TryParse(percentileStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var p))
+        percentile = Math.Clamp(p, 0.01, 0.99);
+
+    var userId = GetUserId(ctx);
+    var zone = await settingsRepo.GetUserZoneAsync(userId);
+    var currency = cfg["Price:Nordpool:Currency"] ?? "SEK";
+    var histStats = await HistoricalPriceAnalyzer.GetHistoricalStatsAsync(priceRepo, zone, percentile);
+
+    if (histStats.PercentileThreshold.HasValue)
+    {
+        return Results.Json(new
+        {
+            percentile,
+            threshold = histStats.PercentileThreshold.Value,
+            maxPrice = histStats.MaxPrice!.Value,
+            trendFactor = histStats.TrendFactor,
+            currency,
+            lookbackDays = 60,
+            zone
+        });
+    }
+    return Results.Json(new
+    {
+        percentile,
+        threshold = (decimal?)null,
+        maxPrice = (decimal?)null,
+        trendFactor = 1.0,
+        currency,
+        lookbackDays = 60,
+        zone
+    });
+});
+
+pricesGroup.MapGet("/trend", async (HttpContext ctx, PriceRepository priceRepo, UserSettingsRepository settingsRepo) =>
+{
+    var userId = GetUserId(ctx);
+    var zone = await settingsRepo.GetUserZoneAsync(userId);
+    var histStats = await HistoricalPriceAnalyzer.GetHistoricalStatsAsync(priceRepo, zone, 0.5);
+
+    if (histStats.DailyAverages != null && histStats.DailyAverages.Count > 0)
+    {
+        return Results.Json(new
+        {
+            zone,
+            trendFactor = histStats.TrendFactor,
+            lookbackDays = 60,
+            dailyAverages = histStats.DailyAverages.Select(da => new
+            {
+                date = da.Date.ToString("yyyy-MM-dd"),
+                avgPrice = da.AvgPrice
+            }).ToList()
+        });
+    }
+    return Results.Json(new
+    {
+        zone,
+        trendFactor = 1.0,
+        lookbackDays = 60,
+        dailyAverages = Array.Empty<object>()
+    });
+});
+
 // Auth group
 var daikinAuthGroup = app.MapGroup("/auth/daikin").WithTags("Daikin Auth");
-daikinAuthGroup.MapGet("/start", (DaikinOAuthService daikinOAuth, HttpContext c) => { try { var url = daikinOAuth.GetAuthorizationUrl(c); return Results.Json(new { url }); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); } });
-daikinAuthGroup.MapGet("/start-min", (DaikinOAuthService daikinOAuth, HttpContext c) => { try { var url = daikinOAuth.GetMinimalAuthorizationUrl(c); return Results.Json(new { url }); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); } });
+daikinAuthGroup.MapGet("/start", (DaikinOAuthService daikinOAuth, HttpContext c) => { try { var url = daikinOAuth.GetAuthorizationUrl(c); return Results.Json(new { url }); } catch (Exception ex) { Console.WriteLine($"[API Error] {ex}"); return Results.BadRequest(new { error = "An internal error occurred" }); } });
+
 daikinAuthGroup.MapGet("/callback", async (DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext c, string? code, string? state) =>
 {
     var userId = GetUserId(c);
@@ -595,7 +770,7 @@ daikinAuthGroup.MapGet("/status", async (DaikinOAuthService daikinOAuth, HttpCon
     return Results.Json(raw);
 });
 daikinAuthGroup.MapPost("/refresh", async (DaikinOAuthService daikinOAuth, HttpContext c) => { var userId = GetUserId(c); var token = await daikinOAuth.RefreshIfNeededAsync(userId); return token == null ? Results.BadRequest(new { error = "Refresh failed or not authorized" }) : Results.Ok(new { refreshed = true }); });
-daikinAuthGroup.MapGet("/debug", async (DaikinOAuthService daikinOAuth, HttpContext c) => { var userId = GetUserId(c); return Results.Json(new { status = await daikinOAuth.StatusAsync(userId), userId, now = DateTimeOffset.UtcNow }); });
+daikinAuthGroup.MapGet("/debug", async (DaikinOAuthService daikinOAuth, HttpContext c, IConfiguration cfg) => { if (!IsAdminRequest(c, cfg)) return Results.Json(new { error = "Unauthorized" }, statusCode: 401); var userId = GetUserId(c); return Results.Json(new { status = await daikinOAuth.StatusAsync(userId), userId, now = DateTimeOffset.UtcNow }); });
 daikinAuthGroup.MapPost("/revoke", async (DaikinOAuthService daikinOAuth, HttpContext c) => { var userId = GetUserId(c); var ok = await daikinOAuth.RevokeAsync(userId); return ok ? Results.Ok(new { revoked = true }) : Results.BadRequest(new { error = "Revoke failed" }); });
 daikinAuthGroup.MapGet("/introspect", async (DaikinOAuthService daikinOAuth, HttpContext c, bool refresh) => { var userId = GetUserId(c); var result = await daikinOAuth.IntrospectAsync(userId, refresh); return result == null ? Results.BadRequest(new { error = "Not authorized" }) : Results.Json(result); });
 
@@ -850,14 +1025,14 @@ adminGroup.MapPost("/login", async (IConfiguration cfg, HttpContext c) =>
         return Results.Json(new { error = "No admin password configured" }, statusCode: 403);
 
     var password = c.Request.Headers["X-Admin-Password"].FirstOrDefault();
-    if (string.IsNullOrEmpty(password) || password != configuredPassword)
+    if (string.IsNullOrEmpty(password) || !AdminService.SecureCompare(password, configuredPassword))
         return Results.Json(new { error = "Invalid admin password" }, statusCode: 401);
 
     if (!string.IsNullOrEmpty(userId))
         await AdminService.GrantAdmin(cfg, userId);
 
     return Results.Json(new { granted = true, userId });
-});
+}).RequireRateLimiting("admin-login");
 
 adminGroup.MapGet("/users", async (IConfiguration cfg, HttpContext c, UserSettingsRepository settingsRepo, DaikinTokenRepository tokenRepo, ScheduleHistoryRepository historyRepo) =>
 {
@@ -1050,7 +1225,8 @@ daikinGroup.MapGet("/sites", async (IHttpClientFactory httpClientFactory, Daikin
     }
     catch (Exception ex)
     {
-        return Results.BadRequest(new { error = ex.Message });
+        Console.WriteLine($"[API Error] {ex}");
+        return Results.BadRequest(new { error = "An internal error occurred" });
     }
 });
 // Simplified current schedule via gateway-devices
@@ -1196,8 +1372,8 @@ daikinGroup.MapGet("/gateway/schedule", async (IHttpClientFactory httpClientFact
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"[GatewaySchedule][Exception] {ex.GetType().Name} {ex.Message}");
-        return Results.Json(new { status="error", error=ex.Message });
+        Console.WriteLine($"[GatewaySchedule][Exception] {ex}");
+        return Results.Json(new { status="error", error="An internal error occurred" });
     }
 });
 daikinGroup.MapGet("/devices", async (IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext c, string? siteId) =>
@@ -1223,7 +1399,7 @@ daikinGroup.MapGet("/devices", async (IHttpClientFactory httpClientFactory, Daik
         var devicesJson = await client.GetDevicesAsync(siteId);
         return Results.Content(devicesJson, "application/json");
     }
-    catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+    catch (Exception ex) { Console.WriteLine($"[API Error] {ex}"); return Results.BadRequest(new { error = "An internal error occurred" }); }
 });
 // Simplified gateway devices proxy: return raw array from Daikin
 daikinGroup.MapGet("/gateway", async (IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext c) =>
@@ -1244,7 +1420,8 @@ daikinGroup.MapGet("/gateway", async (IHttpClientFactory httpClientFactory, Daik
     }
     catch (Exception ex)
     {
-        return Results.BadRequest(new { error = ex.Message });
+        Console.WriteLine($"[API Error] {ex}");
+        return Results.BadRequest(new { error = "An internal error occurred" });
     }
 });
 
@@ -1441,7 +1618,8 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IHttpClientFactory httpClien
     }
     catch (Exception ex)
     {
-        return Results.BadRequest(new { error = ex.Message });
+        Console.WriteLine($"[API Error] {ex}");
+        return Results.BadRequest(new { error = "An internal error occurred" });
     }
 });
 
@@ -1552,7 +1730,7 @@ public class HangfirePasswordAuthorizationFilter : IDashboardAuthorizationFilter
             if (parts.Length == 2)
             {
                 var providedPassword = parts[1];
-                if (providedPassword == _password)
+                if (AdminService.SecureCompare(providedPassword, _password))
                 {
                     return true;
                 }
