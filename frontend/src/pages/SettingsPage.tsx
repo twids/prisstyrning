@@ -103,6 +103,7 @@ export default function SettingsPage() {
         ComfortIntervalDays: formData.comfortIntervalDays,
         ComfortFlexibilityDays: formData.comfortFlexibilityDays,
         ComfortEarlyPercentile: formData.comfortEarlyPercentile,
+        Timezone: settings?.Timezone ?? 'auto',
       });
 
       if (formData.selectedZone !== zone) {

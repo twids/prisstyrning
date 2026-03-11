@@ -5,9 +5,11 @@
  */
 
 /** Full date + time, e.g. "2026-03-09 14:30" or "3/9/2026, 2:30 PM" depending on locale */
-export function formatDateTime(date: Date | string | number): string {
+export function formatDateTime(date: Date | string | number, timeZone?: string): string {
   const d = date instanceof Date ? date : new Date(date);
+  const tz = timeZone && timeZone !== 'auto' ? timeZone : undefined;
   return d.toLocaleString(undefined, {
+    timeZone: tz,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -17,15 +19,18 @@ export function formatDateTime(date: Date | string | number): string {
 }
 
 /** Time only, e.g. "14:30" or "2:30 PM" */
-export function formatTime(date: Date | string | number): string {
+export function formatTime(date: Date | string | number, timeZone?: string): string {
   const d = date instanceof Date ? date : new Date(date);
-  return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  const tz = timeZone && timeZone !== 'auto' ? timeZone : undefined;
+  return d.toLocaleTimeString(undefined, { timeZone: tz, hour: '2-digit', minute: '2-digit' });
 }
 
 /** Short date + full time, e.g. "9 mar 2026 14:30:00" */
-export function formatDateTimeFull(date: Date | string | number): string {
+export function formatDateTimeFull(date: Date | string | number, timeZone?: string): string {
   const d = date instanceof Date ? date : new Date(date);
+  const tz = timeZone && timeZone !== 'auto' ? timeZone : undefined;
   return d.toLocaleString(undefined, {
+    timeZone: tz,
     year: 'numeric',
     month: 'short',
     day: 'numeric',
