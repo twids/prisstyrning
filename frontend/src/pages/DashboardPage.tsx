@@ -1,5 +1,11 @@
 import { useState } from 'react';
-import { Stack, Paper, Typography, Button, Alert, Box, Snackbar, TextField, Divider } from '@mui/material';
+import {
+  Stack, Paper, Typography, Button, Alert, Box, Snackbar, TextField, Divider,
+  Table, TableHead, TableBody, TableRow, TableCell, Chip, IconButton, MenuItem, Select,
+  FormControlLabel, Checkbox, InputLabel, FormControl,
+} from '@mui/material';
+import DeleteIcon from '@mui/icons-material/Delete';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 
 import AuthStatusChip from '../components/AuthStatusChip';
 import PriceChart from '../components/PriceChart';
@@ -14,7 +20,7 @@ import { useApplySchedule } from '../hooks/useApplySchedule';
 import { useCurrentSchedule } from '../hooks/useCurrentSchedule';
 import { useFlexibleState } from '../hooks/useFlexibleState';
 import { useUserSettings } from '../hooks/useUserSettings';
-import { useManualComfort } from '../hooks/useManualComfort';
+import { useScheduleEntries } from '../hooks/useScheduleEntries';
 
 export default function DashboardPage() {
   const { isAuthorized, startAuth, refresh, isRefreshing } = useAuth();
@@ -35,24 +41,30 @@ export default function DashboardPage() {
   const { settings } = useUserSettings();
   const isFlexible = settings?.SchedulingMode === 'Flexible';
   const { state: flexibleState } = useFlexibleState(isFlexible);
-  const manualComfort = useManualComfort();
+  const { entries, addEntry, removeEntry } = useScheduleEntries();
 
   const formatDateTimeLocal = (date: Date): string => {
     const pad = (n: number) => n.toString().padStart(2, '0');
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
   };
 
-  const [manualComfortTime, setManualComfortTime] = useState(() => {
+  const [entryTime, setEntryTime] = useState(() => {
     const nextHour = new Date();
     nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
     return formatDateTimeLocal(nextHour);
   });
+  const [entryState, setEntryState] = useState<'comfort' | 'eco'>('comfort');
+  const [countsAsLegionella, setCountsAsLegionella] = useState(true);
 
-  const handleManualComfort = async () => {
-    if (!manualComfortTime) return;
+  const handleAddEntry = async () => {
+    if (!entryTime) return;
     try {
-      const comfortDate = new Date(manualComfortTime);
-      const result = await manualComfort.mutateAsync(comfortDate.toISOString());
+      const scheduledDate = new Date(entryTime);
+      const result = await addEntry.mutateAsync({
+        scheduledTime: scheduledDate.toISOString(),
+        state: entryState,
+        countsAsLegionella: entryState === 'comfort' && countsAsLegionella,
+      });
       setSnackbar({
         open: true,
         message: result.message,
@@ -61,7 +73,24 @@ export default function DashboardPage() {
     } catch (error) {
       setSnackbar({
         open: true,
-        message: `Failed to schedule comfort: ${error}`,
+        message: `Failed to add entry: ${error}`,
+        severity: 'error',
+      });
+    }
+  };
+
+  const handleRemoveEntry = async (id: number) => {
+    try {
+      const result = await removeEntry.mutateAsync(id);
+      setSnackbar({
+        open: true,
+        message: result.removed ? 'Entry removed' : 'Entry not found',
+        severity: result.applied ? 'success' : 'warning',
+      });
+    } catch (error) {
+      setSnackbar({
+        open: true,
+        message: `Failed to remove entry: ${error}`,
         severity: 'error',
       });
     }
@@ -200,21 +229,72 @@ export default function DashboardPage() {
         )}
       </Paper>
 
-      {/* Manual Comfort Run */}
+      {/* Schedule Entries */}
       <Paper sx={{ p: 3 }}>
         <Typography variant="h5" gutterBottom>
-          Manual Comfort Run
+          Schedule Entries
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Schedule an immediate comfort run (e.g., for filling a hot tub). Select a time within the next 48 hours.
+          Add comfort or eco entries within the next 48 hours. Entries are applied to the active schedule automatically.
         </Typography>
 
+        {/* Existing entries list */}
+        {entries.data && entries.data.length > 0 && (
+          <Table size="small" sx={{ mb: 3 }}>
+            <TableHead>
+              <TableRow>
+                <TableCell>Time</TableCell>
+                <TableCell>State</TableCell>
+                <TableCell>Legionella</TableCell>
+                <TableCell align="right"></TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {entries.data.map((entry) => (
+                <TableRow key={entry.id}>
+                  <TableCell>{new Date(entry.scheduledTimeUtc).toLocaleString()}</TableCell>
+                  <TableCell>
+                    <Chip
+                      label={entry.state}
+                      size="small"
+                      color={entry.state === 'comfort' ? 'primary' : 'success'}
+                      variant="outlined"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    {entry.countsAsLegionella && (
+                      <CheckCircleIcon fontSize="small" color="success" titleAccess="Counts as legionella run" />
+                    )}
+                  </TableCell>
+                  <TableCell align="right">
+                    <IconButton
+                      size="small"
+                      color="error"
+                      onClick={() => handleRemoveEntry(entry.id)}
+                      disabled={removeEntry.isPending}
+                      aria-label="Remove entry"
+                    >
+                      <DeleteIcon fontSize="small" />
+                    </IconButton>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+        {entries.data && entries.data.length === 0 && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            No scheduled entries.
+          </Typography>
+        )}
+
+        {/* Add entry form */}
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="flex-end">
           <TextField
             type="datetime-local"
-            label="Comfort Time"
-            value={manualComfortTime}
-            onChange={(e) => setManualComfortTime(e.target.value)}
+            label="Time"
+            value={entryTime}
+            onChange={(e) => setEntryTime(e.target.value)}
             InputLabelProps={{ shrink: true }}
             inputProps={{
               min: formatDateTimeLocal(new Date()),
@@ -222,19 +302,43 @@ export default function DashboardPage() {
             }}
             fullWidth
           />
+          <FormControl sx={{ minWidth: 120 }}>
+            <InputLabel>State</InputLabel>
+            <Select
+              value={entryState}
+              label="State"
+              onChange={(e) => setEntryState(e.target.value as 'comfort' | 'eco')}
+              size="small"
+            >
+              <MenuItem value="comfort">Comfort</MenuItem>
+              <MenuItem value="eco">Eco</MenuItem>
+            </Select>
+          </FormControl>
           <Button
             variant="contained"
-            onClick={handleManualComfort}
-            disabled={!isAuthorized || !manualComfortTime || manualComfort.isPending}
-            sx={{ whiteSpace: 'nowrap', minWidth: 160 }}
+            onClick={handleAddEntry}
+            disabled={!isAuthorized || !entryTime || addEntry.isPending}
+            sx={{ whiteSpace: 'nowrap', minWidth: 130 }}
           >
-            {manualComfort.isPending ? 'Scheduling...' : 'Schedule & Apply'}
+            {addEntry.isPending ? 'Adding...' : 'Add Entry'}
           </Button>
         </Stack>
+        {entryState === 'comfort' && (
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={countsAsLegionella}
+                onChange={(e) => setCountsAsLegionella(e.target.checked)}
+              />
+            }
+            label="Counts as legionella run"
+            sx={{ mt: 1 }}
+          />
+        )}
 
         {!isAuthorized && (
           <Alert severity="warning" sx={{ mt: 2 }}>
-            Authorize with Daikin before scheduling a manual comfort run.
+            Authorize with Daikin before adding schedule entries.
           </Alert>
         )}
       </Paper>
