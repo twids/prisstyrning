@@ -171,8 +171,10 @@ internal class BatchRunner
             scheduleApplied = await ApplyScheduleToDaikinAsync(config, dynamicSchedulePayload, userId);
         }
 
-        // 9. Update state after successful apply (only when actually applying and persisting)
-        if (scheduleApplied && persist)
+        // 9. Update state to advance the scheduling window (regardless of Daikin apply success).
+        // The state represents "we've decided on a schedule for this window" — if we don't advance,
+        // the next run will recalculate and overwrite whatever is on the device.
+        if (persist)
         {
             using var scope = scopeFactory.CreateScope();
             var flexRepo = scope.ServiceProvider.GetRequiredService<FlexibleScheduleStateRepository>();
