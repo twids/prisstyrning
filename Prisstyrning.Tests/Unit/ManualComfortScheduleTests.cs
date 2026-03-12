@@ -58,14 +58,13 @@ public class ManualComfortScheduleTests
         {
             var todayActions = GetDayActions(schedule, todayDay);
             Assert.NotNull(todayActions);
-            // Today should only have turn_off at 00:00:00
-            Assert.Equal("turn_off", GetStateAtTime(schedule, todayDay, "00:00:00"));
-            Assert.Null(todayActions![tomorrowDay]); // No cross-reference
+            // Today should have no actions (no turn_off padding)
+            Assert.Empty(todayActions);
         }
     }
 
     [Fact]
-    public void ComposeManualComfortSchedule_HasTurnOffAfterComfort()
+    public void ComposeManualComfortSchedule_NoTurnOffAfterComfort()
     {
         // Arrange: comfort at 14:00 today
         var now = DateTimeOffset.UtcNow;
@@ -74,9 +73,9 @@ public class ManualComfortScheduleTests
         // Act
         var schedule = ScheduleAlgorithm.ComposeManualComfortSchedule(comfortTime);
 
-        // Assert: turn_off at 15:00 (one hour after comfort)
+        // Assert: no turn_off at 15:00 (DHW is one-shot, no reheat)
         var dayName = comfortTime.DayOfWeek.ToString().ToLowerInvariant();
-        Assert.Equal("turn_off", GetStateAtTime(schedule, dayName, "15:00:00"));
+        Assert.Null(GetStateAtTime(schedule, dayName, "15:00:00"));
     }
 
     [Fact]
@@ -98,7 +97,7 @@ public class ManualComfortScheduleTests
     }
 
     [Fact]
-    public void ComposeManualComfortSchedule_StartsWithTurnOff()
+    public void ComposeManualComfortSchedule_NoDaysStartWithTurnOff()
     {
         // Arrange
         var now = DateTimeOffset.UtcNow;
@@ -107,12 +106,12 @@ public class ManualComfortScheduleTests
         // Act
         var schedule = ScheduleAlgorithm.ComposeManualComfortSchedule(comfortTime);
 
-        // Assert: each day starts with turn_off at 00:00
+        // Assert: no day starts with turn_off at 00:00 (DHW is one-shot)
         var todayName = now.Date.DayOfWeek.ToString().ToLowerInvariant();
         var tomorrowName = now.Date.AddDays(1).DayOfWeek.ToString().ToLowerInvariant();
 
-        Assert.Equal("turn_off", GetStateAtTime(schedule, todayName, "00:00:00"));
-        Assert.Equal("turn_off", GetStateAtTime(schedule, tomorrowName, "00:00:00"));
+        Assert.Null(GetStateAtTime(schedule, todayName, "00:00:00"));
+        Assert.Null(GetStateAtTime(schedule, tomorrowName, "00:00:00"));
     }
 
     [Fact]
@@ -130,7 +129,8 @@ public class ManualComfortScheduleTests
         var dayActions = GetDayActions(schedule, dayName);
         Assert.NotNull(dayActions);
         Assert.Equal("comfort", GetStateAtTime(schedule, dayName, "23:00:00"));
-        // There should be no "24:00:00" key
+        // No turn_off anywhere
+        Assert.Null(GetStateAtTime(schedule, dayName, "00:00:00"));
         Assert.Null(dayActions!["24:00:00"]);
     }
 }
