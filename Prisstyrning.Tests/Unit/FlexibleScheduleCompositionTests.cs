@@ -64,10 +64,10 @@ public class FlexibleScheduleCompositionTests
         var todayActions = GetDayActions(payload, "wednesday");
         Assert.NotNull(todayActions);
 
-        // Should have turn_off at 00:00, eco at 03:00, turn_off at 04:00
-        Assert.Equal("turn_off", GetStateAtTime(todayActions, "00:00:00"));
+        // Should only have eco at 03:00 — no turn_off padding
         Assert.Equal("eco", GetStateAtTime(todayActions, "03:00:00"));
-        Assert.Equal("turn_off", GetStateAtTime(todayActions, "04:00:00"));
+        Assert.Null(GetStateAtTime(todayActions, "00:00:00"));
+        Assert.Null(GetStateAtTime(todayActions, "04:00:00"));
         Assert.Contains("eco", message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -91,9 +91,10 @@ public class FlexibleScheduleCompositionTests
         var todayActions = GetDayActions(payload, "monday");
         Assert.NotNull(todayActions);
 
-        Assert.Equal("turn_off", GetStateAtTime(todayActions, "00:00:00"));
+        // Should only have comfort at 14:00 — no turn_off padding
         Assert.Equal("comfort", GetStateAtTime(todayActions, "14:00:00"));
-        Assert.Equal("turn_off", GetStateAtTime(todayActions, "15:00:00"));
+        Assert.Null(GetStateAtTime(todayActions, "00:00:00"));
+        Assert.Null(GetStateAtTime(todayActions, "15:00:00"));
         Assert.Contains("comfort", message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -121,12 +122,12 @@ public class FlexibleScheduleCompositionTests
         var todayActions = GetDayActions(payload, "thursday");
         Assert.NotNull(todayActions);
 
-        // Should have both eco and comfort transitions
-        Assert.Equal("turn_off", GetStateAtTime(todayActions, "00:00:00"));
+        // Should have both eco and comfort start actions — no turn_off padding
         Assert.Equal("eco", GetStateAtTime(todayActions, "03:00:00"));
-        Assert.Equal("turn_off", GetStateAtTime(todayActions, "04:00:00"));
         Assert.Equal("comfort", GetStateAtTime(todayActions, "14:00:00"));
-        Assert.Equal("turn_off", GetStateAtTime(todayActions, "15:00:00"));
+        Assert.Null(GetStateAtTime(todayActions, "00:00:00"));
+        Assert.Null(GetStateAtTime(todayActions, "04:00:00"));
+        Assert.Null(GetStateAtTime(todayActions, "15:00:00"));
         Assert.Contains("eco", message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("comfort", message, StringComparison.OrdinalIgnoreCase);
     }
@@ -155,9 +156,34 @@ public class FlexibleScheduleCompositionTests
         var todayActions = GetDayActions(payload, "wednesday");
         Assert.NotNull(todayActions);
 
-        // Only turn_off at 00:00
-        Assert.Equal("turn_off", GetStateAtTime(todayActions, "00:00:00"));
-        Assert.Single(todayActions); // Only one action: default turn_off
+        // No actions — empty schedule means "don't change anything"
+        Assert.Empty(todayActions);
+    }
+
+    [Fact]
+    public void ComposeFlexibleSchedule_EcoOnly_NoTurnOffActions()
+    {
+        // Arrange: eco scheduled at 03:00 on a Wednesday
+        var now = new DateTimeOffset(2026, 2, 25, 10, 0, 0, TimeSpan.Zero); // Wednesday
+        var ecoResult = new ScheduleAlgorithm.FlexibleEcoResult(
+            ScheduledHourUtc: new DateTimeOffset(2026, 2, 25, 3, 0, 0, TimeSpan.Zero),
+            State: "scheduled",
+            Message: "Eco scheduled at 03:00");
+
+        // Act
+        var (payload, _) = ScheduleAlgorithm.ComposeFlexibleSchedule(ecoResult, null, now);
+
+        // Assert: exactly 1 action per scheduled day, no turn_off anywhere
+        Assert.NotNull(payload);
+        var todayActions = GetDayActions(payload, "wednesday");
+        Assert.NotNull(todayActions);
+        Assert.Single(todayActions); // Only eco at 03:00
+        Assert.Equal("eco", GetStateAtTime(todayActions, "03:00:00"));
+
+        // Tomorrow should have no actions
+        var tomorrowActions = GetDayActions(payload, "thursday");
+        Assert.NotNull(tomorrowActions);
+        Assert.Empty(tomorrowActions);
     }
 
     [Fact]
