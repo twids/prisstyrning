@@ -894,7 +894,8 @@ public static class ScheduleAlgorithm
 
     /// <summary>
     /// Composes eco and comfort scheduling results into a single Daikin-compatible schedule payload.
-    /// Uses "eco", "comfort", and "turn_off" as the three possible domesticHotWaterTemperature values.
+    /// Only emits eco/comfort start actions — turn_off is omitted because DHW heating
+    /// is a one-shot trigger (no reheat unless a new action is set).
     /// </summary>
     public static (JsonNode? schedulePayload, string message) ComposeFlexibleSchedule(
         FlexibleEcoResult? ecoResult,
@@ -910,8 +911,8 @@ public static class ScheduleAlgorithm
         // SortedDictionary keeps actions ordered by time
         var dayActions = new Dictionary<string, SortedDictionary<TimeSpan, string>>
         {
-            [todayName] = new SortedDictionary<TimeSpan, string> { [TimeSpan.Zero] = "turn_off" },
-            [tomorrowName] = new SortedDictionary<TimeSpan, string> { [TimeSpan.Zero] = "turn_off" }
+            [todayName] = new SortedDictionary<TimeSpan, string>(),
+            [tomorrowName] = new SortedDictionary<TimeSpan, string>()
         };
 
         bool ecoScheduled = ecoResult?.ScheduledHourUtc != null;
@@ -924,14 +925,10 @@ public static class ScheduleAlgorithm
             var ecoHour = ecoResult!.ScheduledHourUtc!.Value;
             var dayName = ecoHour.Date == todayDate ? todayName : tomorrowName;
             var time = new TimeSpan(ecoHour.Hour, 0, 0);
-            var timeEnd = time.Add(TimeSpan.FromHours(1));
 
             if (dayActions.ContainsKey(dayName))
             {
                 dayActions[dayName][time] = "eco";
-                // Only add turn_off after if it doesn't exceed 24h
-                if (timeEnd.TotalHours < 24)
-                    dayActions[dayName][timeEnd] = "turn_off";
             }
         }
 
@@ -941,13 +938,10 @@ public static class ScheduleAlgorithm
             var comfortHour = comfortResult!.ScheduledHourUtc!.Value;
             var dayName = comfortHour.Date == todayDate ? todayName : tomorrowName;
             var time = new TimeSpan(comfortHour.Hour, 0, 0);
-            var timeEnd = time.Add(TimeSpan.FromHours(1));
 
             if (dayActions.ContainsKey(dayName))
             {
                 dayActions[dayName][time] = "comfort"; // overwrites eco if same hour
-                if (timeEnd.TotalHours < 24)
-                    dayActions[dayName][timeEnd] = "turn_off";
             }
         }
 
@@ -979,7 +973,7 @@ public static class ScheduleAlgorithm
             parts.Add($"Comfort: {comfortResult.State}");
 
         if (parts.Count == 0)
-            parts.Add("No eco or comfort scheduled, turn_off only");
+            parts.Add("No eco or comfort scheduled");
 
         var message = string.Join(" | ", parts);
         return (root, message);
@@ -987,7 +981,7 @@ public static class ScheduleAlgorithm
 
     /// <summary>
     /// Composes a Daikin-compatible schedule JSON for a manual comfort run at a specific time.
-    /// The schedule covers today and tomorrow with turn_off everywhere except a 1-hour comfort window.
+    /// The schedule covers today and tomorrow with a comfort start action at the specified hour.
     /// </summary>
     public static JsonNode ComposeManualComfortSchedule(DateTimeOffset comfortTime)
     {
@@ -999,21 +993,18 @@ public static class ScheduleAlgorithm
         var comfortDate = comfortTime.UtcDateTime.Date;
         var comfortDayName = comfortDate.DayOfWeek.ToString().ToLowerInvariant();
         var comfortHourSpan = new TimeSpan(comfortTime.UtcDateTime.Hour, 0, 0);
-        var comfortEndSpan = comfortHourSpan.Add(TimeSpan.FromHours(1));
 
         var dayActions = new Dictionary<string, SortedDictionary<TimeSpan, string>>();
 
-        // Initialize both days with turn_off
-        dayActions[todayName] = new SortedDictionary<TimeSpan, string> { [TimeSpan.Zero] = "turn_off" };
+        // Initialize both days empty
+        dayActions[todayName] = new SortedDictionary<TimeSpan, string>();
         if (todayName != tomorrowName)
-            dayActions[tomorrowName] = new SortedDictionary<TimeSpan, string> { [TimeSpan.Zero] = "turn_off" };
+            dayActions[tomorrowName] = new SortedDictionary<TimeSpan, string>();
 
         // Add comfort at the specified hour (only if it's today or tomorrow)
         if (dayActions.ContainsKey(comfortDayName))
         {
             dayActions[comfortDayName][comfortHourSpan] = "comfort";
-            if (comfortEndSpan.TotalHours < 24)
-                dayActions[comfortDayName][comfortEndSpan] = "turn_off";
         }
 
         // Build JSON
