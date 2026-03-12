@@ -44,6 +44,7 @@ export interface UserSettings {
   ComfortIntervalDays: number;
   ComfortFlexibilityDays: number;
   ComfortEarlyPercentile: number;
+  Timezone: string;
 }
 
 export interface SchedulePreviewResponse {
@@ -73,10 +74,7 @@ export interface SaveZoneResponse {
 }
 
 export interface SaveSettingsResponse {
-  ComfortHours: number;
-  TurnOffPercentile: number;
-  AutoApplySchedule: boolean;
-  MaxComfortGapHours: number;
+  saved: boolean;
 }
 
 export interface AuthUrlResponse {
@@ -155,4 +153,30 @@ export interface FlexibleState {
     Progress: number | null;
   };
   SchedulingMode: string;
+  CurrentThreshold: number | null;
+  BaseThreshold: number | null;
+  TrendFactor: number;
+  Currency: string;
+}
+
+export interface PriceThresholdResponse {
+  percentile: number;
+  threshold: number | null;
+  maxPrice: number | null;
+  trendFactor: number;
+  currency: string;
+  lookbackDays: number;
+  zone: string;
+}
+
+export interface DailyAverage {
+  date: string;
+  avgPrice: number;
+}
+
+export interface PriceTrendResponse {
+  zone: string;
+  trendFactor: number;
+  lookbackDays: number;
+  dailyAverages: DailyAverage[];
 }

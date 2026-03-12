@@ -5,9 +5,9 @@ public class FlexibleScheduleState
     public string UserId { get; set; } = string.Empty;  // PK
     /// <summary>
     /// The UTC time of the most recently scheduled eco hour.
-    /// NOTE: This is set when the schedule is composed and applied to Daikin,
-    /// not when the eco hour has actually elapsed. The scheduled hour (e.g., 14:00)
-    /// is recorded at apply time to compute the next eco window correctly.
+    /// NOTE: This is set when the schedule is composed and persisted,
+    /// regardless of whether the Daikin apply step succeeds. The scheduled
+    /// hour (e.g., 14:00) is recorded to compute the next eco window correctly.
     /// </summary>
     public DateTimeOffset? LastEcoRunUtc { get; set; }
     /// <summary>

@@ -7,6 +7,7 @@ import DashboardPage from './pages/DashboardPage';
 import SettingsPage from './pages/SettingsPage';
 import AdminPage from './pages/AdminPage';
 import ErrorBoundary from './components/ErrorBoundary';
+import { TimezoneProvider } from './context/TimezoneContext';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -23,15 +24,17 @@ function App() {
       <QueryClientProvider client={queryClient}>
         <ThemeProvider theme={theme}>
           <CssBaseline />
-          <BrowserRouter key="router">
-            <Layout>
-              <Routes>
-                <Route path="/" element={<DashboardPage />} />
-                <Route path="/settings" element={<SettingsPage />} />
-                <Route path="/admin" element={<AdminPage />} />
-              </Routes>
-            </Layout>
-          </BrowserRouter>
+          <TimezoneProvider>
+            <BrowserRouter key="router">
+              <Layout>
+                <Routes>
+                  <Route path="/" element={<DashboardPage />} />
+                  <Route path="/settings" element={<SettingsPage />} />
+                  <Route path="/admin" element={<AdminPage />} />
+                </Routes>
+              </Layout>
+            </BrowserRouter>
+          </TimezoneProvider>
         </ThemeProvider>
       </QueryClientProvider>
     </ErrorBoundary>

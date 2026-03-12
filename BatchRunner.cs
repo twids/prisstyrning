@@ -170,8 +170,10 @@ internal class BatchRunner
             scheduleApplied = await ApplyScheduleToDaikinAsync(config, dynamicSchedulePayload, userId);
         }
 
-        // 9. Update state after successful apply (only when actually applying and persisting)
-        if (scheduleApplied && persist)
+        // 9. Update state to advance the scheduling window (regardless of Daikin apply success).
+        // The state represents "we've decided on a schedule for this window" — if we don't advance,
+        // the next run will recalculate and overwrite whatever is on the device.
+        if (persist)
         {
             using var scope = scopeFactory.CreateScope();
             var flexRepo = scope.ServiceProvider.GetRequiredService<FlexibleScheduleStateRepository>();
@@ -196,6 +198,23 @@ internal class BatchRunner
             message += scheduleApplied ? " | Applied" : " | Apply failed";
 
         return (true, schedulePayload, message);
+    }
+
+    /// <summary>
+    /// Attempts to activate a schedule via SetCurrentScheduleAsync. If it fails (e.g., READ_ONLY_CHARACTERISTIC
+    /// on some device models), logs a warning but does not throw — the schedule is already on the device
+    /// after PutSchedulesAsync succeeded.
+    /// </summary>
+    private static async Task TrySetCurrentScheduleNonFatalAsync(DaikinApiClient daikin, string deviceId, string embeddedId, string mode, string logPrefix)
+    {
+        try
+        {
+            await daikin.SetCurrentScheduleAsync(deviceId, embeddedId, mode, "0");
+        }
+        catch (HttpRequestException ex)
+        {
+            Console.WriteLine($"{logPrefix} SetCurrentSchedule failed (non-fatal, schedule already uploaded): {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -297,7 +316,7 @@ internal class BatchRunner
                 }
 
                 await daikin.PutSchedulesAsync(appliedDevice, embeddedId, scheduleMode, dynamicSchedulePayload);
-                await daikin.SetCurrentScheduleAsync(appliedDevice, embeddedId, scheduleMode, "0");
+                await TrySetCurrentScheduleNonFatalAsync(daikin, appliedDevice, embeddedId, scheduleMode, "[Schedule/Flexible]");
                 Console.WriteLine($"[Schedule/Flexible] apply OK site={appliedSite} device={appliedDevice} embedded={embeddedId}");
                 return true;
             }
@@ -463,7 +482,7 @@ internal class BatchRunner
                 // PUT full schedules then enable current schedule (scheduleId 0)
                 Console.WriteLine($"[Schedule] applying schedule bytes={dynamicSchedulePayload.Length} mode={scheduleMode}");
                 await daikin.PutSchedulesAsync(appliedDevice, embeddedId, scheduleMode, dynamicSchedulePayload);
-                await daikin.SetCurrentScheduleAsync(appliedDevice, embeddedId, scheduleMode, "0");
+                await TrySetCurrentScheduleNonFatalAsync(daikin, appliedDevice, embeddedId, scheduleMode, "[Schedule]");
                 Console.WriteLine($"[Schedule] apply OK site={appliedSite} device={appliedDevice} embedded={embeddedId} mode={scheduleMode} retry={isRetry}");
                 return true;
             }
