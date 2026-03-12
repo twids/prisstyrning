@@ -133,7 +133,7 @@ public class FlexibleScheduleCompositionTests
     }
 
     [Fact]
-    public void ComposeFlexibleSchedule_NeitherScheduled_HasTurnOffOnly()
+    public void ComposeFlexibleSchedule_NeitherScheduled_HasNoActions()
     {
         // Arrange: both eco and comfort have null scheduled hour (waiting states)
         var now = new DateTimeOffset(2026, 2, 25, 10, 0, 0, TimeSpan.Zero); // Wednesday
