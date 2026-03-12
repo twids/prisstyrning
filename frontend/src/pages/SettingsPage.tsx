@@ -33,6 +33,14 @@ const ZONES = [
   'FI',
 ];
 
+const TIMEZONES = [
+  { value: 'auto', label: 'Auto (system timezone)' },
+  { value: 'Europe/Stockholm', label: 'Europe/Stockholm' },
+  { value: 'Europe/Oslo', label: 'Europe/Oslo' },
+  { value: 'Europe/Copenhagen', label: 'Europe/Copenhagen' },
+  { value: 'Europe/Helsinki', label: 'Europe/Helsinki' },
+];
+
 export default function SettingsPage() {
   const { settings, isLoading, error, updateSettings, isUpdating } = useUserSettings();
   const { zone, setZone, isUpdating: isZoneUpdating } = useZone();
@@ -45,6 +53,7 @@ export default function SettingsPage() {
     maxComfortGapHours: 1,
     autoApplySchedule: false,
     selectedZone: 'SE3',
+    timezone: 'auto',
     schedulingMode: 'Classic' as 'Classic' | 'Flexible',
     ecoIntervalHours: 24,
     ecoFlexibilityHours: 12,
@@ -70,6 +79,7 @@ export default function SettingsPage() {
         turnOffPercentile: settings.TurnOffPercentile ?? 0.9,
         maxComfortGapHours: settings.MaxComfortGapHours ?? 1,
         autoApplySchedule: settings.AutoApplySchedule ?? false,
+        timezone: settings.Timezone ?? 'auto',
         schedulingMode: settings.SchedulingMode ?? 'Classic',
         ecoIntervalHours: settings.EcoIntervalHours ?? 24,
         ecoFlexibilityHours: settings.EcoFlexibilityHours ?? 12,
@@ -103,7 +113,7 @@ export default function SettingsPage() {
         ComfortIntervalDays: formData.comfortIntervalDays,
         ComfortFlexibilityDays: formData.comfortFlexibilityDays,
         ComfortEarlyPercentile: formData.comfortEarlyPercentile,
-        Timezone: settings?.Timezone ?? 'auto',
+        Timezone: formData.timezone,
       });
 
       if (formData.selectedZone !== zone) {
@@ -243,6 +253,23 @@ export default function SettingsPage() {
                 {ZONES.map((z) => (
                   <MenuItem key={z} value={z}>
                     {z}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
+            <FormControl fullWidth>
+              <InputLabel>Timezone</InputLabel>
+              <Select
+                value={formData.timezone}
+                onChange={(e) =>
+                  setFormData({ ...formData, timezone: e.target.value })
+                }
+                label="Timezone"
+              >
+                {TIMEZONES.map((tz) => (
+                  <MenuItem key={tz.value} value={tz.value}>
+                    {tz.label}
                   </MenuItem>
                 ))}
               </Select>
