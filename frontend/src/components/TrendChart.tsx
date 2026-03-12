@@ -15,7 +15,7 @@ export default function TrendChart() {
     ? { icon: '↑', text: 'Rising', color: 'error.main' }
     : { icon: '→', text: 'Stable', color: 'text.secondary' };
 
-  const xData = data.dailyAverages.map(d => new Date(d.date));
+  const xData = data.dailyAverages.map(d => new Date(d.date + 'T00:00:00'));
   const yData = data.dailyAverages.map(d => Math.round(d.avgPrice * 10) / 10);
 
   return (
