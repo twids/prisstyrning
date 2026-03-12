@@ -36,7 +36,7 @@ import type { AdminUser } from '../types/api';
 
 export default function AdminPage() {
   const queryClient = useQueryClient();
-  const { formatDateTime, formatDateTimeFull } = useFormatters();
+  const { formatDateTime } = useFormatters();
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'error' | 'success' }>({ open: false, message: '', severity: 'error' });
@@ -126,6 +126,11 @@ export default function AdminPage() {
     e.preventDefault();
     if (!password.trim()) return;
     loginMutation.mutate(password);
+  };
+
+  const toUtcIso = (date: Date | string | number) => {
+    const parsed = new Date(date);
+    return Number.isNaN(parsed.getTime()) ? String(date) : parsed.toISOString();
   };
 
   if (statusQuery.isLoading) {
@@ -283,7 +288,7 @@ export default function AdminPage() {
                   </TableCell>
                   <TableCell>
                     {user.createdAt ? (
-                      <Tooltip title={formatDateTimeFull(user.createdAt)}>
+                      <Tooltip title={toUtcIso(user.createdAt)}>
                         <Typography variant="body2">
                           {formatDateTime(user.createdAt)}
                         </Typography>

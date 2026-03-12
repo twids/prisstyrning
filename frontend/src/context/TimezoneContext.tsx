@@ -7,10 +7,11 @@ import {
 
 interface TimezoneContextValue {
   timezone: string;  // resolved IANA timezone
-  setting: string;   // raw setting ("auto" or IANA)
+  setting: string;   // normalized timezone setting ("auto" or resolved IANA timezone)
+  profile: LocaleProfileKey; // selected locale profile key (raw user choice)
 }
 
-type LocaleProfileKey = 'auto' | 'se' | 'no' | 'dk' | 'fi';
+export type LocaleProfileKey = 'auto' | 'se' | 'no' | 'dk' | 'fi';
 
 interface LocaleOption {
   value: LocaleProfileKey;
@@ -22,7 +23,7 @@ interface LocaleOption {
 
 interface LocaleContextValue {
   localeSetting: LocaleProfileKey;
-  setLocaleSetting: (locale: string) => void;
+  setLocaleSetting: (locale: LocaleProfileKey) => void;
   systemLocale: string;
   systemTimezone: string;
   locale: string | undefined; // resolved locale, undefined = browser default
@@ -88,6 +89,7 @@ function getSystemLocale(): string {
 const TimezoneContext = createContext<TimezoneContextValue>({
   timezone: getSystemTimezone(),
   setting: 'auto',
+  profile: 'auto',
 });
 
 const LocaleContext = createContext<LocaleContextValue>({
@@ -123,8 +125,8 @@ export function TimezoneProvider({ children }: { children: ReactNode }) {
     [localeSetting],
   );
 
-  const setLocaleSetting = (locale: string) => {
-    setLocaleSettingState(normalizeLocaleProfileKey(locale));
+  const setLocaleSetting = (locale: LocaleProfileKey) => {
+    setLocaleSettingState(locale);
   };
 
   useEffect(() => {
@@ -172,7 +174,11 @@ export function TimezoneProvider({ children }: { children: ReactNode }) {
   const timezoneValue = useMemo(() => {
     const setting = selectedOption.value === 'auto' ? 'auto' : safeTimezone;
 
-    return { timezone: safeTimezone, setting };
+    return {
+      timezone: safeTimezone,
+      setting,
+      profile: selectedOption.value,
+    };
   }, [selectedOption.value, safeTimezone]);
 
   const localeValue = useMemo(() => {

@@ -296,7 +296,12 @@ export default function SettingsPage() {
               <InputLabel>Locale</InputLabel>
               <Select
                 value={localeSetting}
-                onChange={(e) => setLocaleSetting(e.target.value)}
+                onChange={(e) => {
+                  const nextLocale = localeOptions.find((option) => option.value === e.target.value)?.value;
+                  if (nextLocale) {
+                    setLocaleSetting(nextLocale);
+                  }
+                }}
                 label="Locale"
               >
                 {localeOptions.map((option) => {
