@@ -9,7 +9,7 @@ namespace Prisstyrning.Tests.Fixtures;
 /// </summary>
 public class MockHttpMessageHandler : HttpMessageHandler
 {
-    private readonly Dictionary<string, (HttpStatusCode status, string body)> _routes = new();
+    private readonly List<(string pattern, HttpStatusCode status, string body)> _routes = new();
     private readonly List<HttpRequestMessage> _requests = new();
     private readonly object _lock = new();
     
@@ -35,7 +35,7 @@ public class MockHttpMessageHandler : HttpMessageHandler
     {
         lock (_lock)
         {
-            _routes[urlPattern] = (status, body);
+            _routes.Add((urlPattern, status, body));
         }
     }
     
@@ -62,12 +62,11 @@ public class MockHttpMessageHandler : HttpMessageHandler
         
         var url = request.RequestUri?.ToString() ?? "";
         
-        // Find matching route
-        foreach (var route in _routes)
+        // Find matching route (first match wins — insertion order is guaranteed by List)
+        foreach (var (pattern, status, body) in _routes)
         {
-            if (url.Contains(route.Key, StringComparison.OrdinalIgnoreCase))
+            if (url.Contains(pattern, StringComparison.OrdinalIgnoreCase))
             {
-                var (status, body) = route.Value;
                 return await Task.FromResult(new HttpResponseMessage
                 {
                     StatusCode = status,
