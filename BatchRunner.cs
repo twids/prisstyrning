@@ -298,7 +298,16 @@ internal class BatchRunner
                 }
 
                 await daikin.PutSchedulesAsync(appliedDevice, embeddedId, scheduleMode, dynamicSchedulePayload);
-                await daikin.SetCurrentScheduleAsync(appliedDevice, embeddedId, scheduleMode, "0");
+                // SetCurrentSchedule may fail on some device models (READ_ONLY_CHARACTERISTIC).
+                // Since PutSchedules already succeeded, the schedule is on the device — treat this as non-fatal.
+                try
+                {
+                    await daikin.SetCurrentScheduleAsync(appliedDevice, embeddedId, scheduleMode, "0");
+                }
+                catch (HttpRequestException scEx)
+                {
+                    Console.WriteLine($"[Schedule/Flexible] SetCurrentSchedule failed (non-fatal, schedule already uploaded): {scEx.Message}");
+                }
                 Console.WriteLine($"[Schedule/Flexible] apply OK site={appliedSite} device={appliedDevice} embedded={embeddedId}");
                 return true;
             }
@@ -464,7 +473,16 @@ internal class BatchRunner
                 // PUT full schedules then enable current schedule (scheduleId 0)
                 Console.WriteLine($"[Schedule] applying schedule bytes={dynamicSchedulePayload.Length} mode={scheduleMode}");
                 await daikin.PutSchedulesAsync(appliedDevice, embeddedId, scheduleMode, dynamicSchedulePayload);
-                await daikin.SetCurrentScheduleAsync(appliedDevice, embeddedId, scheduleMode, "0");
+                // SetCurrentSchedule may fail on some device models (READ_ONLY_CHARACTERISTIC).
+                // Since PutSchedules already succeeded, the schedule is on the device — treat this as non-fatal.
+                try
+                {
+                    await daikin.SetCurrentScheduleAsync(appliedDevice, embeddedId, scheduleMode, "0");
+                }
+                catch (HttpRequestException scEx)
+                {
+                    Console.WriteLine($"[Schedule] SetCurrentSchedule failed (non-fatal, schedule already uploaded): {scEx.Message}");
+                }
                 Console.WriteLine($"[Schedule] apply OK site={appliedSite} device={appliedDevice} embedded={embeddedId} mode={scheduleMode} retry={isRetry}");
                 return true;
             }
