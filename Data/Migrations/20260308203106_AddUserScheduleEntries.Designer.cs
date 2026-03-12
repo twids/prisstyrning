@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Prisstyrning.Data;
@@ -11,9 +12,11 @@ using Prisstyrning.Data;
 namespace Prisstyrning.Data.Migrations
 {
     [DbContext(typeof(PrisstyrningDbContext))]
-    partial class PrisstyrningDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260308203106_AddUserScheduleEntries")]
+    partial class AddUserScheduleEntries
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -229,12 +232,6 @@ namespace Prisstyrning.Data.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)")
                         .HasDefaultValue("Classic");
-
-                    b.Property<string>("Timezone")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("text")
-                        .HasDefaultValue("auto");
 
                     b.Property<double>("TurnOffPercentile")
                         .HasColumnType("double precision");

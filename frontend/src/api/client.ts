@@ -80,6 +80,19 @@ class ApiClient {
     return this.post('/api/schedule/comfort', { comfortTime });
   }
 
+  // Schedule entries
+  async getScheduleEntries(): Promise<T.ScheduleEntry[]> {
+    return this.get('/api/schedule/entries');
+  }
+
+  async addScheduleEntry(entry: { scheduledTime: string; state: string; countsAsLegionella: boolean }): Promise<T.AddScheduleEntryResponse> {
+    return this.post('/api/schedule/entries', entry);
+  }
+
+  async removeScheduleEntry(id: number): Promise<T.RemoveScheduleEntryResponse> {
+    return this.del(`/api/schedule/entries/${id}`);
+  }
+
   // Status
   async getStatus(): Promise<T.StatusResponse> {
     return this.get('/api/status');

@@ -14,7 +14,7 @@ import { useApplySchedule } from '../hooks/useApplySchedule';
 import { useCurrentSchedule } from '../hooks/useCurrentSchedule';
 import { useFlexibleState } from '../hooks/useFlexibleState';
 import { useUserSettings } from '../hooks/useUserSettings';
-import { useManualComfort } from '../hooks/useManualComfort';
+import { useScheduleEntries } from '../hooks/useScheduleEntries';
 import { useToast } from '../context/ToastContext';
 import { useFormatters } from '../context/TimezoneContext';
 
@@ -30,25 +30,40 @@ export default function DashboardPage() {
   const { settings } = useUserSettings();
   const isFlexible = settings?.SchedulingMode === 'Flexible';
   const { state: flexibleState } = useFlexibleState(isFlexible);
-  const manualComfort = useManualComfort();
+  const { entries, addEntry, removeEntry } = useScheduleEntries();
 
   const formatDateTimeLocal = (date: Date): string =>
     date.toISOString().slice(0, 16);
 
-  const [manualComfortTime, setManualComfortTime] = useState(() => {
+  const [entryTime, setEntryTime] = useState(() => {
     const nextHour = new Date();
     nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
     return formatDateTimeLocal(nextHour);
   });
+  const [entryState, setEntryState] = useState<'comfort' | 'eco'>('comfort');
+  const [countsAsLegionella, setCountsAsLegionella] = useState(true);
 
-  const handleManualComfort = async () => {
-    if (!manualComfortTime) return;
+  const handleAddEntry = async () => {
+    if (!entryTime) return;
     try {
-      const comfortDate = new Date(manualComfortTime);
-      const result = await manualComfort.mutateAsync(comfortDate.toISOString());
+      const scheduledDate = new Date(entryTime);
+      const result = await addEntry.mutateAsync({
+        scheduledTime: scheduledDate.toISOString(),
+        state: entryState,
+        countsAsLegionella: entryState === 'comfort' && countsAsLegionella,
+      });
       showToast(result.message, result.applied ? 'success' : 'warning');
     } catch (error) {
-      showToast(`Failed to schedule comfort: ${error}`, 'error');
+      showToast(`Failed to add entry: ${error}`, 'error');
+    }
+  };
+
+  const handleRemoveEntry = async (id: number) => {
+    try {
+      const result = await removeEntry.mutateAsync(id);
+      showToast(result.removed ? 'Entry removed' : 'Entry not found', result.applied ? 'success' : 'warning');
+    } catch (error) {
+      showToast(`Failed to remove entry: ${error}`, 'error');
     }
   };
 
@@ -151,31 +166,105 @@ export default function DashboardPage() {
         )}
       </Card>
 
-      {/* Manual Comfort Run */}
+      {/* Schedule Entries */}
       <Card>
-        <h2 className="text-xl font-semibold mb-2">Manual Comfort Run</h2>
+        <h2 className="text-xl font-semibold mb-2">Schedule Entries</h2>
         <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-          Schedule an immediate comfort run (e.g., for filling a hot tub). Select a time within the next 48 hours.
+          Add comfort or eco entries within the next 48 hours. Entries are applied to the active schedule automatically.
         </p>
+
+        {/* Existing entries list */}
+        {entries.data && entries.data.length > 0 && (
+          <div className="mb-4 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 dark:border-gray-700 text-left">
+                  <th className="pb-2 font-medium">Time</th>
+                  <th className="pb-2 font-medium">State</th>
+                  <th className="pb-2 font-medium">Legionella</th>
+                  <th className="pb-2 font-medium"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {entries.data.map((entry) => (
+                  <tr key={entry.id} className="border-b border-gray-100 dark:border-gray-800">
+                    <td className="py-2">{new Date(entry.scheduledTimeUtc).toLocaleString()}</td>
+                    <td className="py-2">
+                      <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
+                        entry.state === 'comfort'
+                          ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
+                          : 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300'
+                      }`}>
+                        {entry.state}
+                      </span>
+                    </td>
+                    <td className="py-2">
+                      {entry.countsAsLegionella && (
+                        <span className="text-green-600 dark:text-green-400" title="Counts as legionella run">✓</span>
+                      )}
+                    </td>
+                    <td className="py-2 text-right">
+                      <button
+                        onClick={() => handleRemoveEntry(entry.id)}
+                        disabled={removeEntry.isPending}
+                        className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 transition-colors disabled:opacity-50"
+                        title="Remove entry"
+                      >
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {entries.data && entries.data.length === 0 && (
+          <p className="text-sm text-gray-400 dark:text-gray-500 mb-4">No scheduled entries.</p>
+        )}
+
+        {/* Add entry form */}
         <div className="flex flex-col sm:flex-row gap-3 items-end">
           <div className="flex-1 w-full">
-            <label className="block text-sm font-medium mb-1">Comfort Time</label>
+            <label className="block text-sm font-medium mb-1">Time</label>
             <input
               type="datetime-local"
-              value={manualComfortTime}
-              onChange={(e) => setManualComfortTime(e.target.value)}
+              value={entryTime}
+              onChange={(e) => setEntryTime(e.target.value)}
               min={formatDateTimeLocal(new Date())}
               max={formatDateTimeLocal(new Date(Date.now() + 48 * 60 * 60 * 1000))}
               className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors"
             />
           </div>
-          <button onClick={handleManualComfort} disabled={!isAuthorized || !manualComfortTime || manualComfort.isPending} className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 whitespace-nowrap">
-            {manualComfort.isPending ? 'Scheduling...' : 'Schedule & Apply'}
+          <div className="w-full sm:w-32">
+            <label className="block text-sm font-medium mb-1">State</label>
+            <select
+              value={entryState}
+              onChange={(e) => setEntryState(e.target.value as 'comfort' | 'eco')}
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors"
+            >
+              <option value="comfort">Comfort</option>
+              <option value="eco">Eco</option>
+            </select>
+          </div>
+          <button onClick={handleAddEntry} disabled={!isAuthorized || !entryTime || addEntry.isPending} className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 whitespace-nowrap">
+            {addEntry.isPending ? 'Adding...' : 'Add Entry'}
           </button>
         </div>
+        {entryState === 'comfort' && (
+          <label className="flex items-center gap-2 mt-3 text-sm">
+            <input
+              type="checkbox"
+              checked={countsAsLegionella}
+              onChange={(e) => setCountsAsLegionella(e.target.checked)}
+              className="rounded border-gray-300 dark:border-gray-700 text-blue-600 focus:ring-blue-500"
+            />
+            Counts as legionella run
+          </label>
+        )}
         {!isAuthorized && (
           <div className="bg-yellow-50 dark:bg-yellow-950 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3 text-sm text-yellow-700 dark:text-yellow-400 mt-4">
-            Authorize with Daikin before scheduling a manual comfort run.
+            Authorize with Daikin before adding schedule entries.
           </div>
         )}
       </Card>

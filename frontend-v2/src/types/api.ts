@@ -180,3 +180,25 @@ export interface FlexibleState {
   TrendFactor: number;
   Currency: string;
 }
+
+export interface ScheduleEntry {
+  id: number;
+  scheduledTimeUtc: string;
+  state: 'comfort' | 'eco';
+  countsAsLegionella: boolean;
+  createdAtUtc: string;
+}
+
+export interface AddScheduleEntryResponse {
+  id: number;
+  scheduledTimeUtc: string;
+  state: string;
+  countsAsLegionella: boolean;
+  applied: boolean;
+  message: string;
+}
+
+export interface RemoveScheduleEntryResponse {
+  removed: boolean;
+  applied: boolean;
+}

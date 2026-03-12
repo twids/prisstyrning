@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Prisstyrning.Data.Entities;
 using Xunit;
 
 namespace Prisstyrning.Tests.Unit;
@@ -218,5 +219,137 @@ public class FlexibleScheduleCompositionTests
         var parsed = JsonNode.Parse(json);
         Assert.NotNull(parsed);
         Assert.Equal("eco", parsed!["0"]!["actions"]!["monday"]!["06:00:00"]!["domesticHotWaterTemperature"]!.ToString());
+    }
+
+    [Fact]
+    public void ComposeFlexibleSchedule_WithUserEntries_IncludesThemInSchedule()
+    {
+        // Arrange: no eco/comfort, one user entry for today at 14:00 as comfort
+        var now = new DateTimeOffset(2026, 2, 25, 10, 0, 0, TimeSpan.Zero); // Wednesday
+        var userEntries = new List<UserScheduleEntry>
+        {
+            new UserScheduleEntry
+            {
+                Id = 1,
+                UserId = "default",
+                ScheduledTimeUtc = new DateTimeOffset(2026, 2, 25, 14, 0, 0, TimeSpan.Zero),
+                State = "comfort"
+            }
+        };
+
+        // Act
+        var (payload, message) = ScheduleAlgorithm.ComposeFlexibleSchedule(null, null, now, userEntries);
+
+        // Assert
+        Assert.NotNull(payload);
+        var todayActions = GetDayActions(payload, "wednesday");
+        Assert.NotNull(todayActions);
+
+        Assert.Equal("comfort", GetStateAtTime(todayActions, "14:00:00"));
+        Assert.Equal("turn_off", GetStateAtTime(todayActions, "15:00:00"));
+        Assert.Contains("User entries: 1", message);
+    }
+
+    [Fact]
+    public void ComposeFlexibleSchedule_UserEntryOverridesAlgorithm()
+    {
+        // Arrange: eco at 14:00 AND user entry at 14:00 as comfort → comfort wins
+        var now = new DateTimeOffset(2026, 2, 25, 10, 0, 0, TimeSpan.Zero); // Wednesday
+        var ecoResult = new ScheduleAlgorithm.FlexibleEcoResult(
+            ScheduledHourUtc: new DateTimeOffset(2026, 2, 25, 14, 0, 0, TimeSpan.Zero),
+            State: "scheduled",
+            Message: "Eco scheduled at 14:00");
+        var userEntries = new List<UserScheduleEntry>
+        {
+            new UserScheduleEntry
+            {
+                Id = 1,
+                UserId = "default",
+                ScheduledTimeUtc = new DateTimeOffset(2026, 2, 25, 14, 0, 0, TimeSpan.Zero),
+                State = "comfort"
+            }
+        };
+
+        // Act
+        var (payload, _) = ScheduleAlgorithm.ComposeFlexibleSchedule(ecoResult, null, now, userEntries);
+
+        // Assert: user entry comfort overrides eco
+        Assert.NotNull(payload);
+        var todayActions = GetDayActions(payload, "wednesday");
+        Assert.NotNull(todayActions);
+        Assert.Equal("comfort", GetStateAtTime(todayActions, "14:00:00"));
+    }
+
+    [Fact]
+    public void ComposeFlexibleSchedule_MultipleUserEntries_AllIncluded()
+    {
+        // Arrange: two user entries on different hours today
+        var now = new DateTimeOffset(2026, 2, 25, 10, 0, 0, TimeSpan.Zero); // Wednesday
+        var userEntries = new List<UserScheduleEntry>
+        {
+            new UserScheduleEntry
+            {
+                Id = 1,
+                UserId = "default",
+                ScheduledTimeUtc = new DateTimeOffset(2026, 2, 25, 8, 0, 0, TimeSpan.Zero),
+                State = "eco"
+            },
+            new UserScheduleEntry
+            {
+                Id = 2,
+                UserId = "default",
+                ScheduledTimeUtc = new DateTimeOffset(2026, 2, 25, 20, 0, 0, TimeSpan.Zero),
+                State = "comfort"
+            }
+        };
+
+        // Act
+        var (payload, message) = ScheduleAlgorithm.ComposeFlexibleSchedule(null, null, now, userEntries);
+
+        // Assert
+        Assert.NotNull(payload);
+        var todayActions = GetDayActions(payload, "wednesday");
+        Assert.NotNull(todayActions);
+
+        Assert.Equal("eco", GetStateAtTime(todayActions, "08:00:00"));
+        Assert.Equal("turn_off", GetStateAtTime(todayActions, "09:00:00"));
+        Assert.Equal("comfort", GetStateAtTime(todayActions, "20:00:00"));
+        Assert.Equal("turn_off", GetStateAtTime(todayActions, "21:00:00"));
+        Assert.Contains("User entries: 2", message);
+    }
+
+    [Fact]
+    public void ComposeFlexibleSchedule_UserEntryOnTomorrow_AppearsOnCorrectDay()
+    {
+        // Arrange: user entry for tomorrow (Thursday)
+        var now = new DateTimeOffset(2026, 2, 25, 10, 0, 0, TimeSpan.Zero); // Wednesday
+        var userEntries = new List<UserScheduleEntry>
+        {
+            new UserScheduleEntry
+            {
+                Id = 1,
+                UserId = "default",
+                ScheduledTimeUtc = new DateTimeOffset(2026, 2, 26, 6, 0, 0, TimeSpan.Zero), // Thursday
+                State = "comfort"
+            }
+        };
+
+        // Act
+        var (payload, message) = ScheduleAlgorithm.ComposeFlexibleSchedule(null, null, now, userEntries);
+
+        // Assert: entry appears under thursday, not wednesday
+        Assert.NotNull(payload);
+        var wednesdayActions = GetDayActions(payload, "wednesday");
+        var thursdayActions = GetDayActions(payload, "thursday");
+        Assert.NotNull(thursdayActions);
+
+        // Wednesday should only have default turn_off
+        Assert.Single(wednesdayActions!);
+        Assert.Equal("turn_off", GetStateAtTime(wednesdayActions, "00:00:00"));
+
+        // Thursday should have comfort at 06:00
+        Assert.Equal("comfort", GetStateAtTime(thursdayActions, "06:00:00"));
+        Assert.Equal("turn_off", GetStateAtTime(thursdayActions, "07:00:00"));
+        Assert.Contains("User entries: 1", message);
     }
 }

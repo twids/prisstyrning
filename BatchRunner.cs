@@ -154,8 +154,19 @@ internal class BatchRunner
             Console.WriteLine($"[Batch/Flexible] Comfort marked as completed at {flexState.NextScheduledComfortUtc.Value:yyyy-MM-dd HH:00}");
         }
 
+        // 6.5 Fetch user schedule entries (cleanup past entries first)
+        IReadOnlyList<UserScheduleEntry> userEntries;
+        using (var scope = scopeFactory.CreateScope())
+        {
+            var entryRepo = scope.ServiceProvider.GetRequiredService<UserScheduleEntryRepository>();
+            await entryRepo.CleanupPastEntriesAsync(userId ?? "default");
+            userEntries = await entryRepo.GetFutureEntriesAsync(userId ?? "default");
+        }
+        if (userEntries.Count > 0)
+            Console.WriteLine($"[Batch/Flexible] Including {userEntries.Count} user schedule entries");
+
         // 7. Compose flexible schedule
-        var (schedulePayload, composeMessage) = ScheduleAlgorithm.ComposeFlexibleSchedule(ecoResult, comfortResult, now);
+        var (schedulePayload, composeMessage) = ScheduleAlgorithm.ComposeFlexibleSchedule(ecoResult, comfortResult, now, userEntries);
         if (schedulePayload == null)
         {
             return (false, null, composeMessage);
