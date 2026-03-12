@@ -1,10 +1,11 @@
 import { LineChart } from '@mui/x-charts/LineChart';
 import { Card, CardContent, Typography, CircularProgress, Alert } from '@mui/material';
 import { usePrices } from '../hooks/usePrices';
-import { formatTime, formatDateTime } from '../dateFormat';
+import { useFormatters } from '../context/TimezoneContext';
 
 export default function PriceChart() {
   const { data, isLoading, error } = usePrices();
+  const { formatTime, formatDateTime } = useFormatters();
 
   if (isLoading) {
     return (

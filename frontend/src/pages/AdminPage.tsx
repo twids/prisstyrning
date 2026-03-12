@@ -31,11 +31,12 @@ import DialogContentText from '@mui/material/DialogContentText';
 import DialogActions from '@mui/material/DialogActions';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../api/client';
-import { formatDateTime } from '../dateFormat';
+import { useFormatters } from '../context/TimezoneContext';
 import type { AdminUser } from '../types/api';
 
 export default function AdminPage() {
   const queryClient = useQueryClient();
+  const { formatDateTime, formatDateTimeFull } = useFormatters();
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'error' | 'success' }>({ open: false, message: '', severity: 'error' });
@@ -228,7 +229,7 @@ export default function AdminPage() {
                   </TableCell>
                   <TableCell>
                     {user.daikinAuthorized ? (
-                      <Tooltip title={user.daikinExpiresAtUtc ? `Utgår: ${user.daikinExpiresAtUtc}` : 'Auktoriserad'}>
+                      <Tooltip title={user.daikinExpiresAtUtc ? `Utgår: ${formatDateTime(user.daikinExpiresAtUtc)}` : 'Auktoriserad'}>
                         <CheckCircleIcon color="success" fontSize="small" />
                       </Tooltip>
                     ) : (
@@ -250,7 +251,7 @@ export default function AdminPage() {
                   </TableCell>
                   <TableCell>
                     {user.hasScheduleHistory ? (
-                      <Tooltip title={user.lastScheduleDate ? `Senast: ${user.lastScheduleDate}` : ''}>
+                      <Tooltip title={user.lastScheduleDate ? `Senast: ${formatDateTime(user.lastScheduleDate)}` : ''}>
                         <Typography variant="body2">{user.scheduleCount} st</Typography>
                       </Tooltip>
                     ) : (
@@ -282,7 +283,7 @@ export default function AdminPage() {
                   </TableCell>
                   <TableCell>
                     {user.createdAt ? (
-                      <Tooltip title={`${new Date(user.createdAt).toISOString()}`}>
+                      <Tooltip title={formatDateTimeFull(user.createdAt)}>
                         <Typography variant="body2">
                           {formatDateTime(user.createdAt)}
                         </Typography>

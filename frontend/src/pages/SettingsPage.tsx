@@ -22,6 +22,7 @@ import {
 import { useUserSettings } from '../hooks/useUserSettings';
 import { useZone } from '../hooks/useZone';
 import { useAuth } from '../hooks/useAuth';
+import { useLocale } from '../context/TimezoneContext';
 import ConfirmDialog from '../components/ConfirmDialog';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 
@@ -37,6 +38,15 @@ export default function SettingsPage() {
   const { settings, isLoading, error, updateSettings, isUpdating } = useUserSettings();
   const { zone, setZone, isUpdating: isZoneUpdating } = useZone();
   const { isAuthorized, refresh, revoke, isRefreshing } = useAuth();
+  const {
+    localeSetting,
+    setLocaleSetting,
+    systemLocale,
+    systemTimezone,
+    effectiveLocale,
+    effectiveTimezone,
+    localeOptions,
+  } = useLocale();
 
   // Local state for form
   const [formData, setFormData] = useState({
@@ -271,6 +281,44 @@ export default function SettingsPage() {
 
             <Typography variant="caption" color="text.secondary">
               Classic mode generates a fixed daily schedule. Flexible mode schedules eco and comfort runs at optimal prices within configurable intervals.
+            </Typography>
+          </Stack>
+        </Paper>
+
+        {/* Regional Formatting */}
+        <Paper sx={{ p: 3 }}>
+          <Typography variant="h6" gutterBottom>
+            Regional Formatting
+          </Typography>
+
+          <Stack spacing={2}>
+            <FormControl fullWidth>
+              <InputLabel>Locale</InputLabel>
+              <Select
+                value={localeSetting}
+                onChange={(e) => setLocaleSetting(e.target.value)}
+                label="Locale"
+              >
+                {localeOptions.map((option) => {
+                  if (option.value === 'auto') {
+                    return (
+                      <MenuItem key={option.value} value={option.value}>
+                        Auto (System) — {systemLocale} · {systemTimezone}
+                      </MenuItem>
+                    );
+                  }
+
+                  return (
+                    <MenuItem key={option.value} value={option.value}>
+                      {option.label} — {option.locale} · {option.timezone}
+                    </MenuItem>
+                  );
+                })}
+              </Select>
+            </FormControl>
+
+            <Typography variant="caption" color="text.secondary">
+              Applies immediately and is saved locally in this browser. Effective format: {effectiveLocale} · {effectiveTimezone}.
             </Typography>
           </Stack>
         </Paper>
