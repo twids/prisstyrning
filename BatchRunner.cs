@@ -91,8 +91,7 @@ internal class BatchRunner
         try
         {
             var zone = config["Price:Nordpool:DefaultZone"] ?? "SE3";
-            var currency = config["Price:Nordpool:Currency"] ?? "SEK";
-            var np = new NordpoolClient(_httpClientFactory.CreateClient("Nordpool"), currency);
+            var np = new NordpoolClient(_httpClientFactory.CreateClient("Nordpool"));
             var fetched = await np.GetTodayTomorrowAsync(zone);
             rawToday = fetched.today; rawTomorrow = fetched.tomorrow;
             PriceMemory.Set(rawToday, rawTomorrow);
@@ -360,7 +359,7 @@ internal class BatchRunner
         JsonArray? rawToday = null; JsonArray? rawTomorrow = null;
         try
         {
-            var np = new NordpoolClient(_httpClientFactory.CreateClient("Nordpool"), currency);
+            var np = new NordpoolClient(_httpClientFactory.CreateClient("Nordpool"));
             var fetched = await np.GetTodayTomorrowAsync(zone);
             rawToday = fetched.today; rawTomorrow = fetched.tomorrow;
             PriceMemory.Set(rawToday, rawTomorrow);

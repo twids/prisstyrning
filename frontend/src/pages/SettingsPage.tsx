@@ -27,12 +27,7 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 
 // Nordpool zones
-const ZONES = [
-  'SE1', 'SE2', 'SE3', 'SE4',
-  'NO1', 'NO2', 'NO3', 'NO4', 'NO5',
-  'DK1', 'DK2',
-  'FI',
-];
+const ZONES = ['SE1', 'SE2', 'SE3', 'SE4'];
 
 export default function SettingsPage() {
   const { settings, isLoading, error, updateSettings, isUpdating } = useUserSettings();

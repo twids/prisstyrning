@@ -141,7 +141,7 @@ public class UserSettingsRepository
     {
         if (string.IsNullOrWhiteSpace(z)) return false;
         z = z.Trim().ToUpperInvariant();
-        return System.Text.RegularExpressions.Regex.IsMatch(z, "^(SE[1-4]|NO[1-9]|DK[12]|FI|EE|LV|LT)$");
+        return System.Text.RegularExpressions.Regex.IsMatch(z, "^SE[1-4]$");
     }
 
     public async Task DeleteAsync(string userId)
