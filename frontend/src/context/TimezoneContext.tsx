@@ -217,11 +217,11 @@ export function useLocale() {
 
 export function useFormatters() {
   const { timezone } = useTimezone();
-  const { locale } = useLocale();
+  const { effectiveLocale } = useLocale();
 
   return useMemo(() => ({
-    formatDateTime: (date: Date | string | number) => rawFormatDateTime(date, timezone, locale),
-    formatTime: (date: Date | string | number) => rawFormatTime(date, timezone, locale),
-    formatDateTimeFull: (date: Date | string | number) => rawFormatDateTimeFull(date, timezone, locale),
-  }), [timezone, locale]);
+    formatDateTime: (date: Date | string | number) => rawFormatDateTime(date, timezone, effectiveLocale),
+    formatTime: (date: Date | string | number) => rawFormatTime(date, timezone, effectiveLocale),
+    formatDateTimeFull: (date: Date | string | number) => rawFormatDateTimeFull(date, timezone, effectiveLocale),
+  }), [timezone, effectiveLocale]);
 }

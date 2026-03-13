@@ -30,8 +30,6 @@ export default defineConfig({
           'react-vendor': ['react', 'react-dom', 'react-router-dom'],
           // Split React Query
           'query': ['@tanstack/react-query'],
-          // Split date utilities
-          'date-utils': ['date-fns'],
         },
       },
     },
