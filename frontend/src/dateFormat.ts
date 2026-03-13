@@ -9,8 +9,20 @@ function resolveTimeZone(timeZone?: string): string | undefined {
 }
 
 /** Locales that conventionally use 24-hour time. */
-const HOUR24_LOCALES = ['sv-SE', 'nb-NO', 'da-DK', 'fi-FI', 'sv', 'nb', 'da', 'fi'];
-
+const HOUR24_LOCALES = [
+  'sv-SE',
+  'nb-NO',
+  'no-NO',
+  'nn-NO',
+  'da-DK',
+  'fi-FI',
+  'sv',
+  'nb',
+  'no',
+  'nn',
+  'da',
+  'fi',
+];
 function resolveLocale(locale?: string): string | undefined {
   return locale && locale !== 'auto' ? locale : undefined;
 }
