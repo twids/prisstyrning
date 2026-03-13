@@ -16,7 +16,7 @@ import { useCurrentSchedule } from '../hooks/useCurrentSchedule';
 import { useFlexibleState } from '../hooks/useFlexibleState';
 import { useUserSettings } from '../hooks/useUserSettings';
 import { useManualComfort } from '../hooks/useManualComfort';
-import { formatDateTime } from '../dateFormat';
+import { useFormatters } from '../context/TimezoneContext';
 
 export default function DashboardPage() {
   const { isAuthorized, startAuth, refresh, isRefreshing } = useAuth();
@@ -35,6 +35,7 @@ export default function DashboardPage() {
   const applySchedule = useApplySchedule();
   const currentSchedule = useCurrentSchedule();
   const { settings } = useUserSettings();
+  const { formatDateTime } = useFormatters();
   const isFlexible = settings?.SchedulingMode === 'Flexible';
   const { state: flexibleState } = useFlexibleState(isFlexible);
   const manualComfort = useManualComfort();

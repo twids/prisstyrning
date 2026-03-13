@@ -8,6 +8,12 @@ public class FlexibleScheduleStateRepository
 
     public FlexibleScheduleStateRepository(PrisstyrningDbContext db) { _db = db; }
 
+    /// <summary>
+    /// Ensures a DateTimeOffset is in UTC before persisting to the database.
+    /// Npgsql requires offset 0 for 'timestamp with time zone' columns.
+    /// </summary>
+    private static DateTimeOffset ToUtc(DateTimeOffset value) => value.ToUniversalTime();
+
     public async Task<FlexibleScheduleState> GetOrCreateAsync(string userId)
     {
         var entity = await _db.FlexibleScheduleStates.FindAsync(userId);
@@ -23,14 +29,14 @@ public class FlexibleScheduleStateRepository
     public async Task UpdateEcoRunAsync(string userId, DateTimeOffset runTime)
     {
         var entity = await GetOrCreateAsync(userId);
-        entity.LastEcoRunUtc = runTime;
+        entity.LastEcoRunUtc = ToUtc(runTime);
         await _db.SaveChangesAsync();
     }
 
     public async Task UpdateComfortRunAsync(string userId, DateTimeOffset runTime)
     {
         var entity = await GetOrCreateAsync(userId);
-        entity.LastComfortRunUtc = runTime;
+        entity.LastComfortRunUtc = ToUtc(runTime);
         // Clear the scheduled comfort since it has now run
         entity.NextScheduledComfortUtc = null;
         await _db.SaveChangesAsync();
@@ -45,7 +51,7 @@ public class FlexibleScheduleStateRepository
     public async Task ScheduleComfortRunAsync(string userId, DateTimeOffset scheduledTime)
     {
         var entity = await GetOrCreateAsync(userId);
-        entity.NextScheduledComfortUtc = scheduledTime;
+        entity.NextScheduledComfortUtc = ToUtc(scheduledTime);
         await _db.SaveChangesAsync();
     }
 

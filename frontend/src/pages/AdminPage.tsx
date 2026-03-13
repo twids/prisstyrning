@@ -31,11 +31,12 @@ import DialogContentText from '@mui/material/DialogContentText';
 import DialogActions from '@mui/material/DialogActions';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../api/client';
-import { formatDateTime } from '../dateFormat';
+import { useFormatters } from '../context/TimezoneContext';
 import type { AdminUser } from '../types/api';
 
 export default function AdminPage() {
   const queryClient = useQueryClient();
+  const { formatDateTime } = useFormatters();
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'error' | 'success' }>({ open: false, message: '', severity: 'error' });
@@ -125,6 +126,11 @@ export default function AdminPage() {
     e.preventDefault();
     if (!password.trim()) return;
     loginMutation.mutate(password);
+  };
+
+  const toUtcIso = (date: Date | string | number) => {
+    const parsed = new Date(date);
+    return Number.isNaN(parsed.getTime()) ? String(date) : parsed.toISOString();
   };
 
   if (statusQuery.isLoading) {
@@ -228,7 +234,7 @@ export default function AdminPage() {
                   </TableCell>
                   <TableCell>
                     {user.daikinAuthorized ? (
-                      <Tooltip title={user.daikinExpiresAtUtc ? `Utgår: ${user.daikinExpiresAtUtc}` : 'Auktoriserad'}>
+                      <Tooltip title={user.daikinExpiresAtUtc ? `Utgår: ${formatDateTime(user.daikinExpiresAtUtc)}` : 'Auktoriserad'}>
                         <CheckCircleIcon color="success" fontSize="small" />
                       </Tooltip>
                     ) : (
@@ -250,7 +256,7 @@ export default function AdminPage() {
                   </TableCell>
                   <TableCell>
                     {user.hasScheduleHistory ? (
-                      <Tooltip title={user.lastScheduleDate ? `Senast: ${user.lastScheduleDate}` : ''}>
+                      <Tooltip title={user.lastScheduleDate ? `Senast: ${formatDateTime(user.lastScheduleDate)}` : ''}>
                         <Typography variant="body2">{user.scheduleCount} st</Typography>
                       </Tooltip>
                     ) : (
@@ -282,7 +288,7 @@ export default function AdminPage() {
                   </TableCell>
                   <TableCell>
                     {user.createdAt ? (
-                      <Tooltip title={`${new Date(user.createdAt).toISOString()}`}>
+                      <Tooltip title={toUtcIso(user.createdAt)}>
                         <Typography variant="body2">
                           {formatDateTime(user.createdAt)}
                         </Typography>
