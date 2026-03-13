@@ -8,8 +8,48 @@ function resolveTimeZone(timeZone?: string): string | undefined {
   return timeZone && timeZone !== 'auto' ? timeZone : undefined;
 }
 
+/** Locales that conventionally use 24-hour time. */
+const HOUR24_LOCALES = [
+  'sv-SE',
+  'nb-NO',
+  'no-NO',
+  'nn-NO',
+  'da-DK',
+  'fi-FI',
+  'sv',
+  'nb',
+  'no',
+  'nn',
+  'da',
+  'fi',
+];
 function resolveLocale(locale?: string): string | undefined {
   return locale && locale !== 'auto' ? locale : undefined;
+}
+
+/** Returns hourCycle override when the locale uses 24h time, to prevent OS-level 12h overrides. */
+function resolveHourCycle(locale?: string): { hourCycle: 'h23' } | {} {
+  const resolved = resolveLocale(locale);
+  if (!resolved) {
+    return {};
+  }
+
+  const primaryLanguage = resolved.split('-')[0];
+
+  const uses24h = HOUR24_LOCALES.some(l => {
+    // Full locale tag (e.g. "sv-SE") – match exact tag or that tag with extra subtags.
+    if (l.includes('-')) {
+      return resolved === l || resolved.startsWith(`${l}-`);
+    }
+    // Language-only tag (e.g. "sv", "fi") – match primary language subtag exactly.
+    return primaryLanguage === l;
+  });
+
+  if (uses24h) {
+    return { hourCycle: 'h23' as const };
+  }
+
+  return {};
 }
 
 /** Full date + time, e.g. "2026-03-09 14:30" or "3/9/2026, 2:30 PM" depending on locale */
@@ -22,6 +62,7 @@ export function formatDateTime(date: Date | string | number, timeZone?: string, 
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    ...resolveHourCycle(locale),
   });
 }
 
@@ -32,6 +73,7 @@ export function formatTime(date: Date | string | number, timeZone?: string, loca
     timeZone: resolveTimeZone(timeZone),
     hour: '2-digit',
     minute: '2-digit',
+    ...resolveHourCycle(locale),
   });
 }
 
@@ -46,5 +88,6 @@ export function formatDateTimeFull(date: Date | string | number, timeZone?: stri
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
+    ...resolveHourCycle(locale),
   });
 }
