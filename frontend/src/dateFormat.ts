@@ -18,9 +18,25 @@ function resolveLocale(locale?: string): string | undefined {
 /** Returns hourCycle override when the locale uses 24h time, to prevent OS-level 12h overrides. */
 function resolveHourCycle(locale?: string): { hourCycle: 'h23' } | {} {
   const resolved = resolveLocale(locale);
-  if (resolved && HOUR24_LOCALES.some(l => resolved.startsWith(l))) {
+  if (!resolved) {
+    return {};
+  }
+
+  const primaryLanguage = resolved.split('-')[0];
+
+  const uses24h = HOUR24_LOCALES.some(l => {
+    // Full locale tag (e.g. "sv-SE") – match exact tag or that tag with extra subtags.
+    if (l.includes('-')) {
+      return resolved === l || resolved.startsWith(`${l}-`);
+    }
+    // Language-only tag (e.g. "sv", "fi") – match primary language subtag exactly.
+    return primaryLanguage === l;
+  });
+
+  if (uses24h) {
     return { hourCycle: 'h23' as const };
   }
+
   return {};
 }
 
