@@ -23,14 +23,14 @@ public class FlexibleScheduleStateRepository
     public async Task UpdateEcoRunAsync(string userId, DateTimeOffset runTime)
     {
         var entity = await GetOrCreateAsync(userId);
-        entity.LastEcoRunUtc = runTime;
+        entity.LastEcoRunUtc = runTime.ToUniversalTime();
         await _db.SaveChangesAsync();
     }
 
     public async Task UpdateComfortRunAsync(string userId, DateTimeOffset runTime)
     {
         var entity = await GetOrCreateAsync(userId);
-        entity.LastComfortRunUtc = runTime;
+        entity.LastComfortRunUtc = runTime.ToUniversalTime();
         // Clear the scheduled comfort since it has now run
         entity.NextScheduledComfortUtc = null;
         await _db.SaveChangesAsync();
@@ -45,7 +45,7 @@ public class FlexibleScheduleStateRepository
     public async Task ScheduleComfortRunAsync(string userId, DateTimeOffset scheduledTime)
     {
         var entity = await GetOrCreateAsync(userId);
-        entity.NextScheduledComfortUtc = scheduledTime;
+        entity.NextScheduledComfortUtc = scheduledTime.ToUniversalTime();
         await _db.SaveChangesAsync();
     }
 
