@@ -23,4 +23,11 @@ public class FlexibleScheduleState
     /// as long as we remain within the comfort window.
     /// </summary>
     public DateTimeOffset? NextScheduledComfortUtc { get; set; }
+    /// <summary>
+    /// The next eco run that has been scheduled but not yet executed.
+    /// Mirrors NextScheduledComfortUtc: prevents premature deletion of a pending eco
+    /// run when the batch re-runs before the scheduled hour arrives.
+    /// LastEcoRunUtc is only advanced once this time passes (state == "already_ran").
+    /// </summary>
+    public DateTimeOffset? NextScheduledEcoUtc { get; set; }
 }

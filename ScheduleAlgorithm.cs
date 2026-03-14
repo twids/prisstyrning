@@ -605,7 +605,7 @@ public static class ScheduleAlgorithm
     /// <summary>Result from the flexible eco scheduling algorithm.</summary>
     public sealed record FlexibleEcoResult(
         DateTimeOffset? ScheduledHourUtc,  // The hour we want to schedule eco, or null if no schedule needed
-        string State,                       // "scheduled", "waiting", "no_prices"
+        string State,                       // "scheduled", "rescheduled", "already_scheduled", "already_ran", "waiting", "no_prices", "expired"
         string Message                      // Human-readable explanation
     );
 
@@ -650,6 +650,8 @@ public static class ScheduleAlgorithm
     /// <summary>
     /// Determines when to schedule the next eco (DHW ~45°C) run within the flexibility window.
     /// Picks the cheapest available hour in the eco window from today/tomorrow price data.
+    /// If nextScheduledEcoUtc is provided: returns "already_ran" if it's in the past,
+    /// or "already_scheduled"/"rescheduled" if it's still in the future (re-optimization).
     /// </summary>
     public static FlexibleEcoResult GenerateFlexibleEco(
         JsonArray? rawToday,
@@ -657,19 +659,67 @@ public static class ScheduleAlgorithm
         DateTimeOffset lastEcoRun,
         int intervalHours,
         int flexibilityHours,
+        DateTimeOffset? nextScheduledEcoUtc = null,
         DateTimeOffset? nowOverride = null)
     {
         var now = nowOverride ?? DateTimeOffset.UtcNow;
 
-        // Compute eco window
-        var windowStart = lastEcoRun.AddHours(intervalHours - flexibilityHours);
-        var windowEnd = lastEcoRun.AddHours(intervalHours + flexibilityHours);
+        // 1. If nextScheduledEcoUtc is in the past → eco already ran
+        if (nextScheduledEcoUtc.HasValue && nextScheduledEcoUtc.Value <= now)
+        {
+            return new FlexibleEcoResult(
+                nextScheduledEcoUtc.Value,
+                "already_ran",
+                $"Eco already ran at {nextScheduledEcoUtc.Value:yyyy-MM-dd HH:00} UTC");
+        }
 
-        // Parse all available prices (needed for both look-ahead and normal scheduling)
+        // 2. Compute the eco window from lastEcoRun.
+        //    This window is used for both re-optimization (when a pending eco exists)
+        //    and for normal scheduling (when no pending eco exists).
+        var ecoWindowStart = lastEcoRun.AddHours(intervalHours - flexibilityHours);
+        var ecoWindowEnd = lastEcoRun.AddHours(intervalHours + flexibilityHours);
+
+        // Parse all available prices
         var allPrices = ParseHourlyPrices(rawToday, rawTomorrow);
 
+        // 3. If nextScheduledEcoUtc is in the future → re-optimize or keep
+        if (nextScheduledEcoUtc.HasValue && nextScheduledEcoUtc.Value > now)
+        {
+            // Look up the price of the currently scheduled hour
+            var scheduledPrice = allPrices
+                .Where(p => p.Start == nextScheduledEcoUtc.Value)
+                .Select(p => (decimal?)p.Price)
+                .FirstOrDefault();
+
+            // Find cheaper candidates within the current eco window
+            var effectiveStart = now > ecoWindowStart ? now : ecoWindowStart;
+            var candidates = allPrices
+                .Where(p => p.Start >= effectiveStart && p.Start < ecoWindowEnd)
+                .ToList();
+
+            if (candidates.Count > 0)
+            {
+                var cheapest = candidates.OrderBy(p => p.Price).First();
+                // If price not found in data (data shifted) or a cheaper hour exists, reschedule
+                if (scheduledPrice == null || cheapest.Price < scheduledPrice.Value)
+                {
+                    return new FlexibleEcoResult(
+                        cheapest.Start,
+                        "rescheduled",
+                        $"Rescheduled eco to {cheapest.Start:HH:00} ({cheapest.Price:F2} SEK/kWh), cheaper than previous {nextScheduledEcoUtc.Value:HH:00}");
+                }
+            }
+
+            return new FlexibleEcoResult(
+                nextScheduledEcoUtc.Value,
+                "already_scheduled",
+                $"Eco already scheduled at {nextScheduledEcoUtc.Value:HH:00} UTC, still cheapest");
+        }
+
+        // 4. No pending eco — schedule normally using the eco window
+
         // If window has passed (missed), force-schedule using any available future price
-        if (now >= windowEnd)
+        if (now >= ecoWindowEnd)
         {
             var futurePrices = allPrices.Where(p => p.Start >= now).ToList();
             if (futurePrices.Count > 0)
@@ -687,10 +737,10 @@ public static class ScheduleAlgorithm
         }
 
         // If window hasn't opened yet, try to pre-schedule using available price data
-        if (now < windowStart)
+        if (now < ecoWindowStart)
         {
             var futureCandidates = allPrices
-                .Where(p => p.Start >= windowStart && p.Start < windowEnd)
+                .Where(p => p.Start >= ecoWindowStart && p.Start < ecoWindowEnd)
                 .ToList();
 
             if (futureCandidates.Count > 0)
@@ -699,23 +749,23 @@ public static class ScheduleAlgorithm
                 return new FlexibleEcoResult(
                     preScheduled.Start,
                     "scheduled",
-                    $"Pre-scheduled eco at {preScheduled.Start:HH:00} ({preScheduled.Price:F2} SEK/kWh), window opens at {windowStart:yyyy-MM-dd HH:00} UTC");
+                    $"Pre-scheduled eco at {preScheduled.Start:HH:00} ({preScheduled.Price:F2} SEK/kWh), window opens at {ecoWindowStart:yyyy-MM-dd HH:00} UTC");
             }
 
-            var hoursUntilOpen = (windowStart - now).TotalHours;
+            var hoursUntilOpen = (ecoWindowStart - now).TotalHours;
             return new FlexibleEcoResult(
                 null,
                 "waiting",
-                $"Eco window opens in {hoursUntilOpen:F1} hours (at {windowStart:yyyy-MM-dd HH:00} UTC)");
+                $"Eco window opens in {hoursUntilOpen:F1} hours (at {ecoWindowStart:yyyy-MM-dd HH:00} UTC)");
         }
 
-        // Filter to future hours within the eco window
-        var effectiveStart = now > windowStart ? now : windowStart;
-        var candidates = allPrices
-            .Where(p => p.Start >= effectiveStart && p.Start < windowEnd)
+        // Window is open: filter to future hours within the eco window
+        var effectiveWindowStart = now > ecoWindowStart ? now : ecoWindowStart;
+        var windowCandidates = allPrices
+            .Where(p => p.Start >= effectiveWindowStart && p.Start < ecoWindowEnd)
             .ToList();
 
-        if (candidates.Count == 0)
+        if (windowCandidates.Count == 0)
         {
             return new FlexibleEcoResult(
                 null,
@@ -724,11 +774,11 @@ public static class ScheduleAlgorithm
         }
 
         // Pick the cheapest hour
-        var cheapest = candidates.OrderBy(p => p.Price).First();
+        var cheapestInWindow = windowCandidates.OrderBy(p => p.Price).First();
         return new FlexibleEcoResult(
-            cheapest.Start,
+            cheapestInWindow.Start,
             "scheduled",
-            $"Eco scheduled at {cheapest.Start:HH:00} ({cheapest.Price:F2} SEK/kWh)");
+            $"Eco scheduled at {cheapestInWindow.Start:HH:00} ({cheapestInWindow.Price:F2} SEK/kWh)");
     }
 
     // ─── Flexible Comfort Scheduling ──────────────────────────────────
@@ -915,7 +965,8 @@ public static class ScheduleAlgorithm
             [tomorrowName] = new SortedDictionary<TimeSpan, string>()
         };
 
-        bool ecoScheduled = ecoResult?.ScheduledHourUtc != null;
+        bool ecoScheduled = ecoResult?.ScheduledHourUtc != null &&
+            (ecoResult.State == "scheduled" || ecoResult.State == "rescheduled" || ecoResult.State == "already_scheduled" || ecoResult.State == "expired");
         bool comfortScheduled = comfortResult?.ScheduledHourUtc != null &&
             (comfortResult.State == "scheduled" || comfortResult.State == "rescheduled" || comfortResult.State == "already_scheduled");
 

@@ -34,6 +34,7 @@ public class FlexibleScheduleStateRepositoryTests : IDisposable
         Assert.Null(entity.LastEcoRunUtc);
         Assert.Null(entity.LastComfortRunUtc);
         Assert.Null(entity.NextScheduledComfortUtc);
+        Assert.Null(entity.NextScheduledEcoUtc);
 
         // Verify persisted
         var persisted = await _db.FlexibleScheduleStates.FindAsync("new-user");
@@ -96,6 +97,27 @@ public class FlexibleScheduleStateRepositoryTests : IDisposable
         var entity = await _db.FlexibleScheduleStates.FindAsync("user1");
         Assert.NotNull(entity);
         Assert.Equal(newTime, entity.LastEcoRunUtc);
+    }
+
+    [Fact]
+    public async Task UpdateEcoRunAsync_ClearsNextScheduledEco()
+    {
+        var pending = new DateTimeOffset(2026, 2, 25, 14, 0, 0, TimeSpan.Zero);
+        _db.FlexibleScheduleStates.Add(new FlexibleScheduleState
+        {
+            UserId = "user1",
+            NextScheduledEcoUtc = pending
+        });
+        await _db.SaveChangesAsync();
+
+        var repo = CreateRepo();
+        var runTime = new DateTimeOffset(2026, 2, 25, 14, 0, 0, TimeSpan.Zero);
+        await repo.UpdateEcoRunAsync("user1", runTime);
+
+        var entity = await _db.FlexibleScheduleStates.FindAsync("user1");
+        Assert.NotNull(entity);
+        Assert.Equal(runTime, entity.LastEcoRunUtc);
+        Assert.Null(entity.NextScheduledEcoUtc); // Cleared after actual run
     }
 
     #endregion
@@ -232,6 +254,104 @@ public class FlexibleScheduleStateRepositoryTests : IDisposable
         var entity = await _db.FlexibleScheduleStates.FindAsync("user1");
         Assert.NotNull(entity);
         Assert.Null(entity.NextScheduledComfortUtc);
+    }
+
+    #endregion
+
+    #region ScheduleEcoRunAsync
+
+    [Fact]
+    public async Task ScheduleEcoRunAsync_SetsNextScheduledEcoTime()
+    {
+        var repo = CreateRepo();
+        var scheduled = new DateTimeOffset(2026, 2, 25, 14, 0, 0, TimeSpan.Zero);
+
+        await repo.ScheduleEcoRunAsync("user1", scheduled);
+
+        var entity = await _db.FlexibleScheduleStates.FindAsync("user1");
+        Assert.NotNull(entity);
+        Assert.Equal(scheduled, entity.NextScheduledEcoUtc);
+        // LastEcoRunUtc should NOT be changed by ScheduleEcoRunAsync
+        Assert.Null(entity.LastEcoRunUtc);
+    }
+
+    [Fact]
+    public async Task ScheduleEcoRunAsync_UpdatesExistingSchedule()
+    {
+        var initial = new DateTimeOffset(2026, 2, 25, 14, 0, 0, TimeSpan.Zero);
+        _db.FlexibleScheduleStates.Add(new FlexibleScheduleState
+        {
+            UserId = "user1",
+            NextScheduledEcoUtc = initial
+        });
+        await _db.SaveChangesAsync();
+
+        var repo = CreateRepo();
+        var cheaper = new DateTimeOffset(2026, 2, 25, 11, 0, 0, TimeSpan.Zero);
+        await repo.ScheduleEcoRunAsync("user1", cheaper);
+
+        var entity = await _db.FlexibleScheduleStates.FindAsync("user1");
+        Assert.NotNull(entity);
+        Assert.Equal(cheaper, entity.NextScheduledEcoUtc);
+    }
+
+    [Fact]
+    public async Task ScheduleEcoRunAsync_DoesNotModifyLastEcoRunUtc()
+    {
+        var lastRun = new DateTimeOffset(2026, 2, 20, 8, 0, 0, TimeSpan.Zero);
+        _db.FlexibleScheduleStates.Add(new FlexibleScheduleState
+        {
+            UserId = "user1",
+            LastEcoRunUtc = lastRun
+        });
+        await _db.SaveChangesAsync();
+
+        var repo = CreateRepo();
+        var scheduled = new DateTimeOffset(2026, 2, 25, 14, 0, 0, TimeSpan.Zero);
+        await repo.ScheduleEcoRunAsync("user1", scheduled);
+
+        var entity = await _db.FlexibleScheduleStates.FindAsync("user1");
+        Assert.NotNull(entity);
+        Assert.Equal(scheduled, entity.NextScheduledEcoUtc);
+        // LastEcoRunUtc should remain unchanged
+        Assert.Equal(lastRun, entity.LastEcoRunUtc);
+    }
+
+    #endregion
+
+    #region ClearScheduledEcoAsync
+
+    [Fact]
+    public async Task ClearScheduledEcoAsync_ClearsExistingSchedule()
+    {
+        var pending = new DateTimeOffset(2026, 2, 25, 14, 0, 0, TimeSpan.Zero);
+        _db.FlexibleScheduleStates.Add(new FlexibleScheduleState
+        {
+            UserId = "user1",
+            NextScheduledEcoUtc = pending
+        });
+        await _db.SaveChangesAsync();
+
+        var repo = CreateRepo();
+        await repo.ClearScheduledEcoAsync("user1");
+
+        var entity = await _db.FlexibleScheduleStates.FindAsync("user1");
+        Assert.NotNull(entity);
+        Assert.Null(entity.NextScheduledEcoUtc);
+    }
+
+    [Fact]
+    public async Task ClearScheduledEcoAsync_NoopWhenNoSchedule()
+    {
+        _db.FlexibleScheduleStates.Add(new FlexibleScheduleState { UserId = "user1" });
+        await _db.SaveChangesAsync();
+
+        var repo = CreateRepo();
+        await repo.ClearScheduledEcoAsync("user1");
+
+        var entity = await _db.FlexibleScheduleStates.FindAsync("user1");
+        Assert.NotNull(entity);
+        Assert.Null(entity.NextScheduledEcoUtc);
     }
 
     #endregion

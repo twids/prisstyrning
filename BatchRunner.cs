@@ -119,6 +119,9 @@ internal class BatchRunner
         }
 
         // 3. Determine last run times (backdate on first run so the window is already open)
+        // lastEcoRun is the ACTUAL last eco run (LastEcoRunUtc), used as window anchor.
+        // NextScheduledEcoUtc (if set) is passed separately to detect pending eco runs.
+        // LastEcoRunUtc is only advanced once the pending eco actually passes (already_ran).
         var lastEcoRun = flexState.LastEcoRunUtc ?? now.AddHours(-settings.EcoIntervalHours);
         var lastComfortRun = flexState.LastComfortRunUtc ?? now.AddDays(-settings.ComfortIntervalDays);
 
@@ -128,6 +131,7 @@ internal class BatchRunner
             lastEcoRun,
             settings.EcoIntervalHours,
             settings.EcoFlexibilityHours,
+            nextScheduledEcoUtc: flexState.NextScheduledEcoUtc,
             nowOverride: now);
 
         Console.WriteLine($"[Batch/Flexible] Eco: state={ecoResult.State} scheduled={ecoResult.ScheduledHourUtc?.ToString("yyyy-MM-dd HH:00") ?? "none"}");
@@ -145,7 +149,16 @@ internal class BatchRunner
 
         Console.WriteLine($"[Batch/Flexible] Comfort: state={comfortResult.State} scheduled={comfortResult.ScheduledHourUtc?.ToString("yyyy-MM-dd HH:00") ?? "none"} progress={comfortResult.WindowProgress:P0}");
 
-        // 6. Handle comfort "already_ran" state: mark as completed
+        // 6a. Handle eco "already_ran" state: advance LastEcoRunUtc to the pending eco time
+        if (ecoResult.State == "already_ran" && flexState.NextScheduledEcoUtc.HasValue)
+        {
+            using var scope = scopeFactory.CreateScope();
+            var flexRepo = scope.ServiceProvider.GetRequiredService<FlexibleScheduleStateRepository>();
+            await flexRepo.UpdateEcoRunAsync(userId ?? "default", flexState.NextScheduledEcoUtc.Value);
+            Console.WriteLine($"[Batch/Flexible] Eco marked as completed at {flexState.NextScheduledEcoUtc.Value:yyyy-MM-dd HH:00}");
+        }
+
+        // 6b. Handle comfort "already_ran" state: mark as completed
         if (comfortResult.State == "already_ran" && flexState.NextScheduledComfortUtc.HasValue)
         {
             using var scope = scopeFactory.CreateScope();
@@ -171,19 +184,19 @@ internal class BatchRunner
             scheduleApplied = await ApplyScheduleToDaikinAsync(config, dynamicSchedulePayload, userId);
         }
 
-        // 9. Update state to advance the scheduling window (regardless of Daikin apply success).
-        // The state represents "we've decided on a schedule for this window" — if we don't advance,
-        // the next run will recalculate and overwrite whatever is on the device.
+        // 9. Persist scheduling state.
         if (persist)
         {
             using var scope = scopeFactory.CreateScope();
             var flexRepo = scope.ServiceProvider.GetRequiredService<FlexibleScheduleStateRepository>();
 
-            // If eco was scheduled or expired, update LastEcoRunUtc to advance the window
-            if ((ecoResult.State == "scheduled" || ecoResult.State == "expired") && ecoResult.ScheduledHourUtc.HasValue)
+            // If eco was newly scheduled or rescheduled, record the pending eco time.
+            // Do NOT call UpdateEcoRunAsync here — LastEcoRunUtc is only advanced when eco
+            // actually passes (state == "already_ran", handled above in step 6a).
+            if ((ecoResult.State == "scheduled" || ecoResult.State == "rescheduled" || ecoResult.State == "expired") && ecoResult.ScheduledHourUtc.HasValue)
             {
-                await flexRepo.UpdateEcoRunAsync(userId ?? "default", ecoResult.ScheduledHourUtc.Value);
-                Console.WriteLine($"[Batch/Flexible] Recorded scheduled eco hour at {ecoResult.ScheduledHourUtc.Value:yyyy-MM-dd HH:00}");
+                await flexRepo.ScheduleEcoRunAsync(userId ?? "default", ecoResult.ScheduledHourUtc.Value);
+                Console.WriteLine($"[Batch/Flexible] Recorded pending eco at {ecoResult.ScheduledHourUtc.Value:yyyy-MM-dd HH:00}");
             }
 
             // If comfort was scheduled or rescheduled, update NextScheduledComfortUtc
