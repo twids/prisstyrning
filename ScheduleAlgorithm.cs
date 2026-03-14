@@ -710,10 +710,28 @@ public static class ScheduleAlgorithm
                 }
             }
 
+            // No reschedule: keep existing pending eco and explain why
+            string alreadyScheduledReason;
+            if (candidates.Count == 0)
+            {
+                alreadyScheduledReason =
+                    $"Eco already scheduled at {nextScheduledEcoUtc.Value:HH:00} UTC, keeping existing pending eco; no comparable prices in window";
+            }
+            else if (scheduledPrice == null)
+            {
+                alreadyScheduledReason =
+                    $"Eco already scheduled at {nextScheduledEcoUtc.Value:HH:00} UTC, keeping existing pending eco; scheduled hour price not found in data";
+            }
+            else
+            {
+                alreadyScheduledReason =
+                    $"Eco already scheduled at {nextScheduledEcoUtc.Value:HH:00} UTC, still cheapest within eco window";
+            }
+
             return new FlexibleEcoResult(
                 nextScheduledEcoUtc.Value,
                 "already_scheduled",
-                $"Eco already scheduled at {nextScheduledEcoUtc.Value:HH:00} UTC, still cheapest");
+                alreadyScheduledReason);
         }
 
         // 4. No pending eco — schedule normally using the eco window
