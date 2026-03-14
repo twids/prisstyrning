@@ -487,4 +487,194 @@ public class FlexibleEcoAlgorithmTests
     }
 
     #endregion
+
+    #region NextScheduledEcoUtc — pending eco handling
+
+    [Fact]
+    public void GenerateFlexibleEco_PendingEcoInFuture_ReturnsAlreadyScheduled()
+    {
+        // Arrange: eco was scheduled for 14:00, batch runs again at 13:30.
+        // lastEcoRun = Feb 19 10:00, interval=24h, flex=4h
+        // → eco window = Feb 20 06:00 to Feb 20 14:00 (expired over 24h ago)
+        // Re-optimization finds no candidates in the long-expired window → "already_scheduled"
+        // Expected: pending eco preserved even though its origin window has long expired.
+        var lastEcoRun = new DateTimeOffset(2026, 2, 19, 10, 0, 0, TimeSpan.Zero);
+        var nextScheduledEco = new DateTimeOffset(2026, 2, 21, 14, 0, 0, TimeSpan.Zero);
+        var now = new DateTimeOffset(2026, 2, 21, 13, 30, 0, TimeSpan.Zero); // 30 min before eco
+
+        // Today prices: 14:00 is affordable, nothing cheaper in the window (window expired)
+        var todayStart = new DateTimeOffset(2026, 2, 21, 0, 0, 0, TimeSpan.Zero);
+        var rawToday = CreatePriceArray(todayStart,
+            0.50m, 0.40m, 0.30m, 0.20m, 0.10m, 0.15m, 0.25m, 0.35m,
+            0.45m, 0.55m, 0.65m, 0.75m, 0.85m, 0.95m, 0.20m, 1.15m,
+            1.25m, 1.35m, 1.45m, 1.55m, 1.65m, 1.75m, 1.85m, 1.95m);
+
+        // Act
+        var result = ScheduleAlgorithm.GenerateFlexibleEco(
+            rawToday: rawToday,
+            rawTomorrow: null,
+            lastEcoRun: lastEcoRun,
+            intervalHours: 24,
+            flexibilityHours: 4,
+            nextScheduledEcoUtc: nextScheduledEco,
+            nowOverride: now);
+
+        // Assert: already scheduled at 14:00, still cheapest
+        Assert.Equal("already_scheduled", result.State);
+        Assert.Equal(nextScheduledEco, result.ScheduledHourUtc);
+        Assert.Contains("already scheduled", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void GenerateFlexibleEco_PendingEcoInFuture_CheaperHourExists_ReturnsRescheduled()
+    {
+        // Arrange: eco window is OPEN (window includes hours around now and 14:00).
+        // nextScheduledEco = 14:00, but 11:00 is cheaper and still in the window.
+        // lastEcoRun = Feb 20 10:00, interval=24h, flex=8h
+        // → windowStart = Feb 21 02:00, windowEnd = Feb 21 18:00
+        // now = Feb 21 10:00 (inside window), nextScheduledEco = Feb 21 14:00 (also inside window)
+        var lastEcoRun = new DateTimeOffset(2026, 2, 20, 10, 0, 0, TimeSpan.Zero);
+        var nextScheduledEco = new DateTimeOffset(2026, 2, 21, 14, 0, 0, TimeSpan.Zero);
+        var now = new DateTimeOffset(2026, 2, 21, 10, 0, 0, TimeSpan.Zero);
+
+        // Feb 21 prices: 11:00 is very cheap (0.05), 14:00 is 0.20, both in window [10:00, 18:00)
+        var todayStart = new DateTimeOffset(2026, 2, 21, 0, 0, 0, TimeSpan.Zero);
+        var rawToday = CreatePriceArray(todayStart,
+            0.50m, 0.40m, 0.30m, 0.20m, 0.10m, 0.15m, 0.25m, 0.35m,
+            0.45m, 0.55m, 0.65m, 0.05m, 0.85m, 0.95m, 0.20m, 1.15m,
+            1.25m, 1.35m, 1.45m, 1.55m, 1.65m, 1.75m, 1.85m, 1.95m);
+        // Index 11 = 11:00 (0.05), Index 14 = 14:00 (0.20)
+
+        // Act
+        var result = ScheduleAlgorithm.GenerateFlexibleEco(
+            rawToday: rawToday,
+            rawTomorrow: null,
+            lastEcoRun: lastEcoRun,
+            intervalHours: 24,
+            flexibilityHours: 8,
+            nextScheduledEcoUtc: nextScheduledEco,
+            nowOverride: now);
+
+        // Assert: rescheduled to cheaper hour (11:00)
+        Assert.Equal("rescheduled", result.State);
+        Assert.NotNull(result.ScheduledHourUtc);
+        Assert.Equal(11, result.ScheduledHourUtc!.Value.Hour);
+        Assert.Contains("rescheduled", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void GenerateFlexibleEco_PendingEcoInPast_ReturnsAlreadyRan()
+    {
+        // Arrange: eco was scheduled for 14:00, batch runs at 14:30 (eco has run)
+        var lastEcoRun = new DateTimeOffset(2026, 2, 19, 10, 0, 0, TimeSpan.Zero);
+        var nextScheduledEco = new DateTimeOffset(2026, 2, 21, 14, 0, 0, TimeSpan.Zero);
+        var now = new DateTimeOffset(2026, 2, 21, 14, 30, 0, TimeSpan.Zero); // 30 min after eco
+
+        var todayStart = new DateTimeOffset(2026, 2, 21, 0, 0, 0, TimeSpan.Zero);
+        var rawToday = CreatePriceArray(todayStart,
+            0.50m, 0.40m, 0.30m, 0.20m, 0.10m, 0.15m, 0.25m, 0.35m,
+            0.45m, 0.55m, 0.65m, 0.75m, 0.85m, 0.95m, 0.20m, 1.15m,
+            1.25m, 1.35m, 1.45m, 1.55m, 1.65m, 1.75m, 1.85m, 1.95m);
+
+        // Act
+        var result = ScheduleAlgorithm.GenerateFlexibleEco(
+            rawToday: rawToday,
+            rawTomorrow: null,
+            lastEcoRun: lastEcoRun,
+            intervalHours: 24,
+            flexibilityHours: 4,
+            nextScheduledEcoUtc: nextScheduledEco,
+            nowOverride: now);
+
+        // Assert: already_ran — eco time has passed
+        Assert.Equal("already_ran", result.State);
+        Assert.Equal(nextScheduledEco, result.ScheduledHourUtc);
+        Assert.Contains("already ran", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void GenerateFlexibleEco_PendingEcoExactlyNow_ReturnsAlreadyRan()
+    {
+        // Edge case: nextScheduledEcoUtc == now (boundary: <= now → already_ran)
+        var lastEcoRun = new DateTimeOffset(2026, 2, 19, 10, 0, 0, TimeSpan.Zero);
+        var now = new DateTimeOffset(2026, 2, 21, 14, 0, 0, TimeSpan.Zero);
+        var nextScheduledEco = now; // exactly equal
+
+        var todayStart = new DateTimeOffset(2026, 2, 21, 0, 0, 0, TimeSpan.Zero);
+        var rawToday = CreatePriceArray(todayStart,
+            0.50m, 0.40m, 0.30m, 0.20m, 0.10m, 0.15m, 0.25m, 0.35m,
+            0.45m, 0.55m, 0.65m, 0.75m, 0.85m, 0.95m, 0.20m, 1.15m,
+            1.25m, 1.35m, 1.45m, 1.55m, 1.65m, 1.75m, 1.85m, 1.95m);
+
+        var result = ScheduleAlgorithm.GenerateFlexibleEco(
+            rawToday: rawToday,
+            rawTomorrow: null,
+            lastEcoRun: lastEcoRun,
+            intervalHours: 24,
+            flexibilityHours: 4,
+            nextScheduledEcoUtc: nextScheduledEco,
+            nowOverride: now);
+
+        Assert.Equal("already_ran", result.State);
+        Assert.Equal(nextScheduledEco, result.ScheduledHourUtc);
+    }
+
+    [Fact]
+    public void GenerateFlexibleEco_PendingEcoInFuture_NoCandidatesInWindow_KeepsPending()
+    {
+        // Arrange: eco scheduled for tomorrow at 10:00, batch runs today, no prices in next window
+        // This tests that the algorithm keeps the pending eco when no cheaper candidates exist
+        var lastEcoRun = new DateTimeOffset(2026, 2, 19, 10, 0, 0, TimeSpan.Zero);
+        var nextScheduledEco = new DateTimeOffset(2026, 2, 21, 14, 0, 0, TimeSpan.Zero);
+        var now = new DateTimeOffset(2026, 2, 21, 10, 0, 0, TimeSpan.Zero);
+
+        // No prices available
+        var result = ScheduleAlgorithm.GenerateFlexibleEco(
+            rawToday: null,
+            rawTomorrow: null,
+            lastEcoRun: lastEcoRun,
+            intervalHours: 24,
+            flexibilityHours: 4,
+            nextScheduledEcoUtc: nextScheduledEco,
+            nowOverride: now);
+
+        // When no prices are available for re-optimization, keep the current pending eco
+        Assert.Equal("already_scheduled", result.State);
+        Assert.Equal(nextScheduledEco, result.ScheduledHourUtc);
+    }
+
+    [Fact]
+    public void GenerateFlexibleEco_NoPendingEco_NormalScheduling()
+    {
+        // Arrange: no pending eco, window is open, should schedule normally
+        var lastEcoRun = new DateTimeOffset(2026, 2, 20, 10, 0, 0, TimeSpan.Zero);
+        var now = new DateTimeOffset(2026, 2, 21, 10, 0, 0, TimeSpan.Zero);
+        // Window: [20+16=Feb 22 02:00, 20+28=Feb 22 14:00] — wait, interval=24h, flex=4h
+        // Window: [Feb 20+20h=Feb 21 06:00, Feb 20+28h=Feb 21 14:00]
+        // now=10:00 is inside window [06:00, 14:00]
+
+        var todayStart = new DateTimeOffset(2026, 2, 21, 0, 0, 0, TimeSpan.Zero);
+        var rawToday = CreatePriceArray(todayStart,
+            0.50m, 0.40m, 0.30m, 0.20m, 0.10m, 0.15m, 0.25m, 0.35m,
+            0.45m, 0.55m, 0.65m, 0.75m, 0.85m, 0.95m, 0.03m, 1.15m,
+            1.25m, 1.35m, 1.45m, 1.55m, 1.65m, 1.75m, 1.85m, 1.95m);
+        // Cheapest future hour inside window [10:00, 14:00): index 10=10:00 (0.65), 11=11:00 (0.75),
+        // 12=12:00 (0.85), 13=13:00 (0.95) → cheapest = 10:00 (0.65)
+
+        var result = ScheduleAlgorithm.GenerateFlexibleEco(
+            rawToday: rawToday,
+            rawTomorrow: null,
+            lastEcoRun: lastEcoRun,
+            intervalHours: 24,
+            flexibilityHours: 4,
+            nextScheduledEcoUtc: null,
+            nowOverride: now);
+
+        // Assert: normal scheduling, cheapest future hour in window
+        Assert.Equal("scheduled", result.State);
+        Assert.NotNull(result.ScheduledHourUtc);
+        Assert.Equal(10, result.ScheduledHourUtc!.Value.Hour); // 10:00 is cheapest in [10:00, 14:00)
+    }
+
+    #endregion
 }

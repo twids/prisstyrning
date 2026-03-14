@@ -30,6 +30,8 @@ public class FlexibleScheduleStateRepository
     {
         var entity = await GetOrCreateAsync(userId);
         entity.LastEcoRunUtc = ToUtc(runTime);
+        // Clear the pending scheduled eco since it has now run
+        entity.NextScheduledEcoUtc = null;
         await _db.SaveChangesAsync();
     }
 
@@ -62,6 +64,31 @@ public class FlexibleScheduleStateRepository
     {
         var entity = await GetOrCreateAsync(userId);
         entity.NextScheduledComfortUtc = null;
+        await _db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Schedule or reschedule a future eco run.
+    /// Called each batch cycle to set (or update) when eco will run.
+    /// If new price data reveals a cheaper hour, this is called again
+    /// with the new time — effectively postponing to the better price.
+    /// LastEcoRunUtc is NOT updated here; it is only advanced when the
+    /// eco hour actually passes (state == "already_ran").
+    /// </summary>
+    public async Task ScheduleEcoRunAsync(string userId, DateTimeOffset scheduledTime)
+    {
+        var entity = await GetOrCreateAsync(userId);
+        entity.NextScheduledEcoUtc = ToUtc(scheduledTime);
+        await _db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Clear any pending scheduled eco run (e.g., when switching modes).
+    /// </summary>
+    public async Task ClearScheduledEcoAsync(string userId)
+    {
+        var entity = await GetOrCreateAsync(userId);
+        entity.NextScheduledEcoUtc = null;
         await _db.SaveChangesAsync();
     }
 }

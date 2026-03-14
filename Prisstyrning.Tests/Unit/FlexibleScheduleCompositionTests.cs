@@ -245,4 +245,65 @@ public class FlexibleScheduleCompositionTests
         Assert.NotNull(parsed);
         Assert.Equal("eco", parsed!["0"]!["actions"]!["monday"]!["06:00:00"]!["domesticHotWaterTemperature"]!.ToString());
     }
+
+    [Fact]
+    public void ComposeFlexibleSchedule_EcoAlreadyRan_ExcludesEcoFromPayload()
+    {
+        // When eco state is "already_ran", the eco hour has passed and should NOT
+        // be included in the schedule payload (prevent re-triggering a past hour).
+        var now = new DateTimeOffset(2026, 2, 25, 14, 30, 0, TimeSpan.Zero); // Wednesday 14:30
+        var ecoResult = new ScheduleAlgorithm.FlexibleEcoResult(
+            ScheduledHourUtc: new DateTimeOffset(2026, 2, 25, 14, 0, 0, TimeSpan.Zero), // 14:00, in the past
+            State: "already_ran",
+            Message: "Eco already ran at 14:00");
+
+        var (payload, message) = ScheduleAlgorithm.ComposeFlexibleSchedule(ecoResult, null, now);
+
+        Assert.NotNull(payload);
+        // Wednesday should have NO eco actions (eco was in the past)
+        var todayActions = GetDayActions(payload, "wednesday");
+        Assert.Null(GetStateAtTime(todayActions, "14:00:00"));
+        // Message should reflect the eco state
+        Assert.Contains("already_ran", message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ComposeFlexibleSchedule_EcoAlreadyScheduled_IncludesEcoInPayload()
+    {
+        // When eco state is "already_scheduled", the pending eco is still in the future
+        // and MUST be included in the payload to preserve it on the Daikin device.
+        var now = new DateTimeOffset(2026, 2, 25, 10, 0, 0, TimeSpan.Zero); // Wednesday 10:00
+        var ecoResult = new ScheduleAlgorithm.FlexibleEcoResult(
+            ScheduledHourUtc: new DateTimeOffset(2026, 2, 25, 14, 0, 0, TimeSpan.Zero), // 14:00, still future
+            State: "already_scheduled",
+            Message: "Eco already scheduled at 14:00, still cheapest");
+
+        var (payload, message) = ScheduleAlgorithm.ComposeFlexibleSchedule(ecoResult, null, now);
+
+        Assert.NotNull(payload);
+        var todayActions = GetDayActions(payload, "wednesday");
+        Assert.NotNull(todayActions);
+        Assert.Equal("eco", GetStateAtTime(todayActions, "14:00:00"));
+        Assert.Contains("Eco", message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ComposeFlexibleSchedule_EcoRescheduled_UsesNewHour()
+    {
+        // When eco is rescheduled to a cheaper hour, the new hour should appear in the payload.
+        var now = new DateTimeOffset(2026, 2, 25, 10, 0, 0, TimeSpan.Zero); // Wednesday 10:00
+        var ecoResult = new ScheduleAlgorithm.FlexibleEcoResult(
+            ScheduledHourUtc: new DateTimeOffset(2026, 2, 25, 11, 0, 0, TimeSpan.Zero), // rescheduled to 11:00
+            State: "rescheduled",
+            Message: "Rescheduled eco to 11:00");
+
+        var (payload, message) = ScheduleAlgorithm.ComposeFlexibleSchedule(ecoResult, null, now);
+
+        Assert.NotNull(payload);
+        var todayActions = GetDayActions(payload, "wednesday");
+        Assert.NotNull(todayActions);
+        Assert.Equal("eco", GetStateAtTime(todayActions, "11:00:00"));
+        Assert.Null(GetStateAtTime(todayActions, "14:00:00")); // old hour not present
+    }
 }
+
