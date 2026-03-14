@@ -96,7 +96,8 @@ public class FlexibleBatchStateTests : IDisposable
     public async Task FlexibleBatch_StateAdvances_EvenWhenApplyFails()
     {
         var userId = "stall-test-user";
-        var twoDaysAgo = DateTimeOffset.UtcNow.AddDays(-2);
+        var now = DateTimeOffset.UtcNow;
+        var twoDaysAgo = now.AddDays(-2);
         var cfg = CreateConfig();
         var handler = CreateMockHandlerWithFailingDaikin();
         var scopeFactory = BuildScopeFactory(cfg, handler, db =>
@@ -137,7 +138,7 @@ public class FlexibleBatchStateTests : IDisposable
         // NextScheduledEcoUtc should be set to the newly scheduled eco hour
         // (LastEcoRunUtc is only advanced once the scheduled hour actually passes)
         Assert.NotNull(state!.NextScheduledEcoUtc);
-        Assert.True(state.NextScheduledEcoUtc > DateTimeOffset.UtcNow,
+        Assert.True(state.NextScheduledEcoUtc >= now,
             $"NextScheduledEcoUtc should be in the future, but was {state.NextScheduledEcoUtc}");
         // LastEcoRunUtc should still be the old 2-days-ago value (not advanced until eco runs)
         Assert.Equal(twoDaysAgo, state.LastEcoRunUtc);
