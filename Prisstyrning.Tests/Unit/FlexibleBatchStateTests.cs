@@ -225,11 +225,7 @@ public class FlexibleBatchStateTests : IDisposable
         var twoDaysAgo = DateTimeOffset.UtcNow.AddDays(-2);
         var cfg = CreateConfig();
 
-        // Prices: hour 0 is cheapest (0.10), rest are expensive
-        var prices = new decimal[24];
-        for (int h = 0; h < 24; h++) prices[h] = 0.50m + (h * 0.02m);
-
-        var handler = CreateMockHandlerWithPrices(prices);
+        var handler = CreateMockHandlerWithPrices();
         var scopeFactory = BuildScopeFactory(cfg, handler, db =>
         {
             db.UserSettings.Add(new UserSettings

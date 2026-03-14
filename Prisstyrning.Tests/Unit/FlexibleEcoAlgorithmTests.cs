@@ -494,10 +494,10 @@ public class FlexibleEcoAlgorithmTests
     public void GenerateFlexibleEco_PendingEcoInFuture_ReturnsAlreadyScheduled()
     {
         // Arrange: eco was scheduled for 14:00, batch runs again at 13:30.
-        // The eco window is already in the past (expired), so re-optimization finds no candidates.
-        // Expected: "already_scheduled" — pending eco preserved.
         // lastEcoRun = Feb 19 10:00, interval=24h, flex=4h
-        // → windowStart = Feb 20 06:00, windowEnd = Feb 20 14:00 (both in the past)
+        // → eco window = Feb 20 06:00 to Feb 20 14:00 (expired over 24h ago)
+        // Re-optimization finds no candidates in the long-expired window → "already_scheduled"
+        // Expected: pending eco preserved even though its origin window has long expired.
         var lastEcoRun = new DateTimeOffset(2026, 2, 19, 10, 0, 0, TimeSpan.Zero);
         var nextScheduledEco = new DateTimeOffset(2026, 2, 21, 14, 0, 0, TimeSpan.Zero);
         var now = new DateTimeOffset(2026, 2, 21, 13, 30, 0, TimeSpan.Zero); // 30 min before eco

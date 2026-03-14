@@ -965,6 +965,10 @@ public static class ScheduleAlgorithm
             [tomorrowName] = new SortedDictionary<TimeSpan, string>()
         };
 
+        // Eco is included in the payload for all states where the scheduled hour is in the future.
+        // "already_ran" is excluded (the hour has passed, no point re-triggering it).
+        // Note: BatchRunner.persist block uses a different (smaller) set of states to decide when
+        // to update NextScheduledEcoUtc — "already_scheduled" doesn't need a DB update.
         bool ecoScheduled = ecoResult?.ScheduledHourUtc != null &&
             (ecoResult.State == "scheduled" || ecoResult.State == "rescheduled" || ecoResult.State == "already_scheduled" || ecoResult.State == "expired");
         bool comfortScheduled = comfortResult?.ScheduledHourUtc != null &&
