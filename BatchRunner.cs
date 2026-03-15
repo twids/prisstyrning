@@ -37,9 +37,10 @@ internal class BatchRunner
         {
             return TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
         }
-        catch
+        catch (Exception ex)
         {
-            return TimeZoneInfo.Local;
+            Console.Error.WriteLine($"[BatchRunner] Failed to resolve time zone '{timeZoneId}' for Nordpool zone '{zone}': {ex.Message}. Falling back to UTC.");
+            return TimeZoneInfo.Utc;
         }
     }
 
