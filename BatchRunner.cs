@@ -140,7 +140,7 @@ internal class BatchRunner
             var settingsRepo = scope.ServiceProvider.GetRequiredService<UserSettingsRepository>();
 
             flexState = await flexRepo.GetOrCreateAsync(userId ?? "default");
-            zone2 = await settingsRepo.GetUserZoneAsync(userId);
+            zone2 = (await settingsRepo.GetUserZoneAsync(userId))?.Trim().ToUpperInvariant() ?? "SE3";
             histStats = await HistoricalPriceAnalyzer.GetHistoricalStatsAsync(
                 priceRepo, zone2, settings.ComfortEarlyPercentile);
         }
