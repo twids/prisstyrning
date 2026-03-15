@@ -20,6 +20,49 @@ internal class BatchRunner
         _daikinOAuthService = daikinOAuthService ?? throw new ArgumentNullException(nameof(daikinOAuthService));
     }
 
+    private static TimeZoneInfo ResolveTimeZoneForNordpoolZone(string? zone)
+    {
+        zone = string.IsNullOrWhiteSpace(zone) ? "SE3" : zone.Trim().ToUpperInvariant();
+
+        // Map Nordpool zone to a logical region first (CET/CEST vs EET/EEST),
+        // then choose a platform-appropriate time zone ID for that region.
+        string timeZoneId;
+
+        bool isNordicWest = zone.StartsWith("SE", StringComparison.Ordinal) ||
+                             zone.StartsWith("NO", StringComparison.Ordinal) ||
+                             zone.StartsWith("DK", StringComparison.Ordinal);
+
+        bool isNordicEast = zone is "FI" or "EE" or "LV" or "LT";
+
+        if (OperatingSystem.IsWindows())
+        {
+            // Windows time zone IDs
+            timeZoneId = isNordicEast ? "FLE Standard Time" : "W. Europe Standard Time";
+        }
+        else
+        {
+            // IANA time zone IDs (Linux/macOS, containers, etc.)
+            timeZoneId = zone switch
+            {
+                var z when z.StartsWith("SE", StringComparison.Ordinal) => "Europe/Stockholm",
+                var z when z.StartsWith("NO", StringComparison.Ordinal) => "Europe/Oslo",
+                var z when z.StartsWith("DK", StringComparison.Ordinal) => "Europe/Copenhagen",
+                "FI" or "EE" or "LV" or "LT" => "Europe/Helsinki",
+                _ => "Europe/Stockholm"
+            };
+        }
+
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[BatchRunner] Failed to resolve time zone '{timeZoneId}' for Nordpool zone '{zone}': {ex.Message}. Falling back to UTC.");
+            return TimeZoneInfo.Utc;
+        }
+    }
+
     public async Task<object> GenerateSchedulePreview(IConfiguration config, IServiceScopeFactory? scopeFactory = null)
     {
         var res = await RunBatchAsync(config, null, applySchedule:false, persist:false, scopeFactory);
@@ -86,23 +129,7 @@ internal class BatchRunner
         var now = DateTimeOffset.UtcNow;
         Console.WriteLine($"[Batch/Flexible] Start userId={userId ?? "anon"} mode=Flexible");
 
-        // 1. Fetch prices (same as classic path)
-        JsonArray? rawToday = null; JsonArray? rawTomorrow = null;
-        try
-        {
-            var zone = config["Price:Nordpool:DefaultZone"] ?? "SE3";
-            var currency = config["Price:Nordpool:Currency"] ?? "SEK";
-            var np = new NordpoolClient(_httpClientFactory.CreateClient("Nordpool"), currency);
-            var fetched = await np.GetTodayTomorrowAsync(zone);
-            rawToday = fetched.today; rawTomorrow = fetched.tomorrow;
-            PriceMemory.Set(rawToday, rawTomorrow);
-        }
-        catch (Exception ex)
-        {
-            return (false, null, $"Nordpool error: {ex.Message}");
-        }
-
-        // 2. Load flexible schedule state and historical price stats
+        // 1. Load flexible schedule state and historical price stats
         FlexibleScheduleState flexState;
         HistoricalPriceAnalyzer.HistoricalPriceStats histStats;
         string zone2;
@@ -118,12 +145,32 @@ internal class BatchRunner
                 priceRepo, zone2, settings.ComfortEarlyPercentile);
         }
 
+        var scheduleTimeZone = ResolveTimeZoneForNordpoolZone(zone2);
+
+        // 2. Fetch prices in user's Nordpool zone timezone
+        JsonArray? rawToday = null; JsonArray? rawTomorrow = null;
+        try
+        {
+            var currency = config["Price:Nordpool:Currency"] ?? "SEK";
+            var np = new NordpoolClient(_httpClientFactory.CreateClient("Nordpool"), currency);
+            var fetched = await np.GetTodayTomorrowAsync(zone2, scheduleTimeZone);
+            rawToday = fetched.today; rawTomorrow = fetched.tomorrow;
+            PriceMemory.Set(rawToday, rawTomorrow);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[BatchRunner] Nordpool price fetch failed: {ex}");
+            return (false, null, "Failed to fetch price data from Nordpool. Please try again later.");
+        }
+
         // 3. Determine last run times (backdate on first run so the window is already open)
         // lastEcoRun is the ACTUAL last eco run (LastEcoRunUtc), used as window anchor.
         // NextScheduledEcoUtc (if set) is passed separately to detect pending eco runs.
         // LastEcoRunUtc is only advanced once the pending eco actually passes (already_ran).
         var lastEcoRun = flexState.LastEcoRunUtc ?? now.AddHours(-settings.EcoIntervalHours);
         var lastComfortRun = flexState.LastComfortRunUtc ?? now.AddDays(-settings.ComfortIntervalDays);
+        var nextScheduledEco = flexState.NextScheduledEcoUtc;
+        var nextScheduledComfort = flexState.NextScheduledComfortUtc;
 
         // 4. Run flexible eco algorithm
         var ecoResult = ScheduleAlgorithm.GenerateFlexibleEco(
@@ -131,7 +178,7 @@ internal class BatchRunner
             lastEcoRun,
             settings.EcoIntervalHours,
             settings.EcoFlexibilityHours,
-            nextScheduledEcoUtc: flexState.NextScheduledEcoUtc,
+            nextScheduledEcoUtc: nextScheduledEco,
             nowOverride: now);
 
         Console.WriteLine($"[Batch/Flexible] Eco: state={ecoResult.State} scheduled={ecoResult.ScheduledHourUtc?.ToString("yyyy-MM-dd HH:00") ?? "none"}");
@@ -144,33 +191,60 @@ internal class BatchRunner
             settings.ComfortFlexibilityDays,
             histStats.PercentileThreshold,
             histStats.MaxPrice,
-            flexState.NextScheduledComfortUtc,
+            nextScheduledComfort,
             nowOverride: now);
 
         Console.WriteLine($"[Batch/Flexible] Comfort: state={comfortResult.State} scheduled={comfortResult.ScheduledHourUtc?.ToString("yyyy-MM-dd HH:00") ?? "none"} progress={comfortResult.WindowProgress:P0}");
 
-        // 6a. Handle eco "already_ran" state: advance LastEcoRunUtc to the pending eco time
-        if (ecoResult.State == "already_ran" && flexState.NextScheduledEcoUtc.HasValue)
+        // 6a. Handle eco "already_ran" state: advance LastEcoRunUtc to the pending eco time,
+        // then immediately compute next eco schedule in same batch run.
+        if (ecoResult.State == "already_ran" && nextScheduledEco.HasValue)
         {
             using var scope = scopeFactory.CreateScope();
             var flexRepo = scope.ServiceProvider.GetRequiredService<FlexibleScheduleStateRepository>();
-            await flexRepo.UpdateEcoRunAsync(userId ?? "default", flexState.NextScheduledEcoUtc.Value);
-            Console.WriteLine($"[Batch/Flexible] Eco marked as completed at {flexState.NextScheduledEcoUtc.Value:yyyy-MM-dd HH:00}");
+            await flexRepo.UpdateEcoRunAsync(userId ?? "default", nextScheduledEco.Value);
+            Console.WriteLine($"[Batch/Flexible] Eco marked as completed at {nextScheduledEco.Value:yyyy-MM-dd HH:00}");
+
+            lastEcoRun = nextScheduledEco.Value;
+            nextScheduledEco = null;
+            ecoResult = ScheduleAlgorithm.GenerateFlexibleEco(
+                rawToday, rawTomorrow,
+                lastEcoRun,
+                settings.EcoIntervalHours,
+                settings.EcoFlexibilityHours,
+                nextScheduledEcoUtc: nextScheduledEco,
+                nowOverride: now);
+            Console.WriteLine($"[Batch/Flexible] Eco recomputed after completion: state={ecoResult.State} scheduled={ecoResult.ScheduledHourUtc?.ToString("yyyy-MM-dd HH:00") ?? "none"}");
         }
 
-        // 6b. Handle comfort "already_ran" state: mark as completed
-        if (comfortResult.State == "already_ran" && flexState.NextScheduledComfortUtc.HasValue)
+        // 6b. Handle comfort "already_ran" state: mark as completed,
+        // then immediately compute next comfort schedule in same batch run.
+        if (comfortResult.State == "already_ran" && nextScheduledComfort.HasValue)
         {
             using var scope = scopeFactory.CreateScope();
             var flexRepo = scope.ServiceProvider.GetRequiredService<FlexibleScheduleStateRepository>();
-            await flexRepo.UpdateComfortRunAsync(userId ?? "default", flexState.NextScheduledComfortUtc.Value);
-            Console.WriteLine($"[Batch/Flexible] Comfort marked as completed at {flexState.NextScheduledComfortUtc.Value:yyyy-MM-dd HH:00}");
+            await flexRepo.UpdateComfortRunAsync(userId ?? "default", nextScheduledComfort.Value);
+            Console.WriteLine($"[Batch/Flexible] Comfort marked as completed at {nextScheduledComfort.Value:yyyy-MM-dd HH:00}");
+
+            lastComfortRun = nextScheduledComfort.Value;
+            nextScheduledComfort = null;
+            comfortResult = ScheduleAlgorithm.GenerateFlexibleComfort(
+                rawToday, rawTomorrow,
+                lastComfortRun,
+                settings.ComfortIntervalDays,
+                settings.ComfortFlexibilityDays,
+                histStats.PercentileThreshold,
+                histStats.MaxPrice,
+                nextScheduledComfort,
+                nowOverride: now);
+            Console.WriteLine($"[Batch/Flexible] Comfort recomputed after completion: state={comfortResult.State} scheduled={comfortResult.ScheduledHourUtc?.ToString("yyyy-MM-dd HH:00") ?? "none"} progress={comfortResult.WindowProgress:P0}");
         }
 
         // 7. Compose flexible schedule
-        var (schedulePayload, composeMessage) = ScheduleAlgorithm.ComposeFlexibleSchedule(ecoResult, comfortResult, now);
+        var (schedulePayload, composeMessage) = ScheduleAlgorithm.ComposeFlexibleSchedule(ecoResult, comfortResult, now, scheduleTimeZone);
         if (schedulePayload == null)
         {
+            Console.WriteLine($"[Batch/Flexible] No schedulable actions for {zone2} ({scheduleTimeZone.Id}) - state eco={ecoResult.State} comfort={comfortResult.State}");
             return (false, null, composeMessage);
         }
 

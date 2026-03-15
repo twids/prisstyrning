@@ -968,9 +968,12 @@ public static class ScheduleAlgorithm
     public static (JsonNode? schedulePayload, string message) ComposeFlexibleSchedule(
         FlexibleEcoResult? ecoResult,
         FlexibleComfortResult? comfortResult,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        TimeZoneInfo? scheduleTimeZone = null)
     {
-        var todayDate = now.Date;
+        var timeZone = scheduleTimeZone ?? TimeZoneInfo.Utc;
+        var localNow = TimeZoneInfo.ConvertTime(now, timeZone);
+        var todayDate = localNow.Date;
         var tomorrowDate = todayDate.AddDays(1);
         var todayName = todayDate.DayOfWeek.ToString().ToLowerInvariant();
         var tomorrowName = tomorrowDate.DayOfWeek.ToString().ToLowerInvariant();
@@ -995,9 +998,10 @@ public static class ScheduleAlgorithm
         // Add eco transitions
         if (ecoScheduled)
         {
-            var ecoHour = ecoResult!.ScheduledHourUtc!.Value;
-            var dayName = ecoHour.Date == todayDate ? todayName : tomorrowName;
-            var time = new TimeSpan(ecoHour.Hour, 0, 0);
+            var ecoHourUtc = ecoResult!.ScheduledHourUtc!.Value;
+            var ecoHourLocal = TimeZoneInfo.ConvertTime(ecoHourUtc, timeZone);
+            var dayName = ecoHourLocal.Date == todayDate ? todayName : tomorrowName;
+            var time = new TimeSpan(ecoHourLocal.Hour, 0, 0);
 
             if (dayActions.ContainsKey(dayName))
             {
@@ -1008,9 +1012,10 @@ public static class ScheduleAlgorithm
         // Add comfort transitions (comfort takes priority over eco on same hour)
         if (comfortScheduled)
         {
-            var comfortHour = comfortResult!.ScheduledHourUtc!.Value;
-            var dayName = comfortHour.Date == todayDate ? todayName : tomorrowName;
-            var time = new TimeSpan(comfortHour.Hour, 0, 0);
+            var comfortHourUtc = comfortResult!.ScheduledHourUtc!.Value;
+            var comfortHourLocal = TimeZoneInfo.ConvertTime(comfortHourUtc, timeZone);
+            var dayName = comfortHourLocal.Date == todayDate ? todayName : tomorrowName;
+            var time = new TimeSpan(comfortHourLocal.Hour, 0, 0);
 
             if (dayActions.ContainsKey(dayName))
             {
@@ -1031,8 +1036,6 @@ public static class ScheduleAlgorithm
             actionsCombined[dayName] = dayObj;
         }
 
-        var root = new JsonObject { ["0"] = new JsonObject { ["actions"] = actionsCombined } };
-
         // Build message
         var parts = new List<string>();
         if (ecoScheduled)
@@ -1049,6 +1052,12 @@ public static class ScheduleAlgorithm
             parts.Add("No eco or comfort scheduled");
 
         var message = string.Join(" | ", parts);
+
+        var totalActions = dayActions.Sum(kvp => kvp.Value.Count);
+        if (totalActions == 0)
+            return (null, message);
+
+        var root = new JsonObject { ["0"] = new JsonObject { ["actions"] = actionsCombined } };
         return (root, message);
     }
 
