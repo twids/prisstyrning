@@ -139,7 +139,8 @@ internal class BatchRunner
         }
         catch (Exception ex)
         {
-            return (false, null, $"Nordpool error: {ex.Message}");
+            Console.Error.WriteLine($"[BatchRunner] Nordpool price fetch failed: {ex}");
+            return (false, null, "Failed to fetch price data from Nordpool. Please try again later.");
         }
 
         // 3. Determine last run times (backdate on first run so the window is already open)
