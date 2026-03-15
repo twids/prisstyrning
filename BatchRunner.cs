@@ -24,14 +24,33 @@ internal class BatchRunner
     {
         zone = string.IsNullOrWhiteSpace(zone) ? "SE3" : zone.Trim().ToUpperInvariant();
 
-        string timeZoneId = zone switch
+        // Map Nordpool zone to a logical region first (CET/CEST vs EET/EEST),
+        // then choose a platform-appropriate time zone ID for that region.
+        string timeZoneId;
+
+        bool isNordicWest = zone.StartsWith("SE", StringComparison.Ordinal) ||
+                             zone.StartsWith("NO", StringComparison.Ordinal) ||
+                             zone.StartsWith("DK", StringComparison.Ordinal);
+
+        bool isNordicEast = zone is "FI" or "EE" or "LV" or "LT";
+
+        if (OperatingSystem.IsWindows())
         {
-            var z when z.StartsWith("SE") => "Europe/Stockholm",
-            var z when z.StartsWith("NO") => "Europe/Oslo",
-            var z when z.StartsWith("DK") => "Europe/Copenhagen",
-            "FI" or "EE" or "LV" or "LT" => "Europe/Helsinki",
-            _ => "Europe/Stockholm"
-        };
+            // Windows time zone IDs
+            timeZoneId = isNordicEast ? "FLE Standard Time" : "W. Europe Standard Time";
+        }
+        else
+        {
+            // IANA time zone IDs (Linux/macOS, containers, etc.)
+            timeZoneId = zone switch
+            {
+                var z when z.StartsWith("SE", StringComparison.Ordinal) => "Europe/Stockholm",
+                var z when z.StartsWith("NO", StringComparison.Ordinal) => "Europe/Oslo",
+                var z when z.StartsWith("DK", StringComparison.Ordinal) => "Europe/Copenhagen",
+                "FI" or "EE" or "LV" or "LT" => "Europe/Helsinki",
+                _ => "Europe/Stockholm"
+            };
+        }
 
         try
         {
