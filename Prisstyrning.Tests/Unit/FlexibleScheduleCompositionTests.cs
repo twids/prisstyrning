@@ -133,7 +133,7 @@ public class FlexibleScheduleCompositionTests
     }
 
     [Fact]
-    public void ComposeFlexibleSchedule_NeitherScheduled_HasNoActions()
+    public void ComposeFlexibleSchedule_NeitherScheduled_ReturnsNullPayload()
     {
         // Arrange: both eco and comfort have null scheduled hour (waiting states)
         var now = new DateTimeOffset(2026, 2, 25, 10, 0, 0, TimeSpan.Zero); // Wednesday
@@ -152,12 +152,31 @@ public class FlexibleScheduleCompositionTests
         var (payload, message) = ScheduleAlgorithm.ComposeFlexibleSchedule(ecoResult, comfortResult, now);
 
         // Assert
-        Assert.NotNull(payload);
-        var todayActions = GetDayActions(payload, "wednesday");
-        Assert.NotNull(todayActions);
+        Assert.Null(payload);
+        Assert.Contains("waiting", message, StringComparison.OrdinalIgnoreCase);
+    }
 
-        // No actions — empty schedule means "don't change anything"
-        Assert.Empty(todayActions);
+    [Fact]
+    public void ComposeFlexibleSchedule_UsesProvidedTimezoneForDayAndHour()
+    {
+        // Arrange: now in UTC is 22:30 Wednesday -> 00:30 Thursday in Helsinki
+        // eco scheduled at 23:00 UTC -> 01:00 Thursday in Helsinki
+        var nowUtc = new DateTimeOffset(2026, 2, 25, 22, 30, 0, TimeSpan.Zero);
+        var ecoResult = new ScheduleAlgorithm.FlexibleEcoResult(
+            ScheduledHourUtc: new DateTimeOffset(2026, 2, 25, 23, 0, 0, TimeSpan.Zero),
+            State: "scheduled",
+            Message: "Eco scheduled");
+
+        var tz = TimeZoneInfo.FindSystemTimeZoneById("Europe/Helsinki");
+
+        // Act
+        var (payload, _) = ScheduleAlgorithm.ComposeFlexibleSchedule(ecoResult, null, nowUtc, tz);
+
+        // Assert
+        Assert.NotNull(payload);
+        var thursdayActions = GetDayActions(payload, "thursday");
+        Assert.NotNull(thursdayActions);
+        Assert.Equal("eco", GetStateAtTime(thursdayActions, "01:00:00"));
     }
 
     [Fact]
@@ -259,10 +278,8 @@ public class FlexibleScheduleCompositionTests
 
         var (payload, message) = ScheduleAlgorithm.ComposeFlexibleSchedule(ecoResult, null, now);
 
-        Assert.NotNull(payload);
-        // Wednesday should have NO eco actions (eco was in the past)
-        var todayActions = GetDayActions(payload, "wednesday");
-        Assert.Null(GetStateAtTime(todayActions, "14:00:00"));
+        // No future actions remain, so payload should be null (prevents empty overwrite).
+        Assert.Null(payload);
         // Message should reflect the eco state
         Assert.Contains("already_ran", message, StringComparison.OrdinalIgnoreCase);
     }
