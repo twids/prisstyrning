@@ -47,7 +47,11 @@ function extractDayStates(
   schedulePayload: SchedulePayload,
   dayName: string
 ): HourState[] {
-  const scheduleId = Object.keys(schedulePayload)[0];
+  const keys = Object.keys(schedulePayload);
+  if (keys.length === 0) {
+    return Array(24).fill(undefined);
+  }
+  const scheduleId = keys[0];
   const schedule = schedulePayload[scheduleId];
   const dayActions = schedule?.actions?.[dayName] ?? {};
 

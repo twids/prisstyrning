@@ -191,9 +191,9 @@ export default function AdminPage() {
                       <div className="flex items-center gap-2">
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <span className="font-mono cursor-pointer select-all text-sm">
+                            <button type="button" className="font-mono cursor-pointer select-all text-sm bg-transparent border-none p-0 text-inherit">
                               {user.userId.slice(0, 8)}…
-                            </span>
+                            </button>
                           </TooltipTrigger>
                           <TooltipContent>{user.userId}</TooltipContent>
                         </Tooltip>
@@ -208,9 +208,9 @@ export default function AdminPage() {
                       {user.daikinAuthorized ? (
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <span>
+                            <button type="button" className="bg-transparent border-none p-0 cursor-default">
                               <CheckCircle className="text-green-500" size={18} />
-                            </span>
+                            </button>
                           </TooltipTrigger>
                           <TooltipContent>
                             {user.daikinExpiresAtUtc ? `Utgår: ${formatDateTime(user.daikinExpiresAtUtc)}` : 'Auktoriserad'}
@@ -219,9 +219,9 @@ export default function AdminPage() {
                       ) : (
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <span>
+                            <button type="button" className="bg-transparent border-none p-0 cursor-default">
                               <XCircle className="text-red-500" size={18} />
-                            </span>
+                            </button>
                           </TooltipTrigger>
                           <TooltipContent>Ej auktoriserad</TooltipContent>
                         </Tooltip>
@@ -231,9 +231,9 @@ export default function AdminPage() {
                       {user.daikinSubject ? (
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <span className="font-mono text-sm cursor-pointer select-all max-w-[120px] overflow-hidden text-ellipsis whitespace-nowrap block">
+                            <button type="button" className="font-mono text-sm cursor-pointer select-all max-w-[120px] overflow-hidden text-ellipsis whitespace-nowrap block bg-transparent border-none p-0 text-inherit text-left">
                               {user.daikinSubject}
-                            </span>
+                            </button>
                           </TooltipTrigger>
                           <TooltipContent>{user.daikinSubject}</TooltipContent>
                         </Tooltip>

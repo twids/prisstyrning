@@ -42,7 +42,16 @@ export default function ScheduleHistoryList() {
           <Card
             key={index}
             className="cursor-pointer transition-colors hover:bg-muted/40"
+            role="button"
+            tabIndex={0}
+            aria-expanded={isExpanded}
             onClick={() => setExpandedIndex(isExpanded ? null : index)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setExpandedIndex(isExpanded ? null : index);
+              }
+            }}
           >
             <CardContent className="py-3 px-4 space-y-2">
               <div className="flex items-center justify-between gap-2">
