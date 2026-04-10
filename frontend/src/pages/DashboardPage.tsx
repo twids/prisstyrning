@@ -1,14 +1,18 @@
 import { useState } from 'react';
-import { Stack, Paper, Typography, Button, Alert, Box, Snackbar, TextField, Divider } from '@mui/material';
+import { Lightning } from '@phosphor-icons/react';
+import { toast } from 'sonner';
 
-import AuthStatusChip from '../components/AuthStatusChip';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+
+import ConnectionBadge from '../components/ConnectionBadge';
 import PriceChart from '../components/PriceChart';
 import TrendChart from '../components/TrendChart';
-import ScheduleGrid from '../components/ScheduleGrid';
-import ScheduleLegend from '../components/ScheduleLegend';
+import HeatingTimeline from '../components/HeatingTimeline';
 import ScheduleHistoryList from '../components/ScheduleHistoryList';
 import JsonViewer from '../components/JsonViewer';
 import ConfirmDialog from '../components/ConfirmDialog';
+
 import { useAuth } from '../hooks/useAuth';
 import { useSchedulePreview } from '../hooks/useSchedulePreview';
 import { useApplySchedule } from '../hooks/useApplySchedule';
@@ -18,20 +22,14 @@ import { useUserSettings } from '../hooks/useUserSettings';
 import { useManualComfort } from '../hooks/useManualComfort';
 import { useFormatters } from '../context/TimezoneContext';
 
+const formatDateTimeLocal = (date: Date): string => {
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
+
 export default function DashboardPage() {
   const { isAuthorized, startAuth, refresh, isRefreshing } = useAuth();
   const schedulePreview = useSchedulePreview();
-
-  // New state
-  const [snackbar, setSnackbar] = useState<{
-    open: boolean;
-    message: string;
-    severity: 'success' | 'error' | 'info' | 'warning';
-  }>({ open: false, message: '', severity: 'info' });
-
-  const [applyDialog, setApplyDialog] = useState(false);
-
-  // New hooks
   const applySchedule = useApplySchedule();
   const currentSchedule = useCurrentSchedule();
   const { settings } = useUserSettings();
@@ -40,11 +38,7 @@ export default function DashboardPage() {
   const { state: flexibleState } = useFlexibleState(isFlexible);
   const manualComfort = useManualComfort();
 
-  const formatDateTimeLocal = (date: Date): string => {
-    const pad = (n: number) => n.toString().padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-  };
-
+  const [applyDialog, setApplyDialog] = useState(false);
   const [manualComfortTime, setManualComfortTime] = useState(() => {
     const nextHour = new Date();
     nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
@@ -56,17 +50,13 @@ export default function DashboardPage() {
     try {
       const comfortDate = new Date(manualComfortTime);
       const result = await manualComfort.mutateAsync(comfortDate.toISOString());
-      setSnackbar({
-        open: true,
-        message: result.message,
-        severity: result.applied ? 'success' : 'warning',
-      });
+      if (result.applied) {
+        toast.success(result.message);
+      } else {
+        toast.warning(result.message);
+      }
     } catch (error) {
-      setSnackbar({
-        open: true,
-        message: `Failed to schedule comfort: ${error}`,
-        severity: 'error',
-      });
+      toast.error(`Misslyckades med att schemalägga komfort: ${error}`);
     }
   };
 
@@ -74,331 +64,290 @@ export default function DashboardPage() {
     try {
       await schedulePreview.mutateAsync();
     } catch (error) {
-      console.error('Failed to generate schedule:', error);
+      toast.error(`Misslyckades med att generera schema: ${error}`);
     }
   };
 
-  const handleApplySchedule = async () => {
+  const handleApplySchedule = () => {
     if (!schedulePreview.data?.schedulePayload) {
-      setSnackbar({
-        open: true,
-        message: 'No schedule to apply. Generate a schedule first.',
-        severity: 'error',
-      });
+      toast.error('Inget schema att applicera. Generera ett schema först.');
       return;
     }
-
     setApplyDialog(true);
   };
 
   const confirmApplySchedule = async () => {
     setApplyDialog(false);
-
     try {
-      // Device IDs will be auto-detected by the backend
       await applySchedule.mutateAsync({
         schedulePayload: schedulePreview.data!.schedulePayload!,
       });
-
-      setSnackbar({
-        open: true,
-        message: 'Schedule applied successfully!',
-        severity: 'success',
-      });
+      toast.success('Schema applicerat!');
     } catch (error) {
-      setSnackbar({
-        open: true,
-        message: `Failed to apply schedule: ${error}`,
-        severity: 'error',
-      });
+      toast.error(`Misslyckades med att applicera schema: ${error}`);
     }
   };
 
   const handleRetrieveCurrentSchedule = async () => {
     try {
-      // embeddedId will be auto-detected by the backend
       await currentSchedule.mutateAsync(undefined);
-      setSnackbar({
-        open: true,
-        message: 'Current schedule retrieved',
-        severity: 'success',
-      });
+      toast.success('Aktuellt schema hämtat');
     } catch (error) {
-      setSnackbar({
-        open: true,
-        message: `Failed to retrieve schedule: ${error}`,
-        severity: 'error',
-      });
+      toast.error(`Misslyckades med att hämta schema: ${error}`);
     }
   };
 
   return (
-    <Stack spacing={3}>
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Lightning weight="fill" className="w-7 h-7 text-primary" />
+          <h1 className="text-2xl font-semibold font-[Space_Grotesk]">Energi Dashboard</h1>
+        </div>
+        <ConnectionBadge />
+      </div>
+
       {/* Auth Section */}
-      <Paper sx={{ p: 3 }}>
-        <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
-          <Typography variant="h5">Daikin Authorization</Typography>
-          <AuthStatusChip />
-        </Stack>
-        
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-          {!isAuthorized ? (
-            <Button variant="contained" onClick={startAuth}>
-              Start OAuth Flow
-            </Button>
-          ) : (
-            <Button
-              variant="outlined"
-              onClick={() => refresh()}
-              disabled={isRefreshing}
-            >
-              {isRefreshing ? 'Refreshing...' : 'Refresh Token'}
-            </Button>
-          )}
-        </Stack>
-      </Paper>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Daikin Auktorisering</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap gap-2">
+            {!isAuthorized ? (
+              <Button onClick={startAuth}>
+                Starta OAuth-flöde
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                onClick={() => refresh()}
+                disabled={isRefreshing}
+              >
+                {isRefreshing ? 'Uppdaterar...' : 'Uppdatera token'}
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Price Chart */}
       <PriceChart />
 
+      {/* Trend Chart — kept as-is for Phase 4 */}
       <TrendChart />
 
-      {/* Schedule Preview */}
-      <Paper sx={{ p: 3 }}>
-        <Typography variant="h5" gutterBottom>
-          Schedule Preview
-        </Typography>
+      {/* Schedule Preview / Värmeschema */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Värmeschema</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {!isAuthorized && (
+            <p className="text-sm text-yellow-600 dark:text-yellow-400 border border-yellow-500/30 bg-yellow-500/10 rounded-md px-3 py-2">
+              Auktorisera med Daikin för att applicera scheman på din enhet
+            </p>
+          )}
 
-        {!isAuthorized && (
-          <Alert severity="warning" sx={{ mb: 2 }}>
-            Authorize with Daikin to apply schedules to your device
-          </Alert>
-        )}
-
-        <Button
-          variant="contained"
-          color="primary"
-          onClick={handleGenerateSchedule}
-          disabled={schedulePreview.isPending}
-          sx={{ mb: 2 }}
-        >
-          {schedulePreview.isPending ? 'Generating...' : 'Generate Schedule'}
-        </Button>
-
-        {schedulePreview.isError && (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            Failed to generate schedule: {schedulePreview.error.message}
-          </Alert>
-        )}
-
-        {schedulePreview.data && (
-          <Box>
-            <ScheduleGrid schedulePayload={schedulePreview.data.schedulePayload} />
-            <ScheduleLegend />
-            
-            {schedulePreview.data.message && (
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-                {schedulePreview.data.message}
-              </Typography>
-            )}
-          </Box>
-        )}
-      </Paper>
-
-      {/* Manual Comfort Run */}
-      <Paper sx={{ p: 3 }}>
-        <Typography variant="h5" gutterBottom>
-          Manual Comfort Run
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Schedule an immediate comfort run (e.g., for filling a hot tub). Select a time within the next 48 hours.
-        </Typography>
-
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="flex-end">
-          <TextField
-            type="datetime-local"
-            label="Comfort Time"
-            value={manualComfortTime}
-            onChange={(e) => setManualComfortTime(e.target.value)}
-            InputLabelProps={{ shrink: true }}
-            inputProps={{
-              min: formatDateTimeLocal(new Date()),
-              max: formatDateTimeLocal(new Date(Date.now() + 48 * 60 * 60 * 1000)),
-            }}
-            fullWidth
-          />
-          <Button
-            variant="contained"
-            onClick={handleManualComfort}
-            disabled={!isAuthorized || !manualComfortTime || manualComfort.isPending}
-            sx={{ whiteSpace: 'nowrap', minWidth: 160 }}
-          >
-            {manualComfort.isPending ? 'Scheduling...' : 'Schedule & Apply'}
-          </Button>
-        </Stack>
-
-        {!isAuthorized && (
-          <Alert severity="warning" sx={{ mt: 2 }}>
-            Authorize with Daikin before scheduling a manual comfort run.
-          </Alert>
-        )}
-      </Paper>
-
-      {/* Flexible Scheduling Status */}
-      {isFlexible && flexibleState && (
-        <Paper sx={{ p: 3 }}>
-          <Typography variant="h5" gutterBottom>
-            Flexible Scheduling Status
-          </Typography>
-
-          <Stack spacing={2}>
-            {/* Eco Status */}
-            <Box>
-              <Typography variant="subtitle1" fontWeight="bold">
-                Eco (Daily DHW)
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Last scheduled: {flexibleState.LastEcoRunUtc
-                  ? formatDateTime(flexibleState.LastEcoRunUtc)
-                  : 'Never (waiting for first interval)'}
-              </Typography>
-              {flexibleState.EcoWindow.Start && flexibleState.EcoWindow.End && (
-                <Typography variant="body2" color="text.secondary">
-                  Next window: {formatDateTime(flexibleState.EcoWindow.Start)} – {formatDateTime(flexibleState.EcoWindow.End)}
-                </Typography>
-              )}
-            </Box>
-
-            <Divider />
-
-            {/* Comfort Status */}
-            <Box>
-              <Typography variant="subtitle1" fontWeight="bold">
-                Comfort (Legionella)
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Last run: {flexibleState.LastComfortRunUtc
-                  ? formatDateTime(flexibleState.LastComfortRunUtc)
-                  : 'Never (waiting for first interval)'}
-              </Typography>
-              {flexibleState.NextScheduledComfortUtc && (
-                <Typography variant="body2" color="primary.main">
-                  Next scheduled: {formatDateTime(flexibleState.NextScheduledComfortUtc)}
-                </Typography>
-              )}
-              {flexibleState.ComfortWindow.Start && flexibleState.ComfortWindow.End && (
-                <>
-                  <Typography variant="body2" color="text.secondary">
-                    Window: {formatDateTime(flexibleState.ComfortWindow.Start)} – {formatDateTime(flexibleState.ComfortWindow.End)}
-                  </Typography>
-                  {flexibleState.ComfortWindow.Progress !== null && (
-                    <Box sx={{ mt: 1 }}>
-                      <Typography variant="caption" color="text.secondary">
-                        Window progress: {(flexibleState.ComfortWindow.Progress * 100).toFixed(0)}%
-                      </Typography>
-                      <Box
-                        sx={{
-                          mt: 0.5,
-                          height: 8,
-                          borderRadius: 4,
-                          bgcolor: 'grey.200',
-                          overflow: 'hidden',
-                        }}
-                      >
-                        <Box
-                          sx={{
-                            height: '100%',
-                            width: `${(flexibleState.ComfortWindow.Progress ?? 0) * 100}%`,
-                            bgcolor: (flexibleState.ComfortWindow.Progress ?? 0) > 0.9
-                              ? 'warning.main'
-                              : 'primary.main',
-                            borderRadius: 4,
-                            transition: 'width 0.3s ease',
-                          }}
-                        />
-                      </Box>
-                    </Box>
-                  )}
-                </>
-              )}
-            </Box>
-          </Stack>
-        </Paper>
-      )}
-
-      {/* Apply Schedule Section */}
-      <Paper sx={{ p: 3 }}>
-        <Typography variant="h5" gutterBottom>
-          Apply Schedule to Daikin
-        </Typography>
-
-        <Alert severity="info" sx={{ mb: 2 }}>
-          Device IDs will be automatically detected from your Daikin account.
-        </Alert>
-
-        <Stack spacing={2}>
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+          <div className="flex flex-wrap gap-2">
             <Button
-              variant="contained"
+              onClick={handleGenerateSchedule}
+              disabled={schedulePreview.isPending}
+            >
+              {schedulePreview.isPending ? 'Genererar...' : 'Generera schema'}
+            </Button>
+
+            <Button
+              variant="outline"
               onClick={handleApplySchedule}
               disabled={!isAuthorized || !schedulePreview.data?.schedulePayload || applySchedule.isPending}
             >
-              {applySchedule.isPending ? 'Applying...' : 'Apply Schedule'}
+              {applySchedule.isPending ? 'Applicerar...' : 'Applicera schema'}
             </Button>
+          </div>
 
+          {schedulePreview.isError && (
+            <p className="text-sm text-destructive">
+              Misslyckades med att generera schema: {schedulePreview.error.message}
+            </p>
+          )}
+
+          {schedulePreview.data ? (
+            <div>
+              <HeatingTimeline
+                schedulePayload={schedulePreview.data.schedulePayload}
+              />
+              {schedulePreview.data.message && (
+                <p className="text-sm text-muted-foreground mt-2">
+                  {schedulePreview.data.message}
+                </p>
+              )}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Inget schema genererat ännu. Klicka "Generera schema" för att börja.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Manual Comfort Run */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Komfortboost</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Schemalägg en omedelbar komfortkörning (t.ex. för att fylla ett varmt badkar).
+            Välj en tid inom de närmaste 48 timmarna.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2 items-end">
+            <div className="flex-1">
+              <label className="text-xs text-muted-foreground mb-1 block">Komforttid</label>
+              <input
+                type="datetime-local"
+                value={manualComfortTime}
+                onChange={(e) => setManualComfortTime(e.target.value)}
+                min={formatDateTimeLocal(new Date())}
+                max={formatDateTimeLocal(new Date(Date.now() + 48 * 60 * 60 * 1000))}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              />
+            </div>
             <Button
-              variant="outlined"
-              onClick={handleRetrieveCurrentSchedule}
-              disabled={!isAuthorized || currentSchedule.isPending}
+              onClick={handleManualComfort}
+              disabled={!isAuthorized || !manualComfortTime || manualComfort.isPending}
+              className="whitespace-nowrap"
             >
-              {currentSchedule.isPending ? 'Retrieving...' : 'Retrieve Current Schedule'}
+              {manualComfort.isPending ? 'Schemalägger...' : 'Schemalägg & Applicera'}
             </Button>
-          </Stack>
-        </Stack>
+          </div>
+          {!isAuthorized && (
+            <p className="text-sm text-yellow-600 dark:text-yellow-400">
+              Auktorisera med Daikin innan du schemalägger en manuell komfortkörning.
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
-        {!!currentSchedule.data && (
-          <Box sx={{ mt: 3 }}>
-            <Typography variant="h6" gutterBottom>
-              Current Schedule
-            </Typography>
-            <JsonViewer data={currentSchedule.data} />
-          </Box>
-        )}
-      </Paper>
+      {/* Flexible Scheduling Status */}
+      {isFlexible && flexibleState && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Flexibel schemaläggning</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Eco Status */}
+            <div>
+              <p className="text-sm font-semibold mb-1">Eco (Daglig VVB)</p>
+              <p className="text-sm text-muted-foreground">
+                Senast schemalagd:{' '}
+                {flexibleState.LastEcoRunUtc
+                  ? formatDateTime(flexibleState.LastEcoRunUtc)
+                  : 'Aldrig (väntar på första intervall)'}
+              </p>
+              {flexibleState.EcoWindow.Start && flexibleState.EcoWindow.End && (
+                <p className="text-sm text-muted-foreground">
+                  Nästa fönster: {formatDateTime(flexibleState.EcoWindow.Start)} –{' '}
+                  {formatDateTime(flexibleState.EcoWindow.End)}
+                </p>
+              )}
+            </div>
 
-      {/* History Section */}
-      <Paper sx={{ p: 3 }}>
-        <Typography variant="h5" gutterBottom>
-          Schedule History
-        </Typography>
-        <ScheduleHistoryList />
-      </Paper>
+            <div className="border-t border-border" />
 
-      {/* Dialogs and Snackbar */}
+            {/* Comfort Status */}
+            <div>
+              <p className="text-sm font-semibold mb-1">Komfort (Legionella)</p>
+              <p className="text-sm text-muted-foreground">
+                Senaste körning:{' '}
+                {flexibleState.LastComfortRunUtc
+                  ? formatDateTime(flexibleState.LastComfortRunUtc)
+                  : 'Aldrig (väntar på första intervall)'}
+              </p>
+              {flexibleState.NextScheduledComfortUtc && (
+                <p className="text-sm text-primary">
+                  Nästa schemalagd: {formatDateTime(flexibleState.NextScheduledComfortUtc)}
+                </p>
+              )}
+              {flexibleState.ComfortWindow.Start && flexibleState.ComfortWindow.End && (
+                <div>
+                  <p className="text-sm text-muted-foreground">
+                    Fönster: {formatDateTime(flexibleState.ComfortWindow.Start)} –{' '}
+                    {formatDateTime(flexibleState.ComfortWindow.End)}
+                  </p>
+                  {flexibleState.ComfortWindow.Progress !== null && (
+                    <div className="mt-2">
+                      <p className="text-xs text-muted-foreground mb-1">
+                        Fönsterförlopp: {((flexibleState.ComfortWindow.Progress ?? 0) * 100).toFixed(0)}%
+                      </p>
+                      <div className="h-2 rounded-full bg-muted overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all duration-300"
+                          style={{
+                            width: `${(flexibleState.ComfortWindow.Progress ?? 0) * 100}%`,
+                            backgroundColor:
+                              (flexibleState.ComfortWindow.Progress ?? 0) > 0.9
+                                ? 'hsl(var(--warning))'
+                                : 'hsl(var(--primary))',
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Retrieve Current Schedule */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Hämta aktuellt schema</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Enhets-ID:n detekteras automatiskt från ditt Daikin-konto.
+          </p>
+          <Button
+            variant="outline"
+            onClick={handleRetrieveCurrentSchedule}
+            disabled={!isAuthorized || currentSchedule.isPending}
+          >
+            {currentSchedule.isPending ? 'Hämtar...' : 'Hämta aktuellt schema'}
+          </Button>
+
+          {!!currentSchedule.data && (
+            <div className="mt-3">
+              <p className="text-sm font-medium mb-2">Aktuellt schema</p>
+              <JsonViewer data={currentSchedule.data} />
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* History */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Historik</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ScheduleHistoryList />
+        </CardContent>
+      </Card>
+
+      {/* Confirm Dialog */}
       <ConfirmDialog
         open={applyDialog}
-        title="Apply Schedule"
-        message="Are you sure you want to apply this schedule to your Daikin device? This will replace the current schedule."
-        confirmText="Apply"
-        cancelText="Cancel"
+        title="Applicera schema"
+        message="Är du säker på att du vill applicera det här schemat på din Daikin-enhet? Det befintliga schemat kommer att ersättas."
+        confirmText="Applicera"
+        cancelText="Avbryt"
         onConfirm={confirmApplySchedule}
         onCancel={() => setApplyDialog(false)}
       />
-
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={6000}
-        onClose={() => setSnackbar({ ...snackbar, open: false })}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-      >
-        <Alert
-          onClose={() => setSnackbar({ ...snackbar, open: false })}
-          severity={snackbar.severity}
-          sx={{ width: '100%' }}
-        >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
-    </Stack>
+    </div>
   );
 }
