@@ -9,7 +9,6 @@ import ConnectionBadge from '../components/ConnectionBadge';
 import PriceChart from '../components/PriceChart';
 import TrendChart from '../components/TrendChart';
 import HeatingTimeline from '../components/HeatingTimeline';
-import ScheduleHistoryList from '../components/ScheduleHistoryList';
 import JsonViewer from '../components/JsonViewer';
 import ConfirmDialog from '../components/ConfirmDialog';
 
@@ -325,16 +324,6 @@ export default function DashboardPage() {
               <JsonViewer data={currentSchedule.data} />
             </div>
           )}
-        </CardContent>
-      </Card>
-
-      {/* History */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Historik</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ScheduleHistoryList />
         </CardContent>
       </Card>
 

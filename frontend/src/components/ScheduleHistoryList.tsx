@@ -1,79 +1,59 @@
 import { useState } from 'react';
-import {
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  Typography,
-  Box,
-  Chip,
-  CircularProgress,
-  Alert,
-} from '@mui/material';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { useFormatters } from '../context/TimezoneContext';
 import { useScheduleHistory } from '../hooks/useScheduleHistory';
-import ScheduleGrid from './ScheduleGrid';
+import HeatingTimeline from './HeatingTimeline';
 
 export default function ScheduleHistoryList() {
   const { formatDateTimeFull } = useFormatters();
   const { data, isLoading, error } = useScheduleHistory();
-  const [expanded, setExpanded] = useState<string | false>(false);
-
-  const handleChange = (panel: string) => (_: React.SyntheticEvent, isExpanded: boolean) => {
-    setExpanded(isExpanded ? panel : false);
-  };
+  const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
 
   if (isLoading) {
     return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
-        <CircularProgress />
-      </Box>
+      <div className="flex justify-center p-6">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+      </div>
     );
   }
 
   if (error) {
     return (
-      <Alert severity="error">
-        Failed to load schedule history: {error.message}
-      </Alert>
+      <p className="text-sm text-destructive">
+        Misslyckades med att ladda schemahistorik: {error.message}
+      </p>
     );
   }
 
   if (!data || data.length === 0) {
     return (
-      <Alert severity="info">
-        No schedule history found. Generate a schedule to see it here.
-      </Alert>
+      <p className="text-sm text-muted-foreground">Ingen schemahistorik ännu.</p>
     );
   }
 
   return (
-    <Box>
+    <div className="space-y-2">
       {data.map((entry, index) => {
-        const panelId = `history-${index}`;
+        const isExpanded = expandedIndex === index;
         const timestamp = new Date(entry.timestamp);
-        
+
         return (
-          <Accordion
-            key={panelId}
-            expanded={expanded === panelId}
-            onChange={handleChange(panelId)}
-            sx={{ mb: 1 }}
+          <Card
+            key={index}
+            className="cursor-pointer transition-colors hover:bg-muted/40"
+            onClick={() => setExpandedIndex(isExpanded ? null : index)}
           >
-            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, width: '100%' }}>
-                <Typography>
-                  {formatDateTimeFull(timestamp)}
-                </Typography>
-                <Chip label={entry.date} size="small" />
-              </Box>
-            </AccordionSummary>
-            <AccordionDetails>
-              <ScheduleGrid schedulePayload={entry.schedule} />
-            </AccordionDetails>
-          </Accordion>
+            <CardContent className="py-3 px-4 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium">{formatDateTimeFull(timestamp)}</span>
+                <Badge variant="secondary">{entry.date}</Badge>
+              </div>
+              <HeatingTimeline schedulePayload={entry.schedule} compact={!isExpanded} />
+            </CardContent>
+          </Card>
         );
       })}
-    </Box>
+    </div>
   );
 }
