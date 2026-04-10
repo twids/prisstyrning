@@ -30,12 +30,7 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          // Split MUI components into separate chunks
-          'mui-core': ['@mui/material', '@mui/icons-material'],
-          'mui-charts': ['@mui/x-charts'],
-          // Split React and related libraries
           'react-vendor': ['react', 'react-dom', 'react-router-dom'],
-          // Split React Query
           'query': ['@tanstack/react-query'],
         },
       },
