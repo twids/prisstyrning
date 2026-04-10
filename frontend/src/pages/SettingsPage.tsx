@@ -1,30 +1,25 @@
 import { useState, useEffect } from 'react';
+import { toast } from 'sonner';
+import { FloppyDisk } from '@phosphor-icons/react';
+import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Slider } from '@/components/ui/slider';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 import {
-  Container,
-  Paper,
-  Typography,
-  Stack,
-  Slider,
-  TextField,
-  Switch,
-  FormControlLabel,
-  Button,
-  Divider,
-  Box,
-  Alert,
-  Snackbar,
   Select,
-  MenuItem,
-  FormControl,
-  InputLabel,
-  CircularProgress,
-} from '@mui/material';
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Separator } from '@/components/ui/separator';
+import { Badge } from '@/components/ui/badge';
 import { useUserSettings } from '../hooks/useUserSettings';
 import { useZone } from '../hooks/useZone';
 import { useAuth } from '../hooks/useAuth';
 import { useLocale } from '../context/TimezoneContext';
 import ConfirmDialog from '../components/ConfirmDialog';
-import LoadingSkeleton from '../components/LoadingSkeleton';
 
 // Nordpool zones
 const ZONES = [
@@ -37,7 +32,7 @@ const ZONES = [
 export default function SettingsPage() {
   const { settings, isLoading, error, updateSettings, isUpdating } = useUserSettings();
   const { zone, setZone, isUpdating: isZoneUpdating } = useZone();
-  const { isAuthorized, refresh, revoke, isRefreshing } = useAuth();
+  const { isAuthorized, refresh, revoke, startAuth, isRefreshing } = useAuth();
   const {
     localeSetting,
     setLocaleSetting,
@@ -61,12 +56,6 @@ export default function SettingsPage() {
     comfortIntervalDays: 21,
     comfortFlexibilityDays: 7,
     comfortEarlyPercentile: 0.10,
-  });
-
-  const [snackbar, setSnackbar] = useState({
-    open: false,
-    message: '',
-    severity: 'success' as 'success' | 'error' | 'info',
   });
 
   const [revokeDialog, setRevokeDialog] = useState(false);
@@ -120,17 +109,9 @@ export default function SettingsPage() {
         await setZone(formData.selectedZone);
       }
 
-      setSnackbar({
-        open: true,
-        message: 'Settings saved successfully',
-        severity: 'success',
-      });
+      toast.success('Inställningar sparade');
     } catch (err) {
-      setSnackbar({
-        open: true,
-        message: `Failed to save settings: ${err}`,
-        severity: 'error',
-      });
+      toast.error(`Kunde inte spara inställningar: ${err}`);
     }
   };
 
@@ -138,435 +119,325 @@ export default function SettingsPage() {
     setRevokeDialog(false);
     try {
       await revoke();
-      setSnackbar({
-        open: true,
-        message: 'Daikin authentication revoked',
-        severity: 'info',
-      });
+      toast.info('Daikin-autentisering återkallad');
     } catch (err) {
-      setSnackbar({
-        open: true,
-        message: `Failed to revoke: ${err}`,
-        severity: 'error',
-      });
+      toast.error(`Kunde inte återkalla: ${err}`);
     }
   };
 
   if (isLoading) {
     return (
-      <Container maxWidth="md" sx={{ py: 4 }}>
-        <LoadingSkeleton />
-      </Container>
+      <div className="flex items-center justify-center py-16">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      </div>
     );
   }
 
   if (error) {
     return (
-      <Container maxWidth="md" sx={{ py: 4 }}>
-        <Alert severity="error">Failed to load settings: {error.message}</Alert>
-      </Container>
+      <div className="mx-auto max-w-2xl px-4 py-8">
+        <p className="text-destructive">Kunde inte ladda inställningar: {error.message}</p>
+      </div>
     );
   }
 
   return (
-    <Container maxWidth="md" sx={{ py: 4 }}>
-      <Typography variant="h4" gutterBottom sx={{ fontSize: { xs: '1.5rem', md: '2rem' } }}>
-        Settings
-      </Typography>
+    <div className="mx-auto max-w-2xl space-y-4 px-4 py-6">
+      <h1 className="text-2xl font-semibold tracking-tight">Inställningar</h1>
 
-      <Stack spacing={3}>
-        {/* Schedule Settings */}
-        <Paper sx={{ p: 3 }}>
-          <Typography variant="h6" gutterBottom>
-            Schedule Configuration
-          </Typography>
+      {/* Schedule Configuration */}
+      <Card className="p-5 space-y-5">
+        <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Schemakonfiguration</h2>
 
-          <Stack spacing={3}>
-            <Box>
-              <Typography gutterBottom>
-                Comfort Hours: {formData.comfortHours}
-              </Typography>
-              <Slider
-                value={formData.comfortHours}
-                onChange={(_, value) =>
-                  setFormData({ ...formData, comfortHours: value as number })
-                }
-                min={1}
-                max={12}
-                step={1}
-                marks
-                valueLabelDisplay="auto"
-              />
-              <Typography variant="caption" color="text.secondary">
-                Number of hours per day to heat water to comfort temperature
-              </Typography>
-            </Box>
-
-            <Box>
-              <Typography gutterBottom>
-                Turn Off Percentile: {(formData.turnOffPercentile * 100).toFixed(0)}%
-              </Typography>
-              <Slider
-                value={formData.turnOffPercentile}
-                onChange={(_, value) =>
-                  setFormData({ ...formData, turnOffPercentile: value as number })
-                }
-                min={0.5}
-                max={0.99}
-                step={0.01}
-                marks={[
-                  { value: 0.5, label: '50%' },
-                  { value: 0.75, label: '75%' },
-                  { value: 0.99, label: '99%' },
-                ]}
-                valueLabelDisplay="auto"
-                valueLabelFormat={(value) => `${(value * 100).toFixed(0)}%`}
-              />
-              <Typography variant="caption" color="text.secondary">
-                Price threshold for turning off DHW heating (higher = less turn-off)
-              </Typography>
-            </Box>
-
-            <TextField
-              label="Max Comfort Gap (hours)"
-              type="number"
-              value={formData.maxComfortGapHours}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  maxComfortGapHours: parseInt(e.target.value) || 1,
-                })
-              }
-              inputProps={{ min: 1, max: 72, step: 1 }}
-              helperText="Maximum gap between consecutive comfort hours (1-72)"
-            />
-
-            <FormControl fullWidth>
-              <InputLabel>Nordpool Zone</InputLabel>
-              <Select
-                value={formData.selectedZone}
-                onChange={(e) =>
-                  setFormData({ ...formData, selectedZone: e.target.value })
-                }
-                label="Nordpool Zone"
-              >
-                {ZONES.map((z) => (
-                  <MenuItem key={z} value={z}>
-                    {z}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          </Stack>
-        </Paper>
-
-        {/* Scheduling Mode */}
-        <Paper sx={{ p: 3 }}>
-          <Typography variant="h6" gutterBottom>
-            Scheduling Mode
-          </Typography>
-
-          <Stack spacing={2}>
-            <FormControl fullWidth>
-              <InputLabel>Mode</InputLabel>
-              <Select
-                value={formData.schedulingMode}
-                onChange={(e) => setFormData({ ...formData, schedulingMode: e.target.value as 'Classic' | 'Flexible' })}
-                label="Mode"
-              >
-                <MenuItem value="Classic">Classic (Fixed daily schedule)</MenuItem>
-                <MenuItem value="Flexible">Flexible (Interval-based with price optimization)</MenuItem>
-              </Select>
-            </FormControl>
-
-            <Typography variant="caption" color="text.secondary">
-              Classic mode generates a fixed daily schedule. Flexible mode schedules eco and comfort runs at optimal prices within configurable intervals.
-            </Typography>
-          </Stack>
-        </Paper>
-
-        {/* Regional Formatting */}
-        <Paper sx={{ p: 3 }}>
-          <Typography variant="h6" gutterBottom>
-            Regional Formatting
-          </Typography>
-
-          <Stack spacing={2}>
-            <FormControl fullWidth>
-              <InputLabel>Locale</InputLabel>
-              <Select
-                value={localeSetting}
-                onChange={(e) => {
-                  const nextLocale = localeOptions.find((option) => option.value === e.target.value)?.value;
-                  if (nextLocale) {
-                    setLocaleSetting(nextLocale);
-                  }
-                }}
-                label="Locale"
-              >
-                {localeOptions.map((option) => {
-                  if (option.value === 'auto') {
-                    return (
-                      <MenuItem key={option.value} value={option.value}>
-                        Auto (System) — {systemLocale} · {systemTimezone}
-                      </MenuItem>
-                    );
-                  }
-
-                  return (
-                    <MenuItem key={option.value} value={option.value}>
-                      {option.label} — {option.locale} · {option.timezone}
-                    </MenuItem>
-                  );
-                })}
-              </Select>
-            </FormControl>
-
-            <Typography variant="caption" color="text.secondary">
-              Applies immediately and is saved locally in this browser. Effective format: {effectiveLocale} · {effectiveTimezone}.
-            </Typography>
-          </Stack>
-        </Paper>
-
-        {/* Flexible Scheduling Settings - only show when Flexible mode */}
-        {formData.schedulingMode === 'Flexible' && (
-          <Paper sx={{ p: 3 }}>
-            <Typography variant="h6" gutterBottom>
-              Flexible Schedule Settings
-            </Typography>
-
-            <Stack spacing={3}>
-              {/* Eco Section */}
-              <Typography variant="subtitle1" fontWeight="bold">Eco (Daily DHW ~45°C)</Typography>
-
-              <Box>
-                <Typography gutterBottom>
-                  Eco Interval: {formData.ecoIntervalHours} hours
-                </Typography>
-                <Slider
-                  value={formData.ecoIntervalHours}
-                  onChange={(_, value) => setFormData({ ...formData, ecoIntervalHours: value as number })}
-                  min={6}
-                  max={36}
-                  step={1}
-                  marks={[
-                    { value: 6, label: '6h' },
-                    { value: 12, label: '12h' },
-                    { value: 24, label: '24h' },
-                    { value: 36, label: '36h' },
-                  ]}
-                  valueLabelDisplay="auto"
-                />
-                <Typography variant="caption" color="text.secondary">
-                  How often eco heating should run (target interval)
-                </Typography>
-              </Box>
-
-              <Box>
-                <Typography gutterBottom>
-                  Eco Flexibility: ±{formData.ecoFlexibilityHours} hours
-                </Typography>
-                <Slider
-                  value={formData.ecoFlexibilityHours}
-                  onChange={(_, value) => setFormData({ ...formData, ecoFlexibilityHours: value as number })}
-                  min={1}
-                  max={18}
-                  step={1}
-                  marks={[
-                    { value: 1, label: '±1h' },
-                    { value: 6, label: '±6h' },
-                    { value: 12, label: '±12h' },
-                    { value: 18, label: '±18h' },
-                  ]}
-                  valueLabelDisplay="auto"
-                />
-                <Typography variant="caption" color="text.secondary">
-                  Scheduling window: eco runs between {Math.max(0, formData.ecoIntervalHours - formData.ecoFlexibilityHours)}h and {formData.ecoIntervalHours + formData.ecoFlexibilityHours}h after last run
-                </Typography>
-              </Box>
-
-              <Divider />
-
-              {/* Comfort Section */}
-              <Typography variant="subtitle1" fontWeight="bold">Comfort (Legionella ~60°C)</Typography>
-
-              <Box>
-                <Typography gutterBottom>
-                  Comfort Interval: {formData.comfortIntervalDays} days
-                </Typography>
-                <Slider
-                  value={formData.comfortIntervalDays}
-                  onChange={(_, value) => setFormData({ ...formData, comfortIntervalDays: value as number })}
-                  min={7}
-                  max={90}
-                  step={1}
-                  marks={[
-                    { value: 7, label: '7d' },
-                    { value: 21, label: '21d' },
-                    { value: 30, label: '30d' },
-                    { value: 60, label: '60d' },
-                    { value: 90, label: '90d' },
-                  ]}
-                  valueLabelDisplay="auto"
-                />
-                <Typography variant="caption" color="text.secondary">
-                  How often comfort (legionella) heating should run
-                </Typography>
-              </Box>
-
-              <Box>
-                <Typography gutterBottom>
-                  Comfort Flexibility: ±{formData.comfortFlexibilityDays} days
-                </Typography>
-                <Slider
-                  value={formData.comfortFlexibilityDays}
-                  onChange={(_, value) => setFormData({ ...formData, comfortFlexibilityDays: value as number })}
-                  min={1}
-                  max={30}
-                  step={1}
-                  marks={[
-                    { value: 1, label: '±1d' },
-                    { value: 7, label: '±7d' },
-                    { value: 14, label: '±14d' },
-                    { value: 30, label: '±30d' },
-                  ]}
-                  valueLabelDisplay="auto"
-                />
-                <Typography variant="caption" color="text.secondary">
-                  Scheduling window: comfort runs between {Math.max(0, formData.comfortIntervalDays - formData.comfortFlexibilityDays)}d and {formData.comfortIntervalDays + formData.comfortFlexibilityDays}d after last run
-                </Typography>
-              </Box>
-
-              <Box>
-                <Typography gutterBottom>
-                  Early Comfort Threshold: {(formData.comfortEarlyPercentile * 100).toFixed(0)}th percentile
-                </Typography>
-                <Slider
-                  value={formData.comfortEarlyPercentile}
-                  onChange={(_, value) => setFormData({ ...formData, comfortEarlyPercentile: value as number })}
-                  min={0.01}
-                  max={0.50}
-                  step={0.01}
-                  marks={[
-                    { value: 0.05, label: '5%' },
-                    { value: 0.10, label: '10%' },
-                    { value: 0.25, label: '25%' },
-                    { value: 0.50, label: '50%' },
-                  ]}
-                  valueLabelDisplay="auto"
-                  valueLabelFormat={(value) => `${(value * 100).toFixed(0)}%`}
-                />
-                <Typography variant="caption" color="text.secondary">
-                  When the comfort window opens, only trigger if the price is below this historical percentile. The threshold relaxes as the window progresses.
-                </Typography>
-              </Box>
-            </Stack>
-          </Paper>
-        )}
-
-        {/* Automation Settings */}
-        <Paper sx={{ p: 3 }}>
-          <Typography variant="h6" gutterBottom>
-            Automation
-          </Typography>
-
-          <FormControlLabel
-            control={
-              <Switch
-                checked={formData.autoApplySchedule}
-                onChange={(e) =>
-                  setFormData({ ...formData, autoApplySchedule: e.target.checked })
-                }
-              />
-            }
-            label="Auto-apply schedule daily"
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label>Komforttimmar</Label>
+            <span className="text-sm font-medium tabular-nums">{formData.comfortHours}</span>
+          </div>
+          <Slider
+            value={[formData.comfortHours]}
+            onValueChange={([value]) => setFormData(s => ({ ...s, comfortHours: value }))}
+            min={1}
+            max={12}
+            step={1}
           />
-          <Typography variant="caption" color="text.secondary" display="block">
-            Automatically apply generated schedule to your Daikin device each day
-          </Typography>
-        </Paper>
+          <p className="text-xs text-muted-foreground">Antal timmar per dag för att värma vatten till komforttemperatur</p>
+        </div>
 
-        {/* Save Button */}
-        <Button
-          variant="contained"
-          size="large"
-          onClick={handleSaveSettings}
-          disabled={isUpdating || isZoneUpdating}
-        >
-          {isUpdating || isZoneUpdating ? (
-            <>
-              <CircularProgress size={20} sx={{ mr: 1 }} />
-              Saving...
-            </>
+        <Separator />
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label>Avstängningsprocent</Label>
+            <span className="text-sm font-medium tabular-nums">{(formData.turnOffPercentile * 100).toFixed(0)}%</span>
+          </div>
+          <Slider
+            value={[formData.turnOffPercentile]}
+            onValueChange={([value]) => setFormData(s => ({ ...s, turnOffPercentile: value }))}
+            min={0.5}
+            max={0.99}
+            step={0.01}
+          />
+          <p className="text-xs text-muted-foreground">Priströskel för att stänga av varmvattenberedning (högre = färre avstängningar)</p>
+        </div>
+
+        <Separator />
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label>Max komfortgap</Label>
+            <span className="text-sm font-medium tabular-nums">{formData.maxComfortGapHours} h</span>
+          </div>
+          <Slider
+            value={[formData.maxComfortGapHours]}
+            onValueChange={([value]) => setFormData(s => ({ ...s, maxComfortGapHours: value }))}
+            min={1}
+            max={72}
+            step={1}
+          />
+          <p className="text-xs text-muted-foreground">Maximalt gap mellan på varandra följande komforttimmar (1–72 h)</p>
+        </div>
+
+        <Separator />
+
+        <div className="space-y-2">
+          <Label>Priszon</Label>
+          <Select
+            value={formData.selectedZone}
+            onValueChange={(value) => setFormData(s => ({ ...s, selectedZone: value }))}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Välj zon" />
+            </SelectTrigger>
+            <SelectContent>
+              {ZONES.map((z) => (
+                <SelectItem key={z} value={z}>{z}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </Card>
+
+      {/* Scheduling Mode + Automation */}
+      <Card className="p-5 space-y-5">
+        <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Schemaläge</h2>
+
+        <div className="space-y-2">
+          <Label>Läge</Label>
+          <Select
+            value={formData.schedulingMode}
+            onValueChange={(value) => setFormData(s => ({ ...s, schedulingMode: value as 'Classic' | 'Flexible' }))}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="Classic">Klassisk (Fast dagligt schema)</SelectItem>
+              <SelectItem value="Flexible">Flexibel (Intervallbaserad med prisoptimering)</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">Klassiskt läge genererar ett fast dagligt schema. Flexibelt läge schemalägger eco- och komfortkörningar vid optimala priser inom konfigurerbara intervall.</p>
+        </div>
+
+        <Separator />
+
+        <div className="flex items-center justify-between">
+          <div className="space-y-1">
+            <Label htmlFor="auto-apply">Auto-applicera</Label>
+            <p className="text-xs text-muted-foreground">Applicera automatiskt genererat schema till din Daikin-enhet varje dag</p>
+          </div>
+          <Switch
+            id="auto-apply"
+            checked={formData.autoApplySchedule}
+            onCheckedChange={(checked) => setFormData(s => ({ ...s, autoApplySchedule: checked }))}
+          />
+        </div>
+      </Card>
+
+      {/* Regional Formatting */}
+      <Card className="p-5 space-y-4">
+        <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Regionformat</h2>
+
+        <div className="space-y-2">
+          <Label>Locale</Label>
+          <Select
+            value={localeSetting}
+            onValueChange={(value) => {
+              const nextLocale = localeOptions.find((option) => option.value === value)?.value;
+              if (nextLocale) setLocaleSetting(nextLocale);
+            }}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {localeOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.value === 'auto'
+                    ? `Auto (System) — ${systemLocale} · ${systemTimezone}`
+                    : `${option.label} — ${option.locale} · ${option.timezone}`}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Tillämpas direkt och sparas lokalt i webbläsaren. Aktivt format: {effectiveLocale} · {effectiveTimezone}.
+          </p>
+        </div>
+      </Card>
+
+      {/* Flexible Schedule Settings */}
+      {formData.schedulingMode === 'Flexible' && (
+        <Card className="p-5 space-y-5">
+          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Flexibla schemainställningar</h2>
+
+          <h3 className="font-medium">Eco (Daglig VVB ~45°C)</h3>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label>Eco-intervall</Label>
+              <span className="text-sm font-medium tabular-nums">{formData.ecoIntervalHours} h</span>
+            </div>
+            <Slider
+              value={[formData.ecoIntervalHours]}
+              onValueChange={([value]) => setFormData(s => ({ ...s, ecoIntervalHours: value }))}
+              min={6}
+              max={36}
+              step={1}
+            />
+            <p className="text-xs text-muted-foreground">Hur ofta eco-uppvärmning ska köras (målintervall)</p>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label>Eco-flexibilitet</Label>
+              <span className="text-sm font-medium tabular-nums">±{formData.ecoFlexibilityHours} h</span>
+            </div>
+            <Slider
+              value={[formData.ecoFlexibilityHours]}
+              onValueChange={([value]) => setFormData(s => ({ ...s, ecoFlexibilityHours: value }))}
+              min={1}
+              max={18}
+              step={1}
+            />
+            <p className="text-xs text-muted-foreground">
+              Schemaläggningsfönster: eco körs mellan {Math.max(0, formData.ecoIntervalHours - formData.ecoFlexibilityHours)} h och {formData.ecoIntervalHours + formData.ecoFlexibilityHours} h efter senaste körning
+            </p>
+          </div>
+
+          <Separator />
+
+          <h3 className="font-medium">Comfort (Legionella ~60°C)</h3>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label>Comfort-intervall</Label>
+              <span className="text-sm font-medium tabular-nums">{formData.comfortIntervalDays} dagar</span>
+            </div>
+            <Slider
+              value={[formData.comfortIntervalDays]}
+              onValueChange={([value]) => setFormData(s => ({ ...s, comfortIntervalDays: value }))}
+              min={7}
+              max={90}
+              step={1}
+            />
+            <p className="text-xs text-muted-foreground">Hur ofta comfort-uppvärmning (legionella) ska köras</p>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label>Comfort-flexibilitet</Label>
+              <span className="text-sm font-medium tabular-nums">±{formData.comfortFlexibilityDays} dagar</span>
+            </div>
+            <Slider
+              value={[formData.comfortFlexibilityDays]}
+              onValueChange={([value]) => setFormData(s => ({ ...s, comfortFlexibilityDays: value }))}
+              min={1}
+              max={30}
+              step={1}
+            />
+            <p className="text-xs text-muted-foreground">
+              Schemaläggningsfönster: comfort körs mellan {Math.max(0, formData.comfortIntervalDays - formData.comfortFlexibilityDays)} d och {formData.comfortIntervalDays + formData.comfortFlexibilityDays} d efter senaste körning
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label>Tidig comfort-tröskel</Label>
+              <span className="text-sm font-medium tabular-nums">{(formData.comfortEarlyPercentile * 100).toFixed(0)}%</span>
+            </div>
+            <Slider
+              value={[formData.comfortEarlyPercentile]}
+              onValueChange={([value]) => setFormData(s => ({ ...s, comfortEarlyPercentile: value }))}
+              min={0.01}
+              max={0.50}
+              step={0.01}
+            />
+            <p className="text-xs text-muted-foreground">
+              När comfort-fönstret öppnar, utlös endast om priset är under denna historiska percentil. Tröskeln lättar allt eftersom fönstret fortskrider.
+            </p>
+          </div>
+        </Card>
+      )}
+
+      {/* Daikin Connection */}
+      <Card className="p-5 space-y-4">
+        <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Daikin-anslutning</h2>
+
+        <div className="flex items-center gap-3">
+          <Badge variant={isAuthorized ? 'default' : 'secondary'}>
+            {isAuthorized ? 'Ansluten' : 'Ej ansluten'}
+          </Badge>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {!isAuthorized ? (
+            <Button onClick={() => startAuth()}>
+              Starta OAuth-flöde
+            </Button>
           ) : (
-            'Save Settings'
+            <>
+              <Button variant="outline" onClick={() => refresh()} disabled={isRefreshing}>
+                {isRefreshing ? 'Uppdaterar…' : 'Uppdatera token'}
+              </Button>
+              <Button variant="destructive" onClick={() => setRevokeDialog(true)}>
+                Återkalla
+              </Button>
+            </>
           )}
-        </Button>
+        </div>
+      </Card>
 
-        <Divider />
+      {/* Save Button */}
+      <Button
+        className="w-full"
+        size="lg"
+        onClick={handleSaveSettings}
+        disabled={isUpdating || isZoneUpdating}
+      >
+        {isUpdating || isZoneUpdating ? (
+          <>
+            <span className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            Sparar…
+          </>
+        ) : (
+          <>
+            <FloppyDisk className="mr-2 h-4 w-4" />
+            Spara inställningar
+          </>
+        )}
+      </Button>
 
-        {/* Danger Zone */}
-        <Paper sx={{ p: 3, border: '1px solid', borderColor: 'error.main' }}>
-          <Typography variant="h6" color="error" gutterBottom>
-            Danger Zone
-          </Typography>
-
-          <Stack spacing={2}>
-            <Box>
-              <Typography variant="body2" gutterBottom>
-                Revoke Daikin authentication to disconnect your account.
-              </Typography>
-              <Button
-                variant="outlined"
-                color="error"
-                onClick={() => setRevokeDialog(true)}
-                disabled={!isAuthorized}
-              >
-                Revoke Daikin Access
-              </Button>
-            </Box>
-
-            <Box>
-              <Typography variant="body2" gutterBottom>
-                Refresh authentication token (use if experiencing connectivity issues).
-              </Typography>
-              <Button
-                variant="outlined"
-                onClick={() => refresh()}
-                disabled={!isAuthorized || isRefreshing}
-              >
-                {isRefreshing ? 'Refreshing...' : 'Refresh Token'}
-              </Button>
-            </Box>
-          </Stack>
-        </Paper>
-      </Stack>
-
-      {/* Dialogs */}
       <ConfirmDialog
         open={revokeDialog}
-        title="Revoke Daikin Access"
-        message="Are you sure you want to revoke access to your Daikin account? You will need to re-authorize to use schedule application features."
-        confirmText="Revoke"
-        cancelText="Cancel"
+        title="Återkalla Daikin-åtkomst"
+        message="Är du säker på att du vill återkalla åtkomsten till ditt Daikin-konto? Du behöver auktorisera igen för att kunna använda schemaläggningsfunktioner."
+        confirmText="Återkalla"
+        cancelText="Avbryt"
         onConfirm={handleRevokeToken}
         onCancel={() => setRevokeDialog(false)}
         isDestructive
       />
-
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={6000}
-        onClose={() => setSnackbar({ ...snackbar, open: false })}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-      >
-        <Alert
-          onClose={() => setSnackbar({ ...snackbar, open: false })}
-          severity={snackbar.severity}
-        >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
-    </Container>
+    </div>
   );
 }
