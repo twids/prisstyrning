@@ -1,11 +1,12 @@
 import {
   Dialog,
-  DialogTitle,
   DialogContent,
-  DialogActions,
-  Button,
-  DialogContentText,
-} from '@mui/material';
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -29,22 +30,25 @@ export default function ConfirmDialog({
   isDestructive = false,
 }: ConfirmDialogProps) {
   return (
-    <Dialog open={open} onClose={onCancel}>
-      <DialogTitle>{title}</DialogTitle>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onCancel(); }}>
       <DialogContent>
-        <DialogContentText>{message}</DialogContentText>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{message}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={onCancel}>
+            {cancelText}
+          </Button>
+          <Button
+            variant={isDestructive ? 'destructive' : 'default'}
+            onClick={onConfirm}
+            autoFocus
+          >
+            {confirmText}
+          </Button>
+        </DialogFooter>
       </DialogContent>
-      <DialogActions>
-        <Button onClick={onCancel}>{cancelText}</Button>
-        <Button
-          onClick={onConfirm}
-          variant="contained"
-          color={isDestructive ? 'error' : 'primary'}
-          autoFocus
-        >
-          {confirmText}
-        </Button>
-      </DialogActions>
     </Dialog>
   );
 }

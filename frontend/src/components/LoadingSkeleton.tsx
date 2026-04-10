@@ -1,20 +1,9 @@
-import { Paper, Skeleton, Stack } from '@mui/material';
-
 export default function LoadingSkeleton() {
   return (
-    <Stack spacing={3}>
-      <Paper sx={{ p: 3 }}>
-        <Skeleton variant="text" width="40%" height={40} />
-        <Skeleton variant="rectangular" height={200} sx={{ mt: 2 }} />
-      </Paper>
-      <Paper sx={{ p: 3 }}>
-        <Skeleton variant="text" width="30%" height={40} />
-        <Skeleton variant="rectangular" height={150} sx={{ mt: 2 }} />
-      </Paper>
-      <Paper sx={{ p: 3 }}>
-        <Skeleton variant="text" width="50%" height={40} />
-        <Skeleton variant="rectangular" height={100} sx={{ mt: 2 }} />
-      </Paper>
-    </Stack>
+    <div className="space-y-4 animate-pulse">
+      <div className="h-8 bg-muted rounded w-1/3" />
+      <div className="h-48 bg-muted rounded" />
+      <div className="h-48 bg-muted rounded" />
+    </div>
   );
 }

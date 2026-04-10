@@ -1,5 +1,3 @@
-import { Box, Typography, Paper } from '@mui/material';
-
 interface JsonViewerProps {
   data: unknown;
   title?: string;
@@ -7,24 +5,13 @@ interface JsonViewerProps {
 
 export default function JsonViewer({ data, title }: JsonViewerProps) {
   return (
-    <Paper sx={{ p: 2, bgcolor: 'background.default' }}>
+    <div className="rounded-lg border bg-card p-4">
       {title && (
-        <Typography variant="subtitle2" gutterBottom>
-          {title}
-        </Typography>
+        <h4 className="text-sm font-medium mb-2">{title}</h4>
       )}
-      <Box
-        component="pre"
-        sx={{
-          fontFamily: 'monospace',
-          fontSize: '0.875rem',
-          overflow: 'auto',
-          maxHeight: 400,
-          margin: 0,
-        }}
-      >
+      <pre className="font-mono text-sm overflow-auto max-h-[400px] m-0 bg-muted/50 rounded p-3">
         {JSON.stringify(data, null, 2)}
-      </Box>
-    </Paper>
+      </pre>
+    </div>
   );
 }

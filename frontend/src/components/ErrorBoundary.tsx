@@ -1,6 +1,5 @@
 import { Component, ReactNode, ErrorInfo } from 'react';
-import { Container, Paper, Typography, Button, Stack } from '@mui/material';
-import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import { WarningCircle } from '@phosphor-icons/react';
 
 interface Props {
   children: ReactNode;
@@ -33,20 +32,21 @@ export default class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <Container maxWidth="sm" sx={{ py: 8 }}>
-          <Paper sx={{ p: 4, textAlign: 'center' }}>
-            <Stack spacing={3} alignItems="center">
-              <ErrorOutlineIcon color="error" sx={{ fontSize: 64 }} />
-              <Typography variant="h4">Something went wrong</Typography>
-              <Typography variant="body1" color="text.secondary">
-                {this.state.error?.message || 'An unexpected error occurred'}
-              </Typography>
-              <Button variant="contained" onClick={this.handleReset}>
-                Return to Dashboard
-              </Button>
-            </Stack>
-          </Paper>
-        </Container>
+        <div className="flex items-center justify-center min-h-[50vh] px-4">
+          <div className="bg-card border rounded-lg p-8 text-center max-w-md w-full space-y-4">
+            <WarningCircle size={64} className="text-destructive mx-auto" />
+            <h2 className="text-2xl font-semibold">Something went wrong</h2>
+            <p className="text-muted-foreground">
+              {this.state.error?.message || 'An unexpected error occurred'}
+            </p>
+            <button
+              onClick={this.handleReset}
+              className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+            >
+              Return to Dashboard
+            </button>
+          </div>
+        </div>
       );
     }
 

@@ -1,11 +1,12 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ThemeProvider, CssBaseline } from '@mui/material';
-import { theme } from './theme';
+import { Toaster } from 'sonner';
 import Layout from './components/Layout';
 import DashboardPage from './pages/DashboardPage';
 import SettingsPage from './pages/SettingsPage';
 import AdminPage from './pages/AdminPage';
+import HistoryPage from './pages/HistoryPage';
+import NotFoundPage from './pages/NotFoundPage';
 import ErrorBoundary from './components/ErrorBoundary';
 import { TimezoneProvider } from './context/TimezoneContext';
 
@@ -22,20 +23,20 @@ function App() {
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <ThemeProvider theme={theme}>
-          <CssBaseline />
-          <TimezoneProvider>
-            <BrowserRouter key="router">
-              <Layout>
-                <Routes>
-                  <Route path="/" element={<DashboardPage />} />
-                  <Route path="/settings" element={<SettingsPage />} />
-                  <Route path="/admin" element={<AdminPage />} />
-                </Routes>
-              </Layout>
-            </BrowserRouter>
-          </TimezoneProvider>
-        </ThemeProvider>
+        <TimezoneProvider>
+          <BrowserRouter key="router">
+            <Layout>
+              <Routes>
+                <Route path="/" element={<DashboardPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/admin" element={<AdminPage />} />
+                <Route path="/history" element={<HistoryPage />} />
+                <Route path="*" element={<NotFoundPage />} />
+              </Routes>
+            </Layout>
+          </BrowserRouter>
+        </TimezoneProvider>
+        <Toaster richColors position="top-center" />
       </QueryClientProvider>
     </ErrorBoundary>
   );
