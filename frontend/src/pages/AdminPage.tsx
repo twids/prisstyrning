@@ -1,35 +1,14 @@
 import { useState } from 'react';
-import {
-  Container,
-  Paper,
-  Typography,
-  TextField,
-  Button,
-  Alert,
-  Snackbar,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Switch,
-  Chip,
-  Tooltip,
-  CircularProgress,
-  Stack,
-  Box,
-} from '@mui/material';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import CancelIcon from '@mui/icons-material/Cancel';
-import DeleteIcon from '@mui/icons-material/Delete';
-import IconButton from '@mui/material/IconButton';
-import Dialog from '@mui/material/Dialog';
-import DialogTitle from '@mui/material/DialogTitle';
-import DialogContent from '@mui/material/DialogContent';
-import DialogContentText from '@mui/material/DialogContentText';
-import DialogActions from '@mui/material/DialogActions';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { CheckCircle, XCircle, Trash } from '@phosphor-icons/react';
+import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { apiClient } from '../api/client';
 import { useFormatters } from '../context/TimezoneContext';
 import type { AdminUser } from '../types/api';
@@ -39,7 +18,6 @@ export default function AdminPage() {
   const { formatDateTime } = useFormatters();
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
-  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'error' | 'success' }>({ open: false, message: '', severity: 'error' });
   const [pendingToggles, setPendingToggles] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<AdminUser | null>(null);
 
@@ -85,7 +63,7 @@ export default function AdminPage() {
       queryClient.invalidateQueries({ queryKey: ['admin-users'] });
     },
     onError: (err) => {
-      setSnackbar({ open: true, message: `Admin toggle failed: ${err.message}`, severity: 'error' });
+      toast.error(`Admin toggle failed: ${err.message}`);
     },
   });
 
@@ -106,7 +84,7 @@ export default function AdminPage() {
       queryClient.invalidateQueries({ queryKey: ['admin-users'] });
     },
     onError: (err) => {
-      setSnackbar({ open: true, message: `Hangfire toggle failed: ${err.message}`, severity: 'error' });
+      toast.error(`Hangfire toggle failed: ${err.message}`);
     },
   });
 
@@ -114,11 +92,11 @@ export default function AdminPage() {
     mutationFn: (userId: string) => apiClient.deleteUser(userId),
     onSuccess: () => {
       setDeleteTarget(null);
-      setSnackbar({ open: true, message: 'Användare borttagen', severity: 'success' });
+      toast.success('Användare borttagen');
       queryClient.invalidateQueries({ queryKey: ['admin-users'] });
     },
     onError: (err: Error) => {
-      setSnackbar({ open: true, message: `Kunde inte ta bort: ${err.message}`, severity: 'error' });
+      toast.error(`Kunde inte ta bort: ${err.message}`);
     },
   });
 
@@ -135,43 +113,37 @@ export default function AdminPage() {
 
   if (statusQuery.isLoading) {
     return (
-      <Container maxWidth="lg" sx={{ py: 4, display: 'flex', justifyContent: 'center' }}>
-        <CircularProgress />
-      </Container>
+      <div className="flex justify-center py-16">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-border border-t-primary" />
+      </div>
     );
   }
 
   // Login form
   if (!isAdmin) {
     return (
-      <Container maxWidth="sm" sx={{ py: 4 }}>
-        <Paper sx={{ p: 4 }}>
-          <Typography variant="h4" gutterBottom>
-            Admin
-          </Typography>
-          <form onSubmit={handleLogin}>
-            <Stack spacing={2}>
-              <TextField
-                label="Lösenord"
-                type="password"
-                fullWidth
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoFocus
-              />
-              {loginError && <Alert severity="error">{loginError}</Alert>}
-              <Button
-                type="submit"
-                variant="contained"
-                disabled={loginMutation.isPending || !password.trim()}
-                startIcon={loginMutation.isPending ? <CircularProgress size={18} /> : undefined}
-              >
-                Logga in
-              </Button>
-            </Stack>
+      <div className="flex justify-center mt-12 px-4">
+        <Card className="p-6 w-full max-w-sm">
+          <h1 className="text-2xl font-bold mb-4">Admin</h1>
+          <form onSubmit={handleLogin} className="flex flex-col gap-3">
+            <input
+              type="password"
+              placeholder="Lösenord"
+              autoFocus
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full px-3 py-2 rounded-md bg-secondary border border-border text-foreground"
+            />
+            {loginError && <p className="text-destructive text-sm">{loginError}</p>}
+            <Button type="submit" disabled={loginMutation.isPending || !password.trim()}>
+              {loginMutation.isPending && (
+                <span className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-background border-t-transparent inline-block" />
+              )}
+              Logga in
+            </Button>
           </form>
-        </Paper>
-      </Container>
+        </Card>
+      </div>
     );
   }
 
@@ -179,185 +151,208 @@ export default function AdminPage() {
   const users = usersQuery.data?.users ?? [];
 
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
-      <Typography variant="h4" gutterBottom sx={{ fontSize: { xs: '1.5rem', md: '2rem' } }}>
-        Användare
-      </Typography>
+    <TooltipProvider>
+      <div className="px-4 py-6 max-w-screen-xl mx-auto">
+        <h1 className="text-2xl font-bold mb-4">Användare</h1>
 
-      {usersQuery.isLoading && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-          <CircularProgress />
-        </Box>
-      )}
+        {usersQuery.isLoading && (
+          <div className="flex justify-center py-8">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-border border-t-primary" />
+          </div>
+        )}
 
-      {usersQuery.error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          Kunde inte hämta användare: {(usersQuery.error as Error).message}
-        </Alert>
-      )}
+        {usersQuery.error && (
+          <p className="text-destructive mb-4">
+            Kunde inte hämta användare: {(usersQuery.error as Error).message}
+          </p>
+        )}
 
-      {usersQuery.data && (
-        <TableContainer component={Paper}>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>Användare</TableCell>
-                <TableCell>Zon</TableCell>
-                <TableCell>Inställningar</TableCell>
-                <TableCell>Daikin</TableCell>
-                <TableCell>Daikin Subject</TableCell>
-                <TableCell>Schema</TableCell>
-                <TableCell>Admin</TableCell>
-                <TableCell>Hangfire</TableCell>
-                <TableCell>Skapad</TableCell>
-                <TableCell>Åtgärd</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {users.map((user) => (
-                <TableRow key={user.userId} sx={user.isCurrentUser ? { bgcolor: 'action.selected' } : undefined}>
-                  <TableCell>
-                    <Stack direction="row" alignItems="center" spacing={1}>
-                      <Tooltip title={user.userId}>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace', cursor: 'pointer', userSelect: 'all' }}>
-                          {user.userId}
-                        </Typography>
-                      </Tooltip>
-                      {user.isCurrentUser && <Chip label="Du" color="primary" size="small" />}
-                    </Stack>
-                  </TableCell>
-                  <TableCell>{user.zone || '—'}</TableCell>
-                  <TableCell>
-                    <Typography variant="body2" noWrap>
-                      {user.settings.ComfortHours}h, {(user.settings.TurnOffPercentile * 100).toFixed(0)}%
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    {user.daikinAuthorized ? (
-                      <Tooltip title={user.daikinExpiresAtUtc ? `Utgår: ${formatDateTime(user.daikinExpiresAtUtc)}` : 'Auktoriserad'}>
-                        <CheckCircleIcon color="success" fontSize="small" />
-                      </Tooltip>
-                    ) : (
-                      <Tooltip title="Ej auktoriserad">
-                        <CancelIcon color="error" fontSize="small" />
-                      </Tooltip>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {user.daikinSubject ? (
-                      <Tooltip title={user.daikinSubject}>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace', cursor: 'pointer', userSelect: 'all', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {user.daikinSubject}
-                        </Typography>
-                      </Tooltip>
-                    ) : (
-                      <Typography variant="body2" color="text.secondary">—</Typography>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {user.hasScheduleHistory ? (
-                      <Tooltip title={user.lastScheduleDate ? `Senast: ${formatDateTime(user.lastScheduleDate)}` : ''}>
-                        <Typography variant="body2">{user.scheduleCount} st</Typography>
-                      </Tooltip>
-                    ) : (
-                      '—'
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {pendingToggles.has(`admin-${user.userId}`) ? (
-                      <CircularProgress size={20} />
-                    ) : (
-                      <Switch
-                        checked={user.isAdmin}
-                        disabled={user.isCurrentUser}
-                        onChange={() => toggleAdminMutation.mutate(user)}
-                        size="small"
-                      />
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {pendingToggles.has(`hangfire-${user.userId}`) ? (
-                      <CircularProgress size={20} />
-                    ) : (
-                      <Switch
-                        checked={user.hasHangfireAccess}
-                        onChange={() => toggleHangfireMutation.mutate(user)}
-                        size="small"
-                      />
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {user.createdAt ? (
-                      <Tooltip title={toUtcIso(user.createdAt)}>
-                        <Typography variant="body2">
-                          {formatDateTime(user.createdAt)}
-                        </Typography>
-                      </Tooltip>
-                    ) : (
-                      <Typography variant="body2">—</Typography>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Tooltip title={user.isCurrentUser ? 'Kan inte ta bort dig själv' : 'Ta bort användare'}>
-                      <span>
-                        <IconButton
-                          size="small"
-                          color="error"
-                          disabled={user.isCurrentUser}
-                          onClick={() => setDeleteTarget(user)}
-                          aria-label={user.isCurrentUser ? 'Kan inte ta bort din egen användare' : `Ta bort användare ${user.userId.slice(0, 8)}`}
-                        >
-                          <DeleteIcon fontSize="small" />
-                        </IconButton>
-                      </span>
-                    </Tooltip>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {users.length === 0 && (
+        {usersQuery.data && (
+          <Card>
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={10} align="center">
-                    <Typography variant="body2" color="text.secondary">Inga användare</Typography>
-                  </TableCell>
+                  <TableHead>Användare</TableHead>
+                  <TableHead>Zon</TableHead>
+                  <TableHead>Inställningar</TableHead>
+                  <TableHead>Daikin</TableHead>
+                  <TableHead>Daikin Subject</TableHead>
+                  <TableHead>Schema</TableHead>
+                  <TableHead>Admin</TableHead>
+                  <TableHead>Hangfire</TableHead>
+                  <TableHead>Skapad</TableHead>
+                  <TableHead>Åtgärd</TableHead>
                 </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      )}
+              </TableHeader>
+              <TableBody>
+                {users.map((user) => (
+                  <TableRow key={user.userId} className={user.isCurrentUser ? 'bg-secondary/50' : undefined}>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="font-mono cursor-pointer select-all text-sm">
+                              {user.userId.slice(0, 8)}…
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>{user.userId}</TooltipContent>
+                        </Tooltip>
+                        {user.isCurrentUser && <Badge variant="default">Du</Badge>}
+                      </div>
+                    </TableCell>
+                    <TableCell>{user.zone || '—'}</TableCell>
+                    <TableCell className="text-sm whitespace-nowrap">
+                      {user.settings.ComfortHours}h, {(user.settings.TurnOffPercentile * 100).toFixed(0)}%
+                    </TableCell>
+                    <TableCell>
+                      {user.daikinAuthorized ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span>
+                              <CheckCircle className="text-green-500" size={18} />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {user.daikinExpiresAtUtc ? `Utgår: ${formatDateTime(user.daikinExpiresAtUtc)}` : 'Auktoriserad'}
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span>
+                              <XCircle className="text-red-500" size={18} />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>Ej auktoriserad</TooltipContent>
+                        </Tooltip>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {user.daikinSubject ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="font-mono text-sm cursor-pointer select-all max-w-[120px] overflow-hidden text-ellipsis whitespace-nowrap block">
+                              {user.daikinSubject}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>{user.daikinSubject}</TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {user.hasScheduleHistory ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="text-sm">{user.scheduleCount} st</span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {user.lastScheduleDate ? `Senast: ${formatDateTime(user.lastScheduleDate)}` : ''}
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        '—'
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {pendingToggles.has(`admin-${user.userId}`) ? (
+                        <span className="h-5 w-5 animate-spin rounded-full border-2 border-border border-t-primary inline-block" />
+                      ) : (
+                        <Switch
+                          checked={user.isAdmin}
+                          disabled={user.isCurrentUser}
+                          onCheckedChange={() => toggleAdminMutation.mutate(user)}
+                        />
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {pendingToggles.has(`hangfire-${user.userId}`) ? (
+                        <span className="h-5 w-5 animate-spin rounded-full border-2 border-border border-t-primary inline-block" />
+                      ) : (
+                        <Switch
+                          checked={user.hasHangfireAccess}
+                          onCheckedChange={() => toggleHangfireMutation.mutate(user)}
+                        />
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {user.createdAt ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="text-sm">{formatDateTime(user.createdAt)}</span>
+                          </TooltipTrigger>
+                          <TooltipContent>{toUtcIso(user.createdAt)}</TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        <span className="text-sm">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              disabled={user.isCurrentUser}
+                              onClick={() => setDeleteTarget(user)}
+                              aria-label={user.isCurrentUser ? 'Kan inte ta bort din egen användare' : `Ta bort användare ${user.userId.slice(0, 8)}`}
+                              className="text-destructive hover:text-destructive"
+                            >
+                              <Trash size={16} />
+                            </Button>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {user.isCurrentUser ? 'Kan inte ta bort dig själv' : 'Ta bort användare'}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {users.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={10} className="text-center text-muted-foreground">
+                      Inga användare
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </Card>
+        )}
 
-      <Dialog open={deleteTarget !== null} onClose={() => setDeleteTarget(null)}>
-        <DialogTitle>Ta bort användare</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            Är du säker på att du vill ta bort användare{' '}
-            <strong>{deleteTarget?.userId?.slice(0, 8)}…</strong>?
-            {' '}All data (inställningar, tokens, schemahistorik) kommer att raderas permanent.
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDeleteTarget(null)}>Avbryt</Button>
-          <Button
-            onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.userId)}
-            color="error"
-            variant="contained"
-            disabled={deleteMutation.isPending}
-            startIcon={deleteMutation.isPending ? <CircularProgress size={18} /> : <DeleteIcon />}
-          >
-            Ta bort
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={4000}
-        onClose={() => setSnackbar((s: typeof snackbar) => ({ ...s, open: false }))}
-      >
-        <Alert severity={snackbar.severity} onClose={() => setSnackbar((s: typeof snackbar) => ({ ...s, open: false }))}>
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
-    </Container>
+        <Dialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Ta bort användare</DialogTitle>
+              <DialogDescription>
+                Är du säker på att du vill ta bort användare{' '}
+                <strong>{deleteTarget?.userId?.slice(0, 8)}…</strong>?{' '}
+                All data (inställningar, tokens, schemahistorik) kommer att raderas permanent.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleteTarget(null)}>
+                Avbryt
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={deleteMutation.isPending}
+                onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.userId)}
+              >
+                {deleteMutation.isPending ? (
+                  <span className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-background border-t-transparent inline-block" />
+                ) : (
+                  <Trash className="mr-2" size={16} />
+                )}
+                Ta bort
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </TooltipProvider>
   );
 }
