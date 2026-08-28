@@ -1,0 +1,21 @@
+{
+  "logging_level": "INFO",
+  "costfun": "profit",
+  "optimization_time_step": 15,
+  "continual_publish": false,
+  "lp_solver_timeout": 45,
+  "use_websocket": false,
+  "use_influxdb": false,
+  "set_use_pv": false,
+  "set_use_battery": false,
+  "number_of_deferrable_loads": 1,
+  "nominal_power_of_deferrable_loads": [2500.0],
+  "minimum_power_of_deferrable_loads": [0.0],
+  "operating_hours_of_each_deferrable_load": [0],
+  "start_timesteps_of_each_deferrable_load": [0],
+  "end_timesteps_of_each_deferrable_load": [0],
+  "treat_deferrable_load_as_semi_cont": [true],
+  "set_deferrable_load_single_constant": [false],
+  "set_deferrable_startup_penalty": [0.02],
+  "capacity_cost_per_kw": 0.0
+}

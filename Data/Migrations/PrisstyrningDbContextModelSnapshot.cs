@@ -64,6 +64,90 @@ namespace Prisstyrning.Data.Migrations
                     b.ToTable("DaikinTokens");
                 });
 
+            modelBuilder.Entity("Prisstyrning.Data.Entities.DhwCycle", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<decimal?>("ActualCost")
+                        .HasColumnType("numeric");
+
+                    b.Property<DateTimeOffset?>("ActualEndUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("ActualStartUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("BackupHeaterUsed")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset?>("EstimatedCompletionUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTimeOffset?>("LastVerificationSampleUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("PlannedStartUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PowerProfileJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<decimal?>("PredictedCost")
+                        .HasColumnType("numeric");
+
+                    b.Property<int>("PredictedDurationMinutes")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ReservedDurationMinutes")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("ScheduleAcceptedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<double?>("StartTemperatureC")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<DateTimeOffset?>("TargetReachedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double>("TargetTemperatureC")
+                        .HasColumnType("double precision");
+
+                    b.Property<int>("TargetVerificationCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "PlannedStartUtc");
+
+                    b.ToTable("DhwCycles");
+                });
+
             modelBuilder.Entity("Prisstyrning.Data.Entities.FlexibleScheduleState", b =>
                 {
                     b.Property<string>("UserId")
@@ -148,6 +232,620 @@ namespace Prisstyrning.Data.Migrations
                     b.ToTable("ScheduleHistory");
                 });
 
+            modelBuilder.Entity("Prisstyrning.Data.Entities.ThermalControlCommand", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("CommandType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("Error")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<double?>("PreviousValue")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<double?>("RequestedValue")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("Target")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<DateTimeOffset>("TimestampUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "TimestampUtc");
+
+                    b.ToTable("ThermalControlCommands");
+                });
+
+            modelBuilder.Entity("Prisstyrning.Data.Entities.ThermalControlState", b =>
+                {
+                    b.Property<string>("UserId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<double>("CurrentDeviationC")
+                        .HasColumnType("double precision");
+
+                    b.Property<Guid?>("CurrentPlanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("FallbackReason")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<DateTimeOffset?>("LastDeviationWriteUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("LastHeartbeatUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("LeaseExpiresUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LeaseOwner")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<double?>("ManualOverrideDeviationC")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("ManualOverrideReason")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<DateTimeOffset?>("ManualOverrideUntilUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double>("PiIntegral")
+                        .HasColumnType("double precision");
+
+                    b.HasKey("UserId");
+
+                    b.ToTable("ThermalControlStates");
+                });
+
+            modelBuilder.Entity("Prisstyrning.Data.Entities.ThermalEntityConfig", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("EntityId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("ExpectedUnit")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<double?>("MaximumRatePerHour")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("MaximumValid")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("MinimumValid")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "EntityId");
+
+                    b.HasIndex("UserId", "Role")
+                        .IsUnique();
+
+                    b.ToTable("ThermalEntityConfigs");
+                });
+
+            modelBuilder.Entity("Prisstyrning.Data.Entities.ThermalEvent", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("DetailsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Severity")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<DateTimeOffset>("TimestampUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "TimestampUtc");
+
+                    b.ToTable("ThermalEvents");
+                });
+
+            modelBuilder.Entity("Prisstyrning.Data.Entities.ThermalHourlyAggregate", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<double?>("AverageCop")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("AverageLwtC")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("AverageOutsideTemperatureC")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("AverageRoomTemperatureC")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("HeatOutputKwh")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("HeatPumpEnergyKwh")
+                        .HasColumnType("double precision");
+
+                    b.Property<DateTimeOffset>("HourUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("RoomsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "HourUtc")
+                        .IsUnique();
+
+                    b.ToTable("ThermalHourlyAggregates");
+                });
+
+            modelBuilder.Entity("Prisstyrning.Data.Entities.ThermalModelVersion", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("MetricsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("ModelType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("ParametersJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTimeOffset>("TrainingFromUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("TrainingToUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "ModelType", "CreatedAtUtc");
+
+                    b.ToTable("ThermalModelVersions");
+                });
+
+            modelBuilder.Entity("Prisstyrning.Data.Entities.ThermalPlan", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<double>("Confidence")
+                        .HasColumnType("double precision");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("InputSnapshotJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<bool>("IsShadow")
+                        .HasColumnType("boolean");
+
+                    b.Property<decimal?>("ObjectiveCost")
+                        .HasColumnType("numeric");
+
+                    b.Property<int>("SolverDurationMs")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("Summary")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTimeOffset>("ValidFromUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("ValidUntilUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "CreatedAtUtc");
+
+                    b.ToTable("ThermalPlans");
+                });
+
+            modelBuilder.Entity("Prisstyrning.Data.Entities.ThermalPlanStep", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<double>("Confidence")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("DecisionReasonJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<double>("DesiredHeatOutputKw")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("DesiredLwtDeviationC")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("DhwMode")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<bool>("DhwReserved")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset>("EndUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ExpectedRoomsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<decimal>("IncrementalCost")
+                        .HasColumnType("numeric");
+
+                    b.Property<DateTimeOffset>("StartUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ThermalPlanId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ThermalPlanId", "StartUtc");
+
+                    b.ToTable("ThermalPlanSteps");
+                });
+
+            modelBuilder.Entity("Prisstyrning.Data.Entities.ThermalRoomConfig", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("EntityId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<bool>("IsCritical")
+                        .HasColumnType("boolean");
+
+                    b.Property<double>("MaximumRateCPerHour")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("MaximumValidC")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("MinimumValidC")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<double>("TargetOffsetC")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<double>("Weight")
+                        .HasColumnType("double precision");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "EntityId")
+                        .IsUnique();
+
+                    b.ToTable("ThermalRoomConfigs");
+                });
+
+            modelBuilder.Entity("Prisstyrning.Data.Entities.ThermalSiteConfig", b =>
+                {
+                    b.Property<string>("UserId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<double>("ActiveDeviationLimitC")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("BaseRoomTargetC")
+                        .HasColumnType("double precision");
+
+                    b.Property<int>("ComfortFlexibilityDays")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ComfortIntervalDays")
+                        .HasColumnType("integer");
+
+                    b.Property<double>("ComfortSetpointC")
+                        .HasColumnType("double precision");
+
+                    b.Property<bool>("ComfortSetpointConfirmed")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("ControlMode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasDefaultValue("Legacy");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("DhwLeaseExpiresUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DhwLeaseOwner")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)");
+
+                    b.Property<string>("DhwWriter")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasDefaultValue("Legacy");
+
+                    b.Property<bool>("HeatPumpPowerSignVerified")
+                        .HasColumnType("boolean");
+
+                    b.Property<double>("LowerComfortBandC")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("TariffDefinitionJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<bool>("TariffEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("TimeZone")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasDefaultValue("Europe/Stockholm");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double>("UpperComfortBandC")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("VariableCostComponentsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<bool>("WeatherCurveVerified")
+                        .HasColumnType("boolean");
+
+                    b.HasKey("UserId");
+
+                    b.ToTable("ThermalSiteConfigs");
+                });
+
+            modelBuilder.Entity("Prisstyrning.Data.Entities.ThermalTelemetrySample", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<bool?>("BackupHeaterActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<double?>("BrineInC")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("BrineOutC")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("Cop")
+                        .HasColumnType("double precision");
+
+                    b.Property<bool?>("DefrostActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool?>("DhwActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<double?>("FlowLitresPerMinute")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("HeatOutputKw")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("HeatPumpPowerKw")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("LeavingWaterTemperatureC")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("OutsideTemperatureC")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("OutsideTemperatureForecastJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<double?>("PropertyPowerKw")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("QualityJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<double?>("ReturnWaterTemperatureC")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("RoomTemperaturesJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<double?>("SolarIrradianceWm2")
+                        .HasColumnType("double precision");
+
+                    b.Property<decimal?>("SpotPriceSekPerKwh")
+                        .HasColumnType("numeric");
+
+                    b.Property<double?>("TankTemperatureC")
+                        .HasColumnType("double precision");
+
+                    b.Property<DateTimeOffset>("TimestampUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<double?>("WindSpeedMps")
+                        .HasColumnType("double precision");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "TimestampUtc")
+                        .IsUnique();
+
+                    b.ToTable("ThermalTelemetrySamples");
+                });
+
             modelBuilder.Entity("Prisstyrning.Data.Entities.UserSettings", b =>
                 {
                     b.Property<string>("UserId")
@@ -214,6 +912,22 @@ namespace Prisstyrning.Data.Migrations
                     b.HasKey("UserId");
 
                     b.ToTable("UserSettings");
+                });
+
+            modelBuilder.Entity("Prisstyrning.Data.Entities.ThermalPlanStep", b =>
+                {
+                    b.HasOne("Prisstyrning.Data.Entities.ThermalPlan", "ThermalPlan")
+                        .WithMany("Steps")
+                        .HasForeignKey("ThermalPlanId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ThermalPlan");
+                });
+
+            modelBuilder.Entity("Prisstyrning.Data.Entities.ThermalPlan", b =>
+                {
+                    b.Navigation("Steps");
                 });
 #pragma warning restore 612, 618
         }

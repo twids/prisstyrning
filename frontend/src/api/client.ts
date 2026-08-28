@@ -116,6 +116,66 @@ class ApiClient {
     return this.get('/api/admin/users');
   }
 
+  // Intelligent thermal orchestration
+  async getThermalStatus(): Promise<T.ThermalStatus> {
+    return this.get('/api/thermal/status');
+  }
+
+  async getThermalConfig(): Promise<T.ThermalConfig> {
+    return this.get('/api/thermal/config');
+  }
+
+  async saveThermalConfig(config: T.ThermalConfig): Promise<T.ThermalConfig> {
+    return this.put('/api/thermal/config', config);
+  }
+
+  async getThermalReadiness(targetMode: T.ControlMode): Promise<T.ThermalReadiness> {
+    return this.get(`/api/thermal/readiness?targetMode=${encodeURIComponent(targetMode)}`);
+  }
+
+  async changeThermalMode(mode: T.ControlMode): Promise<{ message: string }> {
+    return this.post('/api/thermal/mode', { mode, confirmed: true });
+  }
+
+  async getThermalPlan(): Promise<T.ThermalPlan | null> {
+    const response = await fetch(this.baseUrl + '/api/thermal/plan', { credentials: 'same-origin' });
+    if (response.status === 204) return null;
+    if (!response.ok) throw new Error(this.extractErrorMessage(await response.text()) || `HTTP ${response.status}`);
+    return response.json();
+  }
+
+  async getThermalHistory(from: string, to: string): Promise<T.ThermalTelemetrySample[]> {
+    return this.get(`/api/thermal/history?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+  }
+
+  async getThermalEvents(limit = 100): Promise<T.ThermalEvent[]> {
+    return this.get(`/api/thermal/events?limit=${limit}`);
+  }
+
+  async getDhwCycles(): Promise<T.DhwCycle[]> {
+    return this.get('/api/thermal/dhw');
+  }
+
+  async getThermalModels(): Promise<T.ThermalModelVersion[]> {
+    return this.get('/api/thermal/models');
+  }
+
+  async getHomeAssistantStatus(): Promise<T.HomeAssistantStatus> {
+    return this.get('/api/home-assistant/status');
+  }
+
+  async testHomeAssistant(): Promise<{ connected: boolean }> {
+    return this.post('/api/home-assistant/test');
+  }
+
+  async getHomeAssistantEntities(): Promise<T.HomeAssistantEntity[]> {
+    return this.get('/api/home-assistant/entities');
+  }
+
+  async importHomeAssistantHistory(fromUtc: string, toUtc: string): Promise<T.HomeAssistantHistoryImportResult> {
+    return this.post('/api/home-assistant/import-history', { fromUtc, toUtc });
+  }
+
   async grantAdmin(userId: string): Promise<{ granted: boolean; userId: string }> {
     return this.post(`/api/admin/users/${encodeURIComponent(userId)}/grant`);
   }
@@ -159,7 +219,21 @@ class ApiClient {
       const text = await response.text();
       throw new Error(this.extractErrorMessage(text) || `HTTP ${response.status}: ${url}`);
     }
-    return response.json();
+    return response.status === 204 ? undefined as T : response.json();
+  }
+
+  private async put<T>(url: string, body: unknown): Promise<T> {
+    const response = await fetch(this.baseUrl + url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(this.extractErrorMessage(text) || `HTTP ${response.status}: ${url}`);
+    }
+    return response.status === 204 ? undefined as T : response.json();
   }
 
   private async del<T>(url: string): Promise<T> {
@@ -171,7 +245,7 @@ class ApiClient {
       const text = await response.text();
       throw new Error(this.extractErrorMessage(text) || `HTTP ${response.status}: ${url}`);
     }
-    return response.json();
+    return response.status === 204 ? undefined as T : response.json();
   }
 
   /** Try to extract a user-friendly error message from a response body that may be JSON */

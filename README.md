@@ -1,6 +1,8 @@
 ﻿# Prisstyrning
 
-Price based DHW (domestic hot water) schedule generation for Daikin ONECTA using Nordpool day-ahead prices (per-user zone selectable).
+Price based DHW (domestic hot water) schedule generation for Daikin ONECTA, now extended with a safety-gated thermal orchestrator for Home Assistant, P1P2MQTT and EMHASS.
+
+The existing ONECTA/DHW scheduler remains the default writer after every install and migration. The new subsystem starts in `Legacy`, is disabled by configuration, and cannot send P1P2 or joint DHW commands until its guided readiness gates have been passed.
 
 ## Features
 * Fetches hourly prices from Nordpool (background job every 6h + manual refresh)
@@ -13,8 +15,36 @@ Price based DHW (domestic hot water) schedule generation for Daikin ONECTA using
 * Configuration via `appsettings*.json` and/or environment variables (env has highest precedence; optional `PRISSTYRNING_` prefix)
 * **Modern frontend**: React 18 + TypeScript + Material UI with dark theme, real-time updates, and responsive design
 * Multi-arch container build (linux/amd64 & linux/arm64) via GitHub Actions
-* **Testing**: 250+ passing backend tests covering repositories, jobs, API endpoints, and OAuth integration
+* **Testing**: backend regression tests plus Vitest, React Testing Library, accessibility checks and Playwright critical-flow tests
 * See `ROADMAP.md` for planned improvements / technical debt
+
+## Intelligent heating orchestrator
+
+The new orchestration path keeps execution and optimization deliberately separate:
+
+```text
+Home Assistant sensors ──> prisstyrning ──> PostgreSQL
+                              │   │
+                              │   ├──> ONECTA (DHW, only the active writer)
+                              │   └──> HA/P1P2MQTT (allowlisted LWT deviation only)
+                              │
+                              └──> EMHASS (calculation only, private Docker network)
+```
+
+`prisstyrning` owns telemetry validation, HA history resampling, weather/COP/grey-box models, five-minute DHW cycle planning, safety rules, writer leases, decisions and command verification. EMHASS only solves the 15-minute/48-hour space-heating problem. It receives all forecasts at runtime, has no valid Home Assistant URL or token and publishes no HA entities. Its documented `opt_res_latest.csv` is read through a read-only shared data volume; `prisstyrning` rejects stale files, missing thermal columns and incomplete horizons before creating its own versioned plan.
+
+The operating modes are intentionally sequential:
+
+| Mode | LWT writer | DHW writer | Purpose |
+|---|---|---|---|
+| `Legacy` | none; deviation must be zero | existing scheduler | Post-install default and immediate rollback |
+| `Shadow` | none | existing scheduler | Collect telemetry and compare plans without writes |
+| `LwtActive` | allowlisted P1P2 command | existing scheduler | Limited LWT correction after weather-curve validation |
+| `FullActive` | allowlisted P1P2 command | joint planner | Atomic handover after DHW shadow acceptance |
+
+`DhwWriter` is always exactly `Legacy` or `Joint`. A separate expiring database lease surrounds every ONECTA write and prevents handover while a write is in progress. Rollback to `Legacy` returns DHW ownership, stops new control, and writes LWT deviation zero while retaining telemetry and models. The thermal installation is bound to the existing unique legacy auto-apply/ONECTA owner only after an admin-authorized request; active LWT control is limited to one installation.
+
+The UI is Swedish and exposes Overview, Plan, Rooms, Hot water, Model, Events and Settings. A permanent status strip shows the active mode/writer, data quality, plan age, EMHASS state, LWT deviation, fallback and the next action. All thermal and Home Assistant API reads and writes require the application admin role. Browser identities use an encrypted and signed cookie backed by persistent ASP.NET Data Protection keys; raw installation user IDs are not serialized by the thermal API. The old 24-hour schedule view remains available under **Legacy-DHW**.
 
 ## Configuration
 Precedence (highest first):
@@ -60,6 +90,24 @@ Double underscore `__` maps to nested sections (standard .NET config convention)
 | Schedule | TurnOffNeighborWindow | `PRISSTYRNING_Schedule__TurnOffNeighborWindow` | Neighborhood half-window size for spike avg |
 | Schedule | ComfortNextHourMaxIncreasePct | `PRISSTYRNING_Schedule__ComfortNextHourMaxIncreasePct` | Max % increase allowed for extending comfort block |
 | Storage | Directory | `PRISSTYRNING_Storage__Directory` | Directory for persisted price/schedule snapshots |
+| Security | DataProtectionKeysPath | `PRISSTYRNING_Security__DataProtectionKeysPath` | Persistent directory for session-signing keys; normally below `/data` |
+| Security | AcceptLegacyUserCookie | `PRISSTYRNING_Security__AcceptLegacyUserCookie` | One-time migration of known old unsigned sessions; default `false` and disable immediately after migration |
+| Security | SecureCookies | `PRISSTYRNING_Security__SecureCookies` | Forces Secure session cookies; defaults to `true` outside Development |
+| Thermal | EnableDhwWriterCoordination | `PRISSTYRNING_Thermal__EnableDhwWriterCoordination` | Enables the new database lease around legacy and joint DHW writes; default `false` so the first Legacy canary uses the unchanged write path |
+| Thermal | AllowLwtActive | `PRISSTYRNING_Thermal__AllowLwtActive` | Deployment-level kill switch for LWT writes; default `false` |
+| Thermal | AllowFullActive | `PRISSTYRNING_Thermal__AllowFullActive` | Deployment-level kill switch for joint DHW writes; default `false` |
+| HomeAssistant:Telemetry | Enabled | `PRISSTYRNING_HomeAssistant__Telemetry__Enabled` | Enables read-only REST/WebSocket telemetry; default `false` |
+| HomeAssistant:Telemetry | BaseUrl | `PRISSTYRNING_HomeAssistant__Telemetry__BaseUrl` | Internal Home Assistant base URL |
+| HomeAssistant:Telemetry | TokenFile | `PRISSTYRNING_HomeAssistant__Telemetry__TokenFile` | Path to the read-only Docker secret |
+| HomeAssistant:Control | BaseUrl | `PRISSTYRNING_HomeAssistant__Control__BaseUrl` | HA URL used only by the active control client |
+| HomeAssistant:Control | TokenFile | `PRISSTYRNING_HomeAssistant__Control__TokenFile` | Path to the separate control Docker secret |
+| HomeAssistant:Control | HeatingDeviationEntityId | `PRISSTYRNING_HomeAssistant__Control__HeatingDeviationEntityId` | Exact allowlisted `number.*` P1P2 deviation entity |
+| Emhass | Enabled | `PRISSTYRNING_Emhass__Enabled` | Enables shadow optimization; default `false` |
+| Emhass | BaseUrl | `PRISSTYRNING_Emhass__BaseUrl` | Internal endpoint, normally `http://emhass:5000` |
+| Emhass | ResultPath | `PRISSTYRNING_Emhass__ResultPath` | Read-only path to EMHASS `opt_res_latest.csv`, normally `/emhass-data/opt_res_latest.csv` |
+| Emhass | SolverTimeoutSeconds | `PRISSTYRNING_Emhass__SolverTimeoutSeconds` | Hard timeout, capped at 45 seconds |
+| Emhass | OptimizationTimeStepMinutes | `PRISSTYRNING_Emhass__OptimizationTimeStepMinutes` | Must be 15 for this integration |
+| Emhass | HorizonHours | `PRISSTYRNING_Emhass__HorizonHours` | Planning horizon, normally 48 hours |
 | Root | PublicBaseUrl | `PRISSTYRNING_PublicBaseUrl` | Base URL used to auto-build redirect (if RedirectUri missing) |
 | Root | PORT | `PRISSTYRNING_PORT` | ASP.NET listening port (defaults 5000) |
 
@@ -127,6 +175,35 @@ Start:
 docker compose -f docker-compose.example.yml up -d
 ```
 
+## Safe thermal deployment
+
+[`docker-compose.thermal.example.yml`](docker-compose.thermal.example.yml) is the reference topology for Unraid/Dockhand. It adds an internal-only EMHASS service to the application and PostgreSQL. EMHASS `v0.18.0` is locked to multi-arch digest `sha256:b9c88442c2623c83469cb6ae103991a349cc63fbd5c8fd100d5e071e6ff41204`; its port is not published to the LAN. `/share` is a persistent bind mount and `/data` is a persistent named volume. The same data volume is mounted read-only at `/emhass-data` in `prisstyrning`, solely to consume the documented optimization CSV.
+
+Before importing the stack:
+
+1. Copy every currently effective ONECTA, Nord Pool, schedule, OAuth, routing and database value from the running stack. In particular, do not accidentally change `Daikin__ApplySchedule`; the legacy DHW job must keep behaving exactly as it does today.
+2. For the first Legacy canary, leave HA telemetry and EMHASS integration disabled and omit the HA secrets from the production stack. Before Telemetry Shadow, create a read-only HA identity. Create the separate control identity only before the later LWT stage; it is reserved for the exact P1P2 `Deviation_Heating` entity.
+3. Set `HOME_ASSISTANT_URL` to an internally reachable URL and leave `P1P2_DEVIATION_ENTITY_ID` empty until the real `number.*` entity has been verified.
+4. Validate the rendered Dockhand/Compose configuration and confirm that only `prisstyrning` is attached to both networks. EMHASS must have no published port and no HA secret.
+5. Persist Data Protection keys below the existing `/data` mount. If the current browser identity must be retained, set `AcceptLegacyUserCookie=true` only for the migration window, load the application once, verify that a signed `v1.*` cookie was issued, and then set it back to `false`.
+6. Deploy with the new settings but leave the database mode at `Legacy`, `EnableDhwWriterCoordination=false`, `AllowLwtActive=false` and `AllowFullActive=false`. This keeps the existing scheduled ONECTA write path unchanged during the first canary. Migrations create the new thermal schema and only extend their own new tables; no legacy table is renamed, removed or reinterpreted.
+
+`GET /health/live` checks the web process. `GET /health/ready` additionally checks PostgreSQL connectivity and that no EF migration remains pending. HA and EMHASS are deliberately excluded from Legacy readiness.
+
+For forecast-aware planning, map either a weather/template entity whose `attributes.forecast` contains at least `datetime` and `temperature`, or provide the separate current wind/solar entities. Optional forecast fields are `wind_speed`, `solar_irradiance` or `solar_radiation`; temperatures and wind are normalized to °C and m/s. The Settings page can import up to 90 days of HA history, resample it to five minutes and preserve every existing live snapshot.
+
+Then use the guided UI stages rather than editing the mode directly:
+
+1. Configure entity mappings and verify live values/units while still in `Legacy`.
+2. Enter `Shadow` and collect at least 21 days, including ten real heating days and the required DHW comparison cycles.
+3. Perform the seven-heating-day weather-curve test with deviation zero and legacy DHW still active.
+4. Enable `LwtActive` at ±1 °C; expand to ±3 °C only after another seven problem-free heating days.
+5. Move to `FullActive` only when every readiness check is green. The handover changes `DhwWriter` atomically; it never deletes the legacy job.
+
+At any point in an active mode, use the permanently visible **Rollback** action. It sets `DhwWriter=Legacy`, stops joint writes and requests zero LWT deviation. If the new services are unavailable while the database is still in `Legacy`, the existing DHW path continues independently.
+
+The EMHASS image requires placeholder HA fields during initialization, but [`emhass/secrets_emhass.stateless.yaml`](emhass/secrets_emhass.stateless.yaml) intentionally contains no valid HA address or credential. Do not replace it with a real token. `prisstyrning` supplies prices, load, outdoor temperature, comfort bounds and DHW reservation in each request, then validates the freshly written `opt_res_latest.csv`. It never calls `publish-data`.
+
 ## GitHub Container Registry
 Workflow (`.github/workflows/container.yml`) builds multi-arch and pushes manifest to:
 ```
@@ -139,7 +216,7 @@ The GitHub Actions pipeline enables `linux/amd64` and `linux/arm64` with QEMU em
 
 ## Build Verification
 All pull requests are automatically verified with GitHub Actions (`.github/workflows/pr-build-verification.yml`):
-* **Backend**: Restores NuGet packages, builds in Release configuration, runs 250+ tests
+* **Backend**: Restores NuGet packages, builds in Release configuration and runs the full regression suite
 * **Frontend**: Installs npm dependencies, builds React app with TypeScript and Vite
 * **Artifact Check**: Verifies build produces expected output (`Prisstyrning.dll` and `wwwroot/` assets)
 
@@ -183,6 +260,10 @@ cd frontend && npm run dev
 * Schedule history: `/api/user/schedule-history`
 * Price timeseries: `/api/prices/timeseries`
 * Status: `/api/status`
+* Thermal config/status/readiness/plan/history/events: `/api/thermal/*`
+* Guided mode and manual override: `POST /api/thermal/mode`, `POST/DELETE /api/thermal/override`
+* Home Assistant status/test/entity discovery: `/api/home-assistant/*`
+* Bounded HA training-history import: `POST /api/home-assistant/import-history`
 
 ### Data Storage
 All application data is stored in PostgreSQL:
@@ -190,12 +271,18 @@ All application data is stored in PostgreSQL:
 * Nordpool price snapshots (per zone and date)
 * Schedule history (per user)
 * OAuth tokens (Daikin access/refresh tokens)
+* Five-minute thermal telemetry (400 days) and indefinite hourly aggregates
+* Versioned grey-box/COP model metadata, joint plans, DHW cycles and target verification
+* Writer leases, control commands, fallback events and the decision audit trail
 
 EF Core migrations are applied automatically on startup.
 
 ### Testing
-* Backend tests: `dotnet test --verbosity normal` (250+ tests)
-* Frontend: React components with TypeScript strict mode
+* Backend: `dotnet test --verbosity normal`
+* Frontend unit/accessibility: `cd frontend && npm test`
+* Frontend production build: `cd frontend && npm run build`
+* Critical browser flows: `cd frontend && npm run test:e2e`
+* Dependency audit: `cd frontend && npm audit`
 * See `Prisstyrning.Tests/README.md` for testing strategy
 
 ### Migration from v1.x

@@ -105,6 +105,21 @@ jobs:
         run: |
           cd frontend
           npm run build
+
+      - name: Run frontend unit and accessibility tests
+        run: |
+          cd frontend
+          npm test
+
+      - name: Install Playwright Chromium
+        run: |
+          cd frontend
+          npx playwright install --with-deps chromium
+
+      - name: Run critical frontend flows
+        run: |
+          cd frontend
+          npx playwright test
       
       - name: Verify frontend output
         run: |

@@ -1104,4 +1104,23 @@ public static class ScheduleAlgorithm
 
         return new JsonObject { ["0"] = new JsonObject { ["actions"] = actionsCombined } };
     }
+
+    /// <summary>
+    /// Creates the joint planner payload without changing the legacy hourly composer.
+    /// ONECTA accepts starts on ten-minute boundaries; :60 is represented as next hour :00.
+    /// </summary>
+    public static JsonNode ComposeJointDhwSchedule(DateTimeOffset startUtc, string kind, TimeZoneInfo scheduleTimeZone)
+    {
+        if (startUtc.Minute % 10 != 0 || startUtc.Second != 0)
+            throw new ArgumentException("Joint DHW starts must use a ten-minute boundary.", nameof(startUtc));
+        var mode = kind.Equals("Comfort", StringComparison.OrdinalIgnoreCase) ? "comfort" : "eco";
+        var localStart = TimeZoneInfo.ConvertTime(startUtc, scheduleTimeZone);
+        var dayName = localStart.DayOfWeek.ToString().ToLowerInvariant();
+        var actions = new JsonObject();
+        foreach (DayOfWeek day in Enum.GetValues<DayOfWeek>())
+            actions[day.ToString().ToLowerInvariant()] = new JsonObject();
+        ((JsonObject)actions[dayName]!)[localStart.ToString("HH:mm:ss")] =
+            new JsonObject { ["domesticHotWaterTemperature"] = mode };
+        return new JsonObject { ["0"] = new JsonObject { ["actions"] = actions } };
+    }
 }

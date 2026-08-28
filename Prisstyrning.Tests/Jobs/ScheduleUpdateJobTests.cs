@@ -7,6 +7,7 @@ using Prisstyrning.Data.Entities;
 using Prisstyrning.Data.Repositories;
 using Prisstyrning.Jobs;
 using Prisstyrning.Tests.Fixtures;
+using Prisstyrning.Thermal.Control;
 using Xunit;
 
 namespace Prisstyrning.Tests.Jobs;
@@ -36,6 +37,8 @@ public class ScheduleUpdateJobTests : IDisposable
         services.AddScoped<DaikinTokenRepository>();
         services.AddScoped<DaikinOAuthService>();
         services.AddScoped<BatchRunner>();
+        services.AddScoped<DhwWriterGuard>();
+        services.AddScoped<DhwWriterLeaseService>();
         _serviceProvider = services.BuildServiceProvider();
 
         if (seed != null)
@@ -210,5 +213,87 @@ public class ScheduleUpdateJobTests : IDisposable
             var historyCount = await db.ScheduleHistory.CountAsync(h => h.UserId == userNoAuto);
             Assert.Equal(0, historyCount);
         }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenJointWriterOwnsDhw_SkipsLegacySchedule()
+    {
+        using var fs = new TempFileSystem();
+        var cfg = new ConfigurationBuilder()
+            .AddConfiguration(fs.GetTestConfig())
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Thermal:EnableDhwWriterCoordination"] = "true"
+            })
+            .Build();
+        var date = new DateTime(2026, 2, 7);
+        var userId = "joint-writer-user";
+
+        var scopeFactory = BuildScopeFactory(cfg, db =>
+        {
+            db.UserSettings.Add(new UserSettings
+            {
+                UserId = userId,
+                AutoApplySchedule = true,
+                ComfortHours = 3
+            });
+            db.ThermalSiteConfigs.Add(new ThermalSiteConfig
+            {
+                UserId = userId,
+                ControlMode = "FullActive",
+                DhwWriter = "Joint"
+            });
+            db.SaveChanges();
+        });
+
+        PriceMemory.Set(
+            TestDataFactory.CreatePriceData(date),
+            TestDataFactory.CreatePriceData(date.AddDays(1)));
+
+        var job = new ScheduleUpdateHangfireJob(cfg, scopeFactory);
+        await job.ExecuteAsync();
+        await Task.Delay(100);
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+        Assert.Equal(0, await db.ScheduleHistory.CountAsync(h => h.UserId == userId));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithCoordinationDisabled_PreservesLegacyWritePath()
+    {
+        using var fs = new TempFileSystem();
+        var cfg = fs.GetTestConfig();
+        var date = new DateTime(2026, 2, 7);
+        var userId = "legacy-canary-user";
+
+        var scopeFactory = BuildScopeFactory(cfg, db =>
+        {
+            db.UserSettings.Add(new UserSettings
+            {
+                UserId = userId,
+                AutoApplySchedule = true,
+                ComfortHours = 3
+            });
+            db.ThermalSiteConfigs.Add(new ThermalSiteConfig
+            {
+                UserId = userId,
+                ControlMode = "FullActive",
+                DhwWriter = "Joint"
+            });
+            db.SaveChanges();
+        });
+
+        PriceMemory.Set(
+            TestDataFactory.CreatePriceData(date),
+            TestDataFactory.CreatePriceData(date.AddDays(1)));
+
+        var job = new ScheduleUpdateHangfireJob(cfg, scopeFactory);
+        await job.ExecuteAsync();
+        await Task.Delay(100);
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+        Assert.True(await db.ScheduleHistory.AnyAsync(h => h.UserId == userId));
     }
 }

@@ -10,6 +10,7 @@ using System.Text.Json.Nodes;
 using System.Linq;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.DataProtection;
 using Hangfire;
 using Hangfire.InMemory;
 using Hangfire.Dashboard;
@@ -17,12 +18,18 @@ using Microsoft.EntityFrameworkCore;
 using Prisstyrning.Data;
 using Prisstyrning.Data.Repositories;
 using Prisstyrning.Jobs;
+using Prisstyrning.Thermal.HomeAssistant;
+using Prisstyrning.Thermal.Jobs;
+using Prisstyrning.Thermal;
+using Prisstyrning.Thermal.Control;
+using Prisstyrning.Thermal.Data;
+using Prisstyrning.Thermal.Optimization;
 
 // Constants for maintainability
 const int MaxUserIdLength = 100;
 const int MaxScheduleRawDisplayLength = 400;
 const int DefaultListenPort = 5000;
-const string UserCookieName = "ps_user";
+const string UserCookieName = UserSessionCookieService.CookieName;
 string[] ValidTimezones = ["auto", "Europe/Stockholm", "Europe/Oslo", "Europe/Copenhagen", "Europe/Helsinki"];
 
 // Register /api/user/settings endpoints after app is declared
@@ -44,6 +51,18 @@ builder.WebHost.ConfigureKestrel(o =>
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+var configuredStorageDirectory = builder.Configuration["Storage:Directory"] ?? "data";
+var configuredKeyDirectory = builder.Configuration["Security:DataProtectionKeysPath"];
+var dataProtectionKeyDirectory = string.IsNullOrWhiteSpace(configuredKeyDirectory)
+    ? Path.Combine(configuredStorageDirectory, "data-protection-keys")
+    : configuredKeyDirectory;
+if (!Path.IsPathRooted(dataProtectionKeyDirectory))
+    dataProtectionKeyDirectory = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, dataProtectionKeyDirectory));
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeyDirectory))
+    .SetApplicationName("Prisstyrning");
+builder.Services.AddSingleton<UserSessionCookieService>();
 
 // PostgreSQL + EF Core
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
@@ -68,13 +87,28 @@ builder.Services.AddHttpClient("Daikin", client =>
     client.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0");
 });
 
-builder.Services.AddHttpClient("HomeAssistant", client =>
+builder.Services.AddHttpClient("HomeAssistantTelemetry", client =>
 {
     client.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0");
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+
+builder.Services.AddHttpClient("HomeAssistantControl", client =>
+{
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0");
+    client.Timeout = TimeSpan.FromSeconds(15);
 });
 
 builder.Services.AddHttpClient("Entsoe", client =>
 {
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0");
+});
+
+builder.Services.AddHttpClient("Emhass", (services, client) =>
+{
+    var options = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<EmhassOptions>>().Value;
+    client.BaseAddress = new Uri(options.BaseUrl.TrimEnd('/') + "/");
+    client.Timeout = Timeout.InfiniteTimeSpan;
     client.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0");
 });
 
@@ -95,6 +129,44 @@ builder.Services.AddScoped<DaikinTokenRepository>();
 builder.Services.AddScoped<FlexibleScheduleStateRepository>();
 builder.Services.AddScoped<DaikinOAuthService>();
 builder.Services.AddHostedService<JsonMigrationService>();
+
+// Thermal orchestration is additive and remains read-only while ControlMode=Legacy/Shadow.
+builder.Services.Configure<HomeAssistantTelemetryOptions>(
+    builder.Configuration.GetSection(HomeAssistantTelemetryOptions.SectionName));
+builder.Services.Configure<HomeAssistantControlOptions>(
+    builder.Configuration.GetSection(HomeAssistantControlOptions.SectionName));
+builder.Services.Configure<EmhassOptions>(builder.Configuration.GetSection(EmhassOptions.SectionName));
+builder.Services.AddSingleton<IHomeAssistantStateCache, HomeAssistantStateCache>();
+builder.Services.AddSingleton<SensorQualityTracker>();
+builder.Services.AddSingleton<IHomeAssistantCredentialProvider, HomeAssistantCredentialProvider>();
+builder.Services.AddScoped<IHomeAssistantTelemetryClient, HomeAssistantTelemetryClient>();
+builder.Services.AddScoped<IHomeAssistantControlClient, HomeAssistantControlClient>();
+builder.Services.AddHostedService<HomeAssistantWebSocketWorker>();
+builder.Services.AddHostedService<HomeAssistantTelemetryCollector>();
+builder.Services.AddScoped<ThermalDataService>();
+builder.Services.AddScoped<ThermalInstallationRegistry>();
+builder.Services.AddScoped<ThermalDiagnosticsService>();
+builder.Services.AddScoped<HomeAssistantHistoryImportService>();
+builder.Services.AddScoped<DhwWriterGuard>();
+builder.Services.AddScoped<DhwWriterLeaseService>();
+builder.Services.AddScoped<ThermalReadinessService>();
+builder.Services.AddScoped<ThermalModeService>();
+builder.Services.AddScoped<WriterLeaseService>();
+builder.Services.AddSingleton<WriterLeaseIdentity>();
+builder.Services.AddScoped<JointDhwScheduleWriter>();
+builder.Services.AddScoped<DhwProfileEstimator>();
+builder.Services.AddSingleton<DhwCyclePlanner>();
+builder.Services.AddSingleton<LwtRegulator>();
+builder.Services.AddSingleton<GreyBoxThermalModel>();
+builder.Services.AddSingleton<CopModel>();
+builder.Services.AddSingleton<EmhassHealthState>();
+builder.Services.AddScoped<IEmhassClient, EmhassClient>();
+builder.Services.AddHostedService<LwtControlWorker>();
+builder.Services.AddHostedService<JointPlanCoordinator>();
+builder.Services.AddHostedService<DhwLifecycleWorker>();
+builder.Services.AddTransient<ThermalModelTrainingJob>();
+builder.Services.AddTransient<CopModelTrainingJob>();
+builder.Services.AddTransient<ThermalRetentionJob>();
 
 // Register job classes for dependency injection
 builder.Services.AddTransient<NordpoolPriceHangfireJob>();
@@ -149,6 +221,9 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+var userSessionCookies = app.Services.GetRequiredService<UserSessionCookieService>();
+var secureSessionCookies = builder.Configuration.GetValue<bool?>("Security:SecureCookies")
+                           ?? !app.Environment.IsDevelopment();
 
 // Apply EF Core migrations on startup (with retry for container orchestration)
 using (var scope = app.Services.CreateScope())
@@ -174,7 +249,7 @@ using (var scope = app.Services.CreateScope())
 var hangfirePassword = builder.Configuration["Hangfire:DashboardPassword"];
 app.UseHangfireDashboard("/hangfire", new DashboardOptions
 {
-    Authorization = new[] { new HangfirePasswordAuthorizationFilter(hangfirePassword, builder.Configuration) }
+    Authorization = new[] { new HangfirePasswordAuthorizationFilter(hangfirePassword, builder.Configuration, userSessionCookies) }
 });
 
 // Schedule recurring jobs
@@ -205,6 +280,21 @@ RecurringJob.AddOrUpdate<DailyPriceHangfireJob>("daily-price-job",
 RecurringJob.AddOrUpdate<InitialBatchHangfireJob>("initial-batch-job",
     job => job.ExecuteAsync(),
     "30 14 * * *", // Daily at 14:30
+    new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm") });
+
+RecurringJob.AddOrUpdate<ThermalModelTrainingJob>("thermal-model-training-job",
+    job => job.ExecuteAsync(CancellationToken.None),
+    "20 2 * * *",
+    new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm") });
+
+RecurringJob.AddOrUpdate<CopModelTrainingJob>("cop-model-training-job",
+    job => job.ExecuteAsync(CancellationToken.None),
+    "40 2 * * *",
+    new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm") });
+
+RecurringJob.AddOrUpdate<ThermalRetentionJob>("thermal-retention-job",
+    job => job.ExecuteAsync(CancellationToken.None),
+    "10 3 * * *",
     new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm") });
 
 // User settings endpoints
@@ -424,22 +514,51 @@ app.UseCors();
 // Rate limiter middleware
 app.UseRateLimiter();
 
-// Simple per-user cookie (NOT secure auth – just isolation). In production replace with real auth (OIDC, etc.).
+// Signed per-browser identity. Existing known legacy identities can be migrated
+// during a deliberately short transition controlled by configuration.
 app.Use(async (ctx, next) =>
 {
-    const string cookieName = UserCookieName;
-    if (!ctx.Request.Cookies.TryGetValue(cookieName, out var userId) || string.IsNullOrWhiteSpace(userId) || userId.Length < 8)
+    ctx.Request.Cookies.TryGetValue(UserCookieName, out var rawCookie);
+    if (!userSessionCookies.TryUnprotect(rawCookie, out var userId))
     {
         userId = Guid.NewGuid().ToString("N");
-        ctx.Response.Cookies.Append(cookieName, userId, new CookieOptions { HttpOnly = true, SameSite = SameSiteMode.Lax, IsEssential = true, Expires = DateTimeOffset.UtcNow.AddYears(1) });
+        var acceptLegacyCookie = builder.Configuration.GetValue("Security:AcceptLegacyUserCookie", false);
+        if (acceptLegacyCookie && AdminService.IsValidUserId(rawCookie))
+        {
+            var db = ctx.RequestServices.GetRequiredService<PrisstyrningDbContext>();
+            var knownLegacyUser = AdminService.IsAdmin(builder.Configuration, rawCookie) ||
+                                  AdminService.HasHangfireAccess(builder.Configuration, rawCookie) ||
+                                  await db.DaikinTokens.AsNoTracking().AnyAsync(x => x.UserId == rawCookie) ||
+                                  await db.UserSettings.AsNoTracking().AnyAsync(x => x.UserId == rawCookie);
+            if (knownLegacyUser) userId = rawCookie!;
+        }
+        userSessionCookies.Append(ctx, userId, secureSessionCookies);
     }
-    ctx.Items[cookieName] = userId;
+    ctx.Items[UserSessionCookieService.HttpContextItemKey] = userId;
     await next();
+});
+
+app.MapGet("/health/live", () => Results.Ok(new { status = "live" }));
+app.MapGet("/health/ready", async (PrisstyrningDbContext db, CancellationToken cancellationToken) =>
+{
+    try
+    {
+        if (!await db.Database.CanConnectAsync(cancellationToken))
+            return Results.Json(new { status = "not-ready" }, statusCode: StatusCodes.Status503ServiceUnavailable);
+        var pendingMigrations = await db.Database.GetPendingMigrationsAsync(cancellationToken);
+        return pendingMigrations.Any()
+            ? Results.Json(new { status = "not-ready", reason = "pending-migrations" }, statusCode: StatusCodes.Status503ServiceUnavailable)
+            : Results.Ok(new { status = "ready" });
+    }
+    catch
+    {
+        return Results.Json(new { status = "not-ready" }, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
 });
 
 string? GetUserId(HttpContext c) 
 {
-    if (c.Items.TryGetValue(UserCookieName, out var v) && v is string userId)
+    if (c.Items.TryGetValue(UserSessionCookieService.HttpContextItemKey, out var v) && v is string userId)
     {
         // Validate that the userId is a proper GUID format or sanitized string
         if (string.IsNullOrWhiteSpace(userId)) return null;
@@ -631,7 +750,7 @@ pricesGroup.MapGet("/trend", async (HttpContext ctx, PriceRepository priceRepo, 
 var daikinAuthGroup = app.MapGroup("/auth/daikin").WithTags("Daikin Auth");
 daikinAuthGroup.MapGet("/start", (DaikinOAuthService daikinOAuth, HttpContext c) => { try { var url = daikinOAuth.GetAuthorizationUrl(c); return Results.Json(new { url }); } catch (Exception ex) { Console.WriteLine($"[API Error] {ex}"); return Results.BadRequest(new { error = "An internal error occurred" }); } });
 
-daikinAuthGroup.MapGet("/callback", async (DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext c, string? code, string? state) =>
+daikinAuthGroup.MapGet("/callback", async (DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext c, UserSessionCookieService sessionCookies, string? code, string? state) =>
 {
     var userId = GetUserId(c);
     if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state))
@@ -648,17 +767,7 @@ daikinAuthGroup.MapGet("/callback", async (DaikinOAuthService daikinOAuth, IConf
             if (!string.IsNullOrEmpty(userId))
                 await daikinOAuth.MigrateUserDataAsync(userId, stableUserId);
             // Update the cookie to the deterministic userId
-            c.Response.Cookies.Append(
-                UserCookieName,
-                stableUserId,
-                new CookieOptions
-                {
-                    HttpOnly = true,
-                    Secure = c.Request.IsHttps,
-                    SameSite = SameSiteMode.Lax,
-                    IsEssential = true,
-                    Expires = DateTimeOffset.UtcNow.AddYears(1)
-                });
+            sessionCookies.Append(c, stableUserId, secureSessionCookies);
             Console.WriteLine($"[DaikinOAuth][Callback] Remapped userId={userId} -> {stableUserId}");
         }
     }
@@ -1451,6 +1560,8 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IHttpClientFactory httpClien
     }
 });
 
+app.MapThermalApi();
+
 // SPA fallback: serve index.html for client-side routes (excluding /api and /auth)
 app.MapFallback(async (HttpContext ctx) =>
 {
@@ -1483,15 +1594,20 @@ app.MapFallback(async (HttpContext ctx) =>
 await app.RunAsync();
 
 // Hangfire dashboard authorization filter with password protection
-public class HangfirePasswordAuthorizationFilter : IDashboardAuthorizationFilter
+internal sealed class HangfirePasswordAuthorizationFilter : IDashboardAuthorizationFilter
 {
     private readonly string? _password;
     private readonly IConfiguration _cfg;
+    private readonly UserSessionCookieService _sessionCookies;
 
-    public HangfirePasswordAuthorizationFilter(string? password, IConfiguration cfg)
+    public HangfirePasswordAuthorizationFilter(
+        string? password,
+        IConfiguration cfg,
+        UserSessionCookieService sessionCookies)
     {
         _password = password;
         _cfg = cfg;
+        _sessionCookies = sessionCookies;
     }
 
     public bool Authorize(DashboardContext context)
@@ -1500,7 +1616,14 @@ public class HangfirePasswordAuthorizationFilter : IDashboardAuthorizationFilter
 
         // Check 1: Cookie-based access via admin.json hangfireUserIds
         // Note: must match UserCookieName constant in top-level statements
-        var userId = httpContext.Request.Cookies["ps_user"];
+        var rawCookie = httpContext.Request.Cookies[UserSessionCookieService.CookieName];
+        var hasProtectedIdentity = _sessionCookies.TryUnprotect(rawCookie, out var userId);
+        if (!hasProtectedIdentity &&
+            _cfg.GetValue("Security:AcceptLegacyUserCookie", false) &&
+            AdminService.IsValidUserId(rawCookie))
+        {
+            userId = rawCookie!;
+        }
         // Validate cookie value using shared validation logic
         if (AdminService.IsValidUserId(userId))
         {

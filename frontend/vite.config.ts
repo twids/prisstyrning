@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({
@@ -34,5 +34,12 @@ export default defineConfig({
       },
     },
     chunkSizeWarningLimit: 600, // Raise limit to 600 KB (from default 500 KB)
+  },
+  test: {
+    include: ['src/**/*.test.{ts,tsx}'],
+    environment: 'jsdom',
+    setupFiles: ['./src/test/setup.ts'],
+    css: true,
+    restoreMocks: true,
   },
 })
