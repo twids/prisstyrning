@@ -180,3 +180,223 @@ export interface PriceTrendResponse {
   lookbackDays: number;
   dailyAverages: DailyAverage[];
 }
+
+// Intelligent thermal orchestration
+export type ControlMode = 'Legacy' | 'Shadow' | 'LwtActive' | 'FullActive';
+export type DhwWriter = 'Legacy' | 'Joint';
+export type DataQuality = 'Valid' | 'Stale' | 'Invalid' | 'Unavailable';
+
+export interface ThermalSiteConfig {
+  userId: string;
+  controlMode: ControlMode;
+  dhwWriter: DhwWriter;
+  baseRoomTargetC: number;
+  lowerComfortBandC: number;
+  upperComfortBandC: number;
+  activeDeviationLimitC: number;
+  tariffEnabled: boolean;
+  heatPumpPowerSignVerified: boolean;
+  weatherCurveVerified: boolean;
+  comfortSetpointConfirmed: boolean;
+  comfortSetpointC: number;
+  comfortIntervalDays: number;
+  comfortFlexibilityDays: number;
+  timeZone: string;
+  variableCostComponentsJson: string;
+  tariffDefinitionJson: string;
+  createdAtUtc: string;
+  updatedAtUtc: string;
+}
+
+export interface ThermalRoomConfig {
+  id: number;
+  userId: string;
+  name: string;
+  entityId: string;
+  targetOffsetC: number;
+  weight: number;
+  isCritical: boolean;
+  enabled: boolean;
+  minimumValidC: number;
+  maximumValidC: number;
+  maximumRateCPerHour: number;
+}
+
+export interface ThermalEntityConfig {
+  id: number;
+  userId: string;
+  role: string;
+  entityId: string;
+  expectedUnit: string;
+  enabled: boolean;
+  minimumValid: number | null;
+  maximumValid: number | null;
+  maximumRatePerHour: number | null;
+}
+
+export interface ThermalConfig {
+  site: ThermalSiteConfig;
+  rooms: ThermalRoomConfig[];
+  entities: ThermalEntityConfig[];
+}
+
+export interface ThermalStatus {
+  mode: ControlMode;
+  dhwWriter: DhwWriter;
+  lastTelemetryUtc: string | null;
+  overallDataQuality: DataQuality;
+  emhassAvailable: boolean;
+  planCreatedUtc: string | null;
+  planAgeMinutes: number | null;
+  currentLwtDeviationC: number;
+  fallbackReason: string | null;
+  nextControlEventUtc: string | null;
+  manualOverride: boolean;
+}
+
+export interface ReadinessCheck {
+  key: string;
+  requirement: string;
+  passed: boolean;
+  action: string;
+  severity: 'Information' | 'Warning' | 'ActionRequired';
+}
+
+export interface ThermalReadiness {
+  targetMode: ControlMode;
+  ready: boolean;
+  checks: ReadinessCheck[];
+}
+
+export interface DecisionReason {
+  mainReason: string;
+  price: number | null;
+  comfortMarginC: number | null;
+  modelConfidence: number;
+  alternative: string | null;
+}
+
+export interface ThermalPlanStep {
+  id: number;
+  thermalPlanId: string;
+  startUtc: string;
+  endUtc: string;
+  desiredHeatOutputKw: number;
+  desiredLwtDeviationC: number;
+  dhwReserved: boolean;
+  dhwMode: string;
+  incrementalCost: number;
+  confidence: number;
+  expectedRoomsJson: string;
+  decisionReasonJson: string;
+}
+
+export interface ThermalPlan {
+  id: string;
+  userId: string;
+  createdAtUtc: string;
+  validFromUtc: string;
+  validUntilUtc: string;
+  status: string;
+  isShadow: boolean;
+  solverDurationMs: number;
+  objectiveCost: number | null;
+  confidence: number;
+  summary: string;
+  inputSnapshotJson: string;
+  steps: ThermalPlanStep[];
+}
+
+export interface ThermalTelemetrySample {
+  id: number;
+  userId: string;
+  timestampUtc: string;
+  outsideTemperatureC: number | null;
+  outsideTemperatureForecastJson: string;
+  windSpeedMps: number | null;
+  solarIrradianceWm2: number | null;
+  leavingWaterTemperatureC: number | null;
+  returnWaterTemperatureC: number | null;
+  flowLitresPerMinute: number | null;
+  brineInC: number | null;
+  brineOutC: number | null;
+  tankTemperatureC: number | null;
+  heatPumpPowerKw: number | null;
+  propertyPowerKw: number | null;
+  spotPriceSekPerKwh: number | null;
+  heatOutputKw: number | null;
+  cop: number | null;
+  dhwActive: boolean | null;
+  defrostActive: boolean | null;
+  backupHeaterActive: boolean | null;
+  roomTemperaturesJson: string;
+  qualityJson: string;
+}
+
+export interface ThermalEvent {
+  id: number;
+  userId: string;
+  timestampUtc: string;
+  severity: 'Information' | 'Warning' | 'ActionRequired';
+  category: string;
+  message: string;
+  detailsJson: string;
+}
+
+export interface DhwCycle {
+  id: number;
+  kind: 'Eco' | 'Comfort';
+  source: 'Legacy' | 'LegacyObserved' | 'Shadow' | 'Joint' | 'JointObserved';
+  status: string;
+  plannedStartUtc: string;
+  scheduleAcceptedUtc: string | null;
+  actualStartUtc: string | null;
+  targetReachedUtc: string | null;
+  actualEndUtc: string | null;
+  startTemperatureC: number | null;
+  targetTemperatureC: number;
+  predictedDurationMinutes: number;
+  reservedDurationMinutes: number;
+  predictedCost: number | null;
+  actualCost: number | null;
+  backupHeaterUsed: boolean;
+  targetVerificationCount: number;
+  estimatedCompletionUtc: string | null;
+}
+
+export interface ThermalModelVersion {
+  id: number;
+  modelType: string;
+  createdAtUtc: string;
+  trainingFromUtc: string;
+  trainingToUtc: string;
+  isActive: boolean;
+  parametersJson: string;
+  metricsJson: string;
+}
+
+export interface HomeAssistantStatus {
+  configured: boolean;
+  connected: boolean;
+  lastSnapshotUtc: string | null;
+  lastActivityUtc: string | null;
+  cachedEntities: number;
+}
+
+export interface HomeAssistantEntity {
+  entityId: string;
+  friendlyName: string;
+  state: string;
+  unit: string | null;
+  lastUpdatedUtc: string | null;
+  receivedAtUtc: string;
+  quality: DataQuality;
+  qualityReason: string | null;
+}
+
+export interface HomeAssistantHistoryImportResult {
+  importedSamples: number;
+  existingSamplesPreserved: number;
+  requestedEntities: number;
+  entitiesWithoutHistory: string[];
+}

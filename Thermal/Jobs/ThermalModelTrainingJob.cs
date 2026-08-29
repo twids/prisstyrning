@@ -1,0 +1,175 @@
+using System.Text.Json;
+using Hangfire;
+using Microsoft.EntityFrameworkCore;
+using Prisstyrning.Data;
+using Prisstyrning.Data.Entities;
+using Prisstyrning.Thermal.Optimization;
+
+namespace Prisstyrning.Thermal.Jobs;
+
+public sealed class ThermalModelTrainingJob
+{
+    private readonly PrisstyrningDbContext _db;
+    private readonly GreyBoxThermalModel _model;
+
+    public ThermalModelTrainingJob(PrisstyrningDbContext db, GreyBoxThermalModel model)
+    {
+        _db = db;
+        _model = model;
+    }
+
+    [DisableConcurrentExecution(1800)]
+    public async Task ExecuteAsync(CancellationToken cancellationToken = default)
+    {
+        var userIds = await _db.ThermalSiteConfigs.AsNoTracking().Select(x => x.UserId).ToListAsync(cancellationToken);
+        foreach (var userId in userIds) await TrainUserAsync(userId, cancellationToken);
+    }
+
+    internal async Task TrainUserAsync(string userId, CancellationToken cancellationToken)
+    {
+        var from = DateTimeOffset.UtcNow.AddDays(-60);
+        var samples = await _db.ThermalTelemetrySamples.AsNoTracking()
+            .Where(x => x.UserId == userId && x.TimestampUtc >= from && x.DhwActive != true && x.DefrostActive != true &&
+                        x.OutsideTemperatureC != null && x.HeatOutputKw != null)
+            .OrderBy(x => x.TimestampUtc)
+            .ToListAsync(cancellationToken);
+        var observations = samples.Select(ToObservation).Where(x => x is not null).Cast<ThermalObservation>().ToArray();
+        if (observations.Length < 21 * 24 * 12 * 0.98) return;
+
+        var result = _model.Train(observations);
+        var parameters = result.Parameters with { RoomAdjustments = EstimateRoomAdjustments(samples) };
+        var accepted = result.Metrics.TwoHourMaeC <= 0.3 && result.Metrics.DayMaeC <= 0.6;
+        var previous = await _db.ThermalModelVersions
+            .Where(x => x.UserId == userId && x.ModelType == "2R2C" && x.IsActive)
+            .OrderByDescending(x => x.CreatedAtUtc).FirstOrDefaultAsync(cancellationToken);
+        if (accepted && previous is not null) previous.IsActive = false;
+        var version = new ThermalModelVersion
+        {
+            UserId = userId,
+            ModelType = "2R2C",
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            TrainingFromUtc = observations.First().TimestampUtc,
+            TrainingToUtc = observations.Last().TimestampUtc,
+            IsActive = accepted,
+            ParametersJson = JsonSerializer.Serialize(parameters, CamelCase),
+            MetricsJson = JsonSerializer.Serialize(result.Metrics, CamelCase)
+        };
+        _db.ThermalModelVersions.Add(version);
+        if (accepted && previous is not null && MateriallyChanged(previous.ParametersJson, parameters))
+        {
+            _db.ThermalEvents.Add(new ThermalEvent
+            {
+                UserId = userId,
+                TimestampUtc = DateTimeOffset.UtcNow,
+                Severity = "Warning",
+                Category = "ModelDrift",
+                Message = "Husets termiska modell har förändrats tydligt. Kontrollera termostater, injustering eller byggnadsändringar."
+            });
+        }
+        await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    internal static IReadOnlyDictionary<string, RoomThermalAdjustment> EstimateRoomAdjustments(
+        IReadOnlyCollection<ThermalTelemetrySample> samples)
+    {
+        var rows = new List<(DateTimeOffset TimestampUtc, Dictionary<string, double> Rooms, double Representative)>();
+        foreach (var sample in samples.OrderBy(x => x.TimestampUtc))
+        {
+            try
+            {
+                var rooms = JsonSerializer.Deserialize<Dictionary<string, double>>(sample.RoomTemperaturesJson);
+                var validRooms = rooms?
+                    .Where(x => ThermalDiagnosticsService.IsRoomValid(sample.QualityJson, x.Key))
+                    .ToDictionary(x => x.Key, x => x.Value, StringComparer.OrdinalIgnoreCase);
+                if (validRooms is { Count: > 0 }) rows.Add((sample.TimestampUtc, validRooms, validRooms.Values.Average()));
+            }
+            catch (JsonException)
+            {
+                // An invalid historical row is excluded from model fitting.
+            }
+        }
+
+        var result = new Dictionary<string, RoomThermalAdjustment>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entityId in rows.SelectMany(x => x.Rooms.Keys).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var series = rows
+                .Where(x => x.Rooms.ContainsKey(entityId))
+                .Select(x => (x.TimestampUtc, Value: x.Rooms[entityId], Relative: x.Rooms[entityId] - x.Representative))
+                .ToArray();
+            if (series.Length < 12) continue;
+
+            var offset = series.Average(x => x.Relative);
+            var disturbance = Math.Sqrt(series.Average(x => Math.Pow(x.Relative - offset, 2)));
+            var mean = series.Average(x => x.Value);
+            var pairs = series.Zip(series.Skip(1))
+                .Where(pair => pair.Second.TimestampUtc > pair.First.TimestampUtc &&
+                               pair.Second.TimestampUtc - pair.First.TimestampUtc <= TimeSpan.FromMinutes(15))
+                .ToArray();
+            var denominator = pairs.Sum(pair => Math.Pow(pair.First.Value - mean, 2));
+            var correlation = denominator <= 1e-9
+                ? 0
+                : pairs.Sum(pair => (pair.First.Value - mean) * (pair.Second.Value - mean)) / denominator;
+            correlation = Math.Clamp(correlation, 0, 0.999);
+            var stepHours = pairs.Length == 0 ? 5d / 60d : pairs.Average(pair => (pair.Second.TimestampUtc - pair.First.TimestampUtc).TotalHours);
+            var inertiaHours = correlation <= 0.01 ? stepHours : -stepHours / Math.Log(correlation);
+
+            result[entityId] = new RoomThermalAdjustment(
+                Math.Round(offset, 4),
+                Math.Round(Math.Clamp(inertiaHours, 5d / 60d, 72), 3),
+                Math.Round(disturbance, 4),
+                series.Length);
+        }
+        return result;
+    }
+
+    private static ThermalObservation? ToObservation(ThermalTelemetrySample sample)
+    {
+        try
+        {
+            var rooms = JsonSerializer.Deserialize<Dictionary<string, double>>(sample.RoomTemperaturesJson);
+            var validRooms = rooms?
+                .Where(x => ThermalDiagnosticsService.IsRoomValid(sample.QualityJson, x.Key))
+                .Select(x => x.Value)
+                .ToArray();
+            if (validRooms is not { Length: > 0 }) return null;
+            return new ThermalObservation(
+                sample.TimestampUtc,
+                validRooms.Average(),
+                sample.OutsideTemperatureC!.Value,
+                sample.HeatOutputKw!.Value,
+                sample.LeavingWaterTemperatureC,
+                sample.BrineInC,
+                sample.Cop,
+                sample.BackupHeaterActive == true,
+                sample.WindSpeedMps,
+                sample.SolarIrradianceWm2);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static bool MateriallyChanged(string previousJson, GreyBoxParameters current)
+    {
+        try
+        {
+            var previous = JsonSerializer.Deserialize<GreyBoxParameters>(previousJson, CamelCase);
+            if (previous is null) return false;
+            static bool Changed(double oldValue, double newValue) => Math.Abs(newValue - oldValue) / Math.Max(Math.Abs(oldValue), 0.01) > 0.25;
+            return Changed(previous.EnvelopeConductanceKwPerC, current.EnvelopeConductanceKwPerC) ||
+                   Changed(previous.MassCapacityKwhPerC, current.MassCapacityKwhPerC) ||
+                   Changed(previous.HeatingGain, current.HeatingGain);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static readonly JsonSerializerOptions CamelCase = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true
+    };
+}

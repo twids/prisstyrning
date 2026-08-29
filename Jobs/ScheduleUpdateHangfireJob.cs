@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Hangfire;
 using Prisstyrning.Data;
 using Prisstyrning.Data.Repositories;
+using Prisstyrning.Thermal.Control;
 
 namespace Prisstyrning.Jobs;
 
@@ -48,11 +49,36 @@ internal class ScheduleUpdateHangfireJob
             try
             {
                 using var scope = _scopeFactory.CreateScope();
-                var daikinOAuth = scope.ServiceProvider.GetRequiredService<DaikinOAuthService>();
-                var batchRunner = scope.ServiceProvider.GetRequiredService<BatchRunner>();
-                var (generated, schedulePayload, message) = await batchRunner.RunBatchAsync(_cfg, userId, applySchedule: true, persist: true, _scopeFactory);
-                Console.WriteLine($"[ScheduleUpdateHangfireJob] user={userId} generated={generated} message={message}");
-                processedCount++;
+                DhwWriterLeaseService? lease = null;
+                string? leaseOwner = null;
+                if (_cfg.GetValue("Thermal:EnableDhwWriterCoordination", false))
+                {
+                    var writerGuard = scope.ServiceProvider.GetRequiredService<DhwWriterGuard>();
+                    if (!await writerGuard.IsLegacyWriterAsync(userId))
+                    {
+                        Console.WriteLine($"[ScheduleUpdateHangfireJob] user={userId} skipped because the joint DHW writer owns the lease");
+                        continue;
+                    }
+                    lease = scope.ServiceProvider.GetRequiredService<DhwWriterLeaseService>();
+                    leaseOwner = $"legacy-hangfire:{Guid.NewGuid():N}";
+                    if (!await lease.TryAcquireAsync(userId, Prisstyrning.Thermal.Domain.DhwWriter.Legacy, leaseOwner, TimeSpan.FromMinutes(5)))
+                    {
+                        Console.WriteLine($"[ScheduleUpdateHangfireJob] user={userId} skipped because another DHW write holds the database lease");
+                        continue;
+                    }
+                }
+                try
+                {
+                    var batchRunner = scope.ServiceProvider.GetRequiredService<BatchRunner>();
+                    var (generated, schedulePayload, message) = await batchRunner.RunBatchAsync(_cfg, userId, applySchedule: true, persist: true, _scopeFactory);
+                    Console.WriteLine($"[ScheduleUpdateHangfireJob] user={userId} generated={generated} message={message}");
+                    processedCount++;
+                }
+                finally
+                {
+                    if (lease is not null && leaseOwner is not null)
+                        await lease.ReleaseAsync(userId, leaseOwner);
+                }
             }
             catch (Exception ex)
             {

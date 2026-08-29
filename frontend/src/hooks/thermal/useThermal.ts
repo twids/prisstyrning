@@ -1,0 +1,113 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { apiClient } from '../../api/client';
+import type { ControlMode, ThermalConfig } from '../../types/api';
+
+export function useThermalStatus() {
+  return useQuery({
+    queryKey: ['thermal', 'status'],
+    queryFn: () => apiClient.getThermalStatus(),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useThermalConfig() {
+  return useQuery({
+    queryKey: ['thermal', 'config'],
+    queryFn: () => apiClient.getThermalConfig(),
+  });
+}
+
+export function useSaveThermalConfig() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (config: ThermalConfig) => apiClient.saveThermalConfig(config),
+    onSuccess: (config) => {
+      queryClient.setQueryData(['thermal', 'config'], config);
+      void queryClient.invalidateQueries({ queryKey: ['thermal'] });
+    },
+  });
+}
+
+export function useThermalReadiness(targetMode: ControlMode) {
+  return useQuery({
+    queryKey: ['thermal', 'readiness', targetMode],
+    queryFn: () => apiClient.getThermalReadiness(targetMode),
+  });
+}
+
+export function useChangeThermalMode() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (mode: ControlMode) => apiClient.changeThermalMode(mode),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['thermal'] }),
+  });
+}
+
+export function useThermalPlan() {
+  return useQuery({
+    queryKey: ['thermal', 'plan'],
+    queryFn: () => apiClient.getThermalPlan(),
+    refetchInterval: 60_000,
+  });
+}
+
+export function useThermalHistory(hours = 48) {
+  const to = new Date();
+  const from = new Date(to.getTime() - hours * 60 * 60 * 1000);
+  return useQuery({
+    queryKey: ['thermal', 'history', hours, Math.floor(to.getTime() / 300_000)],
+    queryFn: () => apiClient.getThermalHistory(from.toISOString(), to.toISOString()),
+    refetchInterval: 5 * 60_000,
+  });
+}
+
+export function useThermalEvents(limit = 100) {
+  return useQuery({
+    queryKey: ['thermal', 'events', limit],
+    queryFn: () => apiClient.getThermalEvents(limit),
+    refetchInterval: 60_000,
+  });
+}
+
+export function useDhwCycles() {
+  return useQuery({
+    queryKey: ['thermal', 'dhw'],
+    queryFn: () => apiClient.getDhwCycles(),
+    refetchInterval: 60_000,
+  });
+}
+
+export function useThermalModels() {
+  return useQuery({
+    queryKey: ['thermal', 'models'],
+    queryFn: () => apiClient.getThermalModels(),
+  });
+}
+
+export function useHomeAssistant() {
+  const queryClient = useQueryClient();
+  const status = useQuery({
+    queryKey: ['home-assistant', 'status'],
+    queryFn: () => apiClient.getHomeAssistantStatus(),
+    refetchInterval: 30_000,
+  });
+  const entities = useQuery({
+    queryKey: ['home-assistant', 'entities'],
+    queryFn: () => apiClient.getHomeAssistantEntities(),
+    enabled: status.data?.configured === true,
+    refetchInterval: 60_000,
+  });
+  const test = useMutation({
+    mutationFn: () => apiClient.testHomeAssistant(),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: ['home-assistant'] }),
+  });
+  const importHistory = useMutation({
+    mutationFn: ({ fromUtc, toUtc }: { fromUtc: string; toUtc: string }) =>
+      apiClient.importHomeAssistantHistory(fromUtc, toUtc),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['thermal', 'history'] });
+      void queryClient.invalidateQueries({ queryKey: ['thermal', 'events'] });
+    },
+  });
+  return { status, entities, test, importHistory };
+}
