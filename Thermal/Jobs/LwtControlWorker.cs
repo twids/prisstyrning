@@ -1,6 +1,5 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 using Prisstyrning.Data;
 using Prisstyrning.Data.Entities;
 using Prisstyrning.Thermal.Control;
@@ -14,7 +13,6 @@ public sealed class LwtControlWorker : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IHomeAssistantStateCache _cache;
-    private readonly HomeAssistantControlOptions _controlOptions;
     private readonly LwtRegulator _regulator;
     private readonly WriterLeaseIdentity _leaseIdentity;
     private readonly ILogger<LwtControlWorker> _logger;
@@ -22,14 +20,12 @@ public sealed class LwtControlWorker : BackgroundService
     public LwtControlWorker(
         IServiceScopeFactory scopeFactory,
         IHomeAssistantStateCache cache,
-        IOptions<HomeAssistantControlOptions> controlOptions,
         LwtRegulator regulator,
         WriterLeaseIdentity leaseIdentity,
         ILogger<LwtControlWorker> logger)
     {
         _scopeFactory = scopeFactory;
         _cache = cache;
-        _controlOptions = controlOptions.Value;
         _regulator = regulator;
         _leaseIdentity = leaseIdentity;
         _logger = logger;
@@ -81,10 +77,14 @@ public sealed class LwtControlWorker : BackgroundService
             .Where(x => x.ThermalPlanId == plan.Id && x.StartUtc <= DateTimeOffset.UtcNow && x.EndUtc > DateTimeOffset.UtcNow)
             .OrderByDescending(x => x.StartUtc).FirstOrDefaultAsync(cancellationToken);
         var rooms = await db.ThermalRoomConfigs.AsNoTracking().Where(x => x.UserId == userId && x.Enabled).ToListAsync(cancellationToken);
+        var haConnection = await db.HomeAssistantConnections.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
+        var heatingDeviationEntityId = haConnection?.HeatingDeviationEntityId ?? string.Empty;
         var (representativeError, criticalBelow) = RoomComfort(telemetry?.RoomTemperaturesJson, rooms, site);
         var writeFailureLatched = state.FallbackReason.StartsWith("P1P2-skrivningen", StringComparison.Ordinal);
         var p1p2Healthy = !writeFailureLatched &&
-                          _cache.TryGet(_controlOptions.HeatingDeviationEntityId, out var p1p2State) &&
+                          haConnection?.ControlEnabled == true &&
+                          _cache.TryGet(userId, heatingDeviationEntityId, out var p1p2State) &&
                           p1p2State?.LastUpdatedUtc is { } p1p2Updated &&
                           DateTimeOffset.UtcNow - p1p2Updated <= TimeSpan.FromMinutes(10) &&
                           !p1p2State.State.Equals("unavailable", StringComparison.OrdinalIgnoreCase);
@@ -121,7 +121,7 @@ public sealed class LwtControlWorker : BackgroundService
                 state.FallbackReason = decision.IsFallback ? decision.Reason : string.Empty;
                 db.ThermalControlCommands.Add(Command(
                     userId,
-                    _controlOptions.HeatingDeviationEntityId,
+                    heatingDeviationEntityId,
                     decision.RequestedDeviationC,
                     previousDeviation,
                     "Accepted",
@@ -133,7 +133,7 @@ public sealed class LwtControlWorker : BackgroundService
                 state.FallbackReason = "P1P2-skrivningen avvisades; manuell kontroll krävs.";
                 db.ThermalControlCommands.Add(Command(
                     userId,
-                    _controlOptions.HeatingDeviationEntityId,
+                    heatingDeviationEntityId,
                     decision.RequestedDeviationC,
                     previousDeviation,
                     "Rejected",
@@ -149,7 +149,7 @@ public sealed class LwtControlWorker : BackgroundService
                         state.LastDeviationWriteUtc = DateTimeOffset.UtcNow;
                         db.ThermalControlCommands.Add(Command(
                             userId,
-                            _controlOptions.HeatingDeviationEntityId,
+                            heatingDeviationEntityId,
                             0,
                             previousDeviation,
                             "Accepted",
@@ -159,7 +159,7 @@ public sealed class LwtControlWorker : BackgroundService
                     {
                         db.ThermalControlCommands.Add(Command(
                             userId,
-                            _controlOptions.HeatingDeviationEntityId,
+                            heatingDeviationEntityId,
                             0,
                             previousDeviation,
                             "Rejected",

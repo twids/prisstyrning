@@ -1,4 +1,3 @@
-version: '3.9'
 services:
   postgres:
     image: postgres:17-alpine
@@ -32,9 +31,6 @@ services:
       # Nordpool (default zone & currency)
       PRISSTYRNING_Price__Nordpool__DefaultZone: "SE3"
       PRISSTYRNING_Price__Nordpool__Currency: "SEK"
-      # Daikin OAuth tokens (om du vill injicera direkt istället för fil lagring)
-      PRISSTYRNING_Daikin__AccessToken: ""
-      PRISSTYRNING_Daikin__RefreshToken: ""
       # Daikin OAuth klient (KRÄVS för riktig OAuth-flöde)
       PRISSTYRNING_Daikin__ClientId: "CHANGE_ME_CLIENT_ID"
       PRISSTYRNING_Daikin__ClientSecret: "CHANGE_ME_CLIENT_SECRET" # valfri om public client
@@ -48,8 +44,6 @@ services:
       PRISSTYRNING_Daikin__TokenEndpoint: "https://idp.onecta.daikineurope.com/v1/oidc/token"
       PRISSTYRNING_Daikin__RevokeEndpoint: "https://idp.onecta.daikineurope.com/v1/oidc/revoke"
       PRISSTYRNING_Daikin__IntrospectEndpoint: "https://idp.onecta.daikineurope.com/v1/oidc/introspect"
-      # Tokenfil (lagras i volym så tokens överlever omstart)
-      PRISSTYRNING_Daikin__TokenFile: "/data/tokens/daikin.json"
       # Styr schema (false = applicera aldrig automatiskt)
       PRISSTYRNING_Daikin__ApplySchedule: "false"
       # (Valfria) forcerade mål vid auto-apply / put
@@ -71,11 +65,20 @@ services:
       # Övrigt
       PRISSTYRNING_Storage__Directory: "/data"
       PRISSTYRNING_PublicBaseUrl: "https://example.com"
+      PRISSTYRNING_Security__DataProtectionKeysPath: "/data/data-protection-keys"
+      PRISSTYRNING_Security__CredentialEncryption__KeyFile: "/run/secrets/credential_encryption_key"
+      PRISSTYRNING_Security__CredentialEncryption__PreserveLegacyDaikinTokenColumns: "true"
       PRISSTYRNING_PORT: "5000"
+    secrets:
+      - credential_encryption_key
     volumes:
       - ./data:/data
     ports:
       - "5000:5000"
+
+secrets:
+  credential_encryption_key:
+    file: ${CREDENTIAL_ENCRYPTION_KEY_FILE:-./secrets/credential_encryption_key}
 
 volumes:
   pgdata:

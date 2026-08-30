@@ -2,6 +2,20 @@ import type * as T from '../types/api';
 
 class ApiClient {
   private baseUrl = ''; // Empty for same-origin requests (Vite proxy handles routing)
+  private csrfToken: string | null = null;
+
+  async getSession(): Promise<T.SessionStatus> {
+    const response = await fetch(this.baseUrl + '/api/session', { credentials: 'same-origin' });
+    if (!response.ok) throw new Error(this.extractErrorMessage(await response.text()) || `HTTP ${response.status}: /api/session`);
+    const session = await response.json() as T.SessionStatus;
+    this.csrfToken = session.csrfToken;
+    return session;
+  }
+
+  async logout(): Promise<void> {
+    await this.post('/api/session/logout');
+    this.csrfToken = null;
+  }
 
   // Auth endpoints
   async getAuthStatus(): Promise<T.DaikinAuthStatus> {
@@ -100,9 +114,10 @@ class ApiClient {
 
   // Uses custom fetch instead of post() helper since we need X-Admin-Password header without JSON body
   async adminLogin(password: string): Promise<{ granted: boolean; userId: string }> {
+    const csrfToken = await this.requireCsrfToken();
     const response = await fetch(this.baseUrl + '/api/admin/login', {
       method: 'POST',
-      headers: { 'X-Admin-Password': password },
+      headers: { 'X-Admin-Password': password, 'X-CSRF-TOKEN': csrfToken },
       credentials: 'same-origin',
     });
     if (!response.ok) {
@@ -164,6 +179,21 @@ class ApiClient {
     return this.get('/api/home-assistant/status');
   }
 
+  async getHomeAssistantConfig(): Promise<T.HomeAssistantConnection | null> {
+    const response = await fetch(this.baseUrl + '/api/home-assistant/config', { credentials: 'same-origin' });
+    if (response.status === 204) return null;
+    if (!response.ok) throw new Error(this.extractErrorMessage(await response.text()) || `HTTP ${response.status}: /api/home-assistant/config`);
+    return response.json();
+  }
+
+  async saveHomeAssistantConfig(config: T.UpdateHomeAssistantConnection): Promise<T.HomeAssistantConnection> {
+    return this.put('/api/home-assistant/config', config);
+  }
+
+  async deleteHomeAssistantConfig(): Promise<void> {
+    return this.del('/api/home-assistant/config');
+  }
+
   async testHomeAssistant(): Promise<{ connected: boolean }> {
     return this.post('/api/home-assistant/test');
   }
@@ -199,7 +229,7 @@ class ApiClient {
   // Helper methods
   private async get<T>(url: string): Promise<T> {
     const response = await fetch(this.baseUrl + url, {
-      credentials: 'same-origin', // Include cookies for ps_user
+      credentials: 'same-origin', // Include the signed account session cookie
     });
     if (!response.ok) {
       const text = await response.text();
@@ -209,9 +239,10 @@ class ApiClient {
   }
 
   private async post<T>(url: string, body?: unknown): Promise<T> {
+    const csrfToken = await this.requireCsrfToken();
     const response = await fetch(this.baseUrl + url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken },
       credentials: 'same-origin', // Include cookies
       body: body ? JSON.stringify(body) : undefined,
     });
@@ -223,9 +254,10 @@ class ApiClient {
   }
 
   private async put<T>(url: string, body: unknown): Promise<T> {
+    const csrfToken = await this.requireCsrfToken();
     const response = await fetch(this.baseUrl + url, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrfToken },
       credentials: 'same-origin',
       body: JSON.stringify(body),
     });
@@ -237,8 +269,10 @@ class ApiClient {
   }
 
   private async del<T>(url: string): Promise<T> {
+    const csrfToken = await this.requireCsrfToken();
     const response = await fetch(this.baseUrl + url, {
       method: 'DELETE',
+      headers: { 'X-CSRF-TOKEN': csrfToken },
       credentials: 'same-origin',
     });
     if (!response.ok) {
@@ -246,6 +280,12 @@ class ApiClient {
       throw new Error(this.extractErrorMessage(text) || `HTTP ${response.status}: ${url}`);
     }
     return response.status === 204 ? undefined as T : response.json();
+  }
+
+  private async requireCsrfToken(): Promise<string> {
+    if (!this.csrfToken) await this.getSession();
+    if (!this.csrfToken) throw new Error('Säkerhetstoken saknas. Ladda om sidan och försök igen.');
+    return this.csrfToken;
   }
 
   /** Try to extract a user-friendly error message from a response body that may be JSON */

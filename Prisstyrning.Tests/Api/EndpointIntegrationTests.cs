@@ -22,7 +22,7 @@ public class EndpointIntegrationTests
             .Options;
         var db = new PrisstyrningDbContext(options);
         db.Database.EnsureCreated();
-        var tokenRepo = new DaikinTokenRepository(db);
+        var tokenRepo = new DaikinTokenRepository(db, TestSecretProtector.Instance);
         var httpFactory = MockServiceFactory.CreateMockHttpClientFactory();
         return new DaikinOAuthService(config, tokenRepo, httpFactory);
     }
@@ -248,7 +248,7 @@ public class EndpointIntegrationTests
             .Options;
         var db = new PrisstyrningDbContext(options);
         db.Database.EnsureCreated();
-        var tokenRepo = new DaikinTokenRepository(db);
+        var tokenRepo = new DaikinTokenRepository(db, TestSecretProtector.Instance);
         await tokenRepo.SaveAsync(userId, "expired-token", "refresh-123", DateTimeOffset.UtcNow.AddMinutes(-10));
         var httpFactory = MockServiceFactory.CreateMockHttpClientFactory();
         var service = new DaikinOAuthService(cfg, tokenRepo, httpFactory);

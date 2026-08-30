@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-## Multi-stage Dockerfile for Prisstyrning (.NET 8 ASP.NET Core + React frontend)
+## Multi-stage Dockerfile for Prisstyrning (.NET 10 ASP.NET Core + React frontend)
 ## Build frontend with Node.js, then backend with .NET SDK
 
 # Stage 1: Build frontend with Node.js
@@ -16,11 +16,11 @@ RUN npm run build
 # Output: wwwroot artifacts will be in ../wwwroot (parent directory)
 
 # Stage 2: Build backend with .NET SDK
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS backend-build
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS backend-build
 WORKDIR /src
 
-# Copy csproj and restore first for better layer caching
-COPY Prisstyrning.csproj ./
+# Pin the same SDK used locally/CI before restore, then cache the project graph.
+COPY global.json Directory.Build.props Prisstyrning.csproj ./
 RUN --mount=type=cache,target=/root/.nuget/packages dotnet restore Prisstyrning.csproj
 
 # Copy the full backend source
@@ -34,7 +34,7 @@ ARG BUILD_CONFIG=Release
 RUN --mount=type=cache,target=/root/.nuget/packages dotnet publish Prisstyrning.csproj -c $BUILD_CONFIG -o /app/publish
 
 # Stage 3: Final runtime image
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 ENV ASPNETCORE_URLS=http://+:5000
 EXPOSE 5000

@@ -22,7 +22,7 @@ public class DaikinOAuthServiceIntegrationTests
             .Options;
         var db = new PrisstyrningDbContext(options);
         db.Database.EnsureCreated();
-        var tokenRepo = new DaikinTokenRepository(db);
+        var tokenRepo = new DaikinTokenRepository(db, TestSecretProtector.Instance);
         return (new DaikinOAuthService(config, tokenRepo, MockServiceFactory.CreateMockHttpClientFactory()), tokenRepo, db);
     }
 
@@ -112,6 +112,8 @@ public class DaikinOAuthServiceIntegrationTests
                     expires_in = 3600,
                     token_type = "Bearer"
                 }));
+            const string subject = "verified-test-subject";
+            MockServiceFactory.AddSuccessfulDaikinIdentity(mockHandler, subject);
 
             var mockHttpClient = new HttpClient(mockHandler);
             var result = await service.HandleCallbackAsync("auth-code-123", state, userId: "test-user", mockHttpClient);
@@ -119,10 +121,12 @@ public class DaikinOAuthServiceIntegrationTests
             Assert.True(result, "Token exchange should succeed");
             
             // Verify token was stored in DB
-            var token = await tokenRepo.LoadAsync("test-user");
+            var token = await tokenRepo.LoadAsync(DaikinOAuthService.DeriveUserId(subject));
             Assert.NotNull(token);
             Assert.Equal("test-access-token", token.AccessToken);
             Assert.Equal("test-refresh-token", token.RefreshToken);
+            Assert.Equal(subject, token.DaikinSubject);
+            Assert.Null(await tokenRepo.LoadAsync("test-user"));
         }
     }
 
@@ -407,7 +411,7 @@ public class DaikinOAuthServiceIntegrationTests
     }
 
     [Fact]
-    public async Task HandleCallbackWithSubjectAsync_ExtractsSubjectFromIdToken()
+    public async Task HandleCallbackWithSubjectAsync_UsesServerAuthenticatedIdentity()
     {
         using var fs = new TempFileSystem();
         var config = fs.GetTestConfig(new Dictionary<string, string?>
@@ -437,6 +441,7 @@ public class DaikinOAuthServiceIntegrationTests
                 token_type = "Bearer",
                 id_token = idToken
             }));
+        MockServiceFactory.AddSuccessfulDaikinIdentity(mockHandler, "daikin-user-12345");
 
         var mockHttpClient = new HttpClient(mockHandler);
         var result = await service.HandleCallbackWithSubjectAsync("auth-code-123", state, userId: "test-user", mockHttpClient);
@@ -447,7 +452,7 @@ public class DaikinOAuthServiceIntegrationTests
     }
 
     [Fact]
-    public async Task HandleCallbackWithSubjectAsync_ReturnsNullSubject_WhenNoIdToken()
+    public async Task HandleCallbackWithSubjectAsync_UsesIntrospectionWhenNoIdToken()
     {
         using var fs = new TempFileSystem();
         var config = fs.GetTestConfig(new Dictionary<string, string?>
@@ -474,12 +479,14 @@ public class DaikinOAuthServiceIntegrationTests
                 token_type = "Bearer"
                 // No id_token
             }));
+        MockServiceFactory.AddSuccessfulDaikinIdentity(mockHandler, "introspected-daikin-user");
 
         var mockHttpClient = new HttpClient(mockHandler);
         var result = await service.HandleCallbackWithSubjectAsync("auth-code-123", state, userId: "test-user", mockHttpClient);
 
         Assert.True(result.Success);
-        Assert.Null(result.Subject);
+        Assert.Equal("introspected-daikin-user", result.Subject);
+        Assert.Equal(DaikinOAuthService.DeriveUserId("introspected-daikin-user"), result.UserId);
         }
     }
 
@@ -845,6 +852,7 @@ public class DaikinOAuthServiceIntegrationTests
                 expires_in = 3600,
                 id_token = idToken
             }));
+        MockServiceFactory.AddSuccessfulDaikinIdentity(mockHandler1, daikinSubject);
 
         var mockHttpClient1 = new HttpClient(mockHandler1);
         var result1 = await service.HandleCallbackWithSubjectAsync("code-a", state1, "browser-a-guid", mockHttpClient1);
@@ -863,6 +871,7 @@ public class DaikinOAuthServiceIntegrationTests
                 expires_in = 3600,
                 id_token = idToken
             }));
+        MockServiceFactory.AddSuccessfulDaikinIdentity(mockHandler2, daikinSubject);
 
         var mockHttpClient2 = new HttpClient(mockHandler2);
         var result2 = await service.HandleCallbackWithSubjectAsync("code-b", state2, "browser-b-guid", mockHttpClient2);
@@ -915,19 +924,13 @@ public class DaikinOAuthServiceIntegrationTests
                     token_type = "Bearer",
                     id_token = idToken
                 }));
+            MockServiceFactory.AddSuccessfulDaikinIdentity(mockHandlerA, daikinSubject);
 
             var resultA = await service.HandleCallbackWithSubjectAsync("code-a", stateA, browserAUserId, new HttpClient(mockHandlerA));
             Assert.True(resultA.Success);
             Assert.Equal(daikinSubject, resultA.Subject);
 
-            var browserAToken = await tokenRepo.LoadAsync(browserAUserId);
-            Assert.NotNull(browserAToken);
-            Assert.Equal("access-a", browserAToken!.AccessToken);
-
             var stableId = DaikinOAuthService.DeriveUserId(resultA.Subject!);
-
-            await service.MigrateUserDataAsync(browserAUserId, stableId);
-
             var stableAfterA = await tokenRepo.LoadAsync(stableId);
             Assert.NotNull(stableAfterA);
             Assert.Equal("access-a", stableAfterA!.AccessToken);
@@ -950,17 +953,11 @@ public class DaikinOAuthServiceIntegrationTests
                     token_type = "Bearer",
                     id_token = idToken
                 }));
+            MockServiceFactory.AddSuccessfulDaikinIdentity(mockHandlerB, daikinSubject);
 
             var resultB = await service.HandleCallbackWithSubjectAsync("code-b", stateB, browserBUserId, new HttpClient(mockHandlerB));
             Assert.True(resultB.Success);
             Assert.Equal(daikinSubject, resultB.Subject);
-
-            var browserBToken = await tokenRepo.LoadAsync(browserBUserId);
-            Assert.NotNull(browserBToken);
-            Assert.Equal("access-b", browserBToken!.AccessToken);
-
-            // Migration from browser B should overwrite existing stable tokens from browser A
-            await service.MigrateUserDataAsync(browserBUserId, stableId);
 
             var stableAfterB = await tokenRepo.LoadAsync(stableId);
             Assert.NotNull(stableAfterB);
@@ -1003,6 +1000,7 @@ public class DaikinOAuthServiceIntegrationTests
                     token_type = "Bearer",
                     id_token = idToken
                 }));
+            MockServiceFactory.AddSuccessfulDaikinIdentity(mockHandler, daikinSubject);
 
             var callbackResult = await service.HandleCallbackWithSubjectAsync("code-1", state, browserUserId, new HttpClient(mockHandler));
             Assert.True(callbackResult.Success);
@@ -1012,8 +1010,6 @@ public class DaikinOAuthServiceIntegrationTests
             Assert.StartsWith("daikin-", stableId);
             Assert.Equal(39, stableId.Length);
             Assert.Matches("^daikin-[0-9a-f]{32}$", stableId);
-
-            await service.MigrateUserDataAsync(browserUserId, stableId);
 
             var stableToken = await tokenRepo.LoadAsync(stableId);
             Assert.NotNull(stableToken);

@@ -11,6 +11,9 @@ using System.Linq;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Antiforgery;
 using Hangfire;
 using Hangfire.InMemory;
 using Hangfire.Dashboard;
@@ -24,12 +27,12 @@ using Prisstyrning.Thermal;
 using Prisstyrning.Thermal.Control;
 using Prisstyrning.Thermal.Data;
 using Prisstyrning.Thermal.Optimization;
+using Prisstyrning.Security;
 
 // Constants for maintainability
 const int MaxUserIdLength = 100;
 const int MaxScheduleRawDisplayLength = 400;
 const int DefaultListenPort = 5000;
-const string UserCookieName = UserSessionCookieService.CookieName;
 string[] ValidTimezones = ["auto", "Europe/Stockholm", "Europe/Oslo", "Europe/Copenhagen", "Europe/Helsinki"];
 
 // Register /api/user/settings endpoints after app is declared
@@ -62,7 +65,36 @@ if (!Path.IsPathRooted(dataProtectionKeyDirectory))
 builder.Services.AddDataProtection()
     .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeyDirectory))
     .SetApplicationName("Prisstyrning");
-builder.Services.AddSingleton<UserSessionCookieService>();
+builder.Services.Configure<CredentialEncryptionOptions>(
+    builder.Configuration.GetSection(CredentialEncryptionOptions.SectionName));
+builder.Services.AddSingleton<IAccountSecretProtector, AccountSecretProtector>();
+builder.Services.AddScoped<AccountSessionService>();
+builder.Services.AddScoped<AccountCookieEvents>();
+builder.Services.AddAuthentication(AccountAuthentication.Scheme)
+    .AddCookie(AccountAuthentication.Scheme, options =>
+    {
+        options.Cookie.Name = "__Host-prisstyrning-session";
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SameSite = SameSiteMode.Lax;
+        options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
+            ? CookieSecurePolicy.SameAsRequest
+            : CookieSecurePolicy.Always;
+        options.Cookie.Path = "/";
+        options.ExpireTimeSpan = AccountAuthentication.InactivityTimeout;
+        options.SlidingExpiration = true;
+        options.EventsType = typeof(AccountCookieEvents);
+    });
+builder.Services.AddAuthorization();
+builder.Services.AddAntiforgery(options =>
+{
+    options.Cookie.Name = "__Host-prisstyrning-csrf";
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SameSite = SameSiteMode.Strict;
+    options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
+        ? CookieSecurePolicy.SameAsRequest
+        : CookieSecurePolicy.Always;
+    options.HeaderName = "X-CSRF-TOKEN";
+});
 
 // PostgreSQL + EF Core
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
@@ -91,13 +123,13 @@ builder.Services.AddHttpClient("HomeAssistantTelemetry", client =>
 {
     client.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0");
     client.Timeout = TimeSpan.FromSeconds(30);
-});
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 
 builder.Services.AddHttpClient("HomeAssistantControl", client =>
 {
     client.DefaultRequestHeaders.UserAgent.ParseAdd("Prisstyrning/1.0");
     client.Timeout = TimeSpan.FromSeconds(15);
-});
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 
 builder.Services.AddHttpClient("Entsoe", client =>
 {
@@ -126,19 +158,20 @@ builder.Services.AddScoped<AdminRepository>();
 builder.Services.AddScoped<PriceRepository>();
 builder.Services.AddScoped<ScheduleHistoryRepository>();
 builder.Services.AddScoped<DaikinTokenRepository>();
+builder.Services.AddScoped<DaikinInstallationRepository>();
+builder.Services.AddScoped<DaikinInstallationService>();
 builder.Services.AddScoped<FlexibleScheduleStateRepository>();
 builder.Services.AddScoped<DaikinOAuthService>();
 builder.Services.AddHostedService<JsonMigrationService>();
 
 // Thermal orchestration is additive and remains read-only while ControlMode=Legacy/Shadow.
-builder.Services.Configure<HomeAssistantTelemetryOptions>(
-    builder.Configuration.GetSection(HomeAssistantTelemetryOptions.SectionName));
-builder.Services.Configure<HomeAssistantControlOptions>(
-    builder.Configuration.GetSection(HomeAssistantControlOptions.SectionName));
 builder.Services.Configure<EmhassOptions>(builder.Configuration.GetSection(EmhassOptions.SectionName));
+builder.Services.Configure<ThermalOptimizationQueueOptions>(
+    builder.Configuration.GetSection(ThermalOptimizationQueueOptions.SectionName));
 builder.Services.AddSingleton<IHomeAssistantStateCache, HomeAssistantStateCache>();
 builder.Services.AddSingleton<SensorQualityTracker>();
-builder.Services.AddSingleton<IHomeAssistantCredentialProvider, HomeAssistantCredentialProvider>();
+builder.Services.AddSingleton<IHomeAssistantEndpointValidator, HomeAssistantEndpointValidator>();
+builder.Services.AddScoped<HomeAssistantConnectionService>();
 builder.Services.AddScoped<IHomeAssistantTelemetryClient, HomeAssistantTelemetryClient>();
 builder.Services.AddScoped<IHomeAssistantControlClient, HomeAssistantControlClient>();
 builder.Services.AddHostedService<HomeAssistantWebSocketWorker>();
@@ -161,7 +194,11 @@ builder.Services.AddSingleton<GreyBoxThermalModel>();
 builder.Services.AddSingleton<CopModel>();
 builder.Services.AddSingleton<EmhassHealthState>();
 builder.Services.AddScoped<IEmhassClient, EmhassClient>();
+builder.Services.AddSingleton<ThermalOptimizationQueue>();
+builder.Services.AddSingleton<IEmhassOptimizationDispatcher>(services =>
+    services.GetRequiredService<ThermalOptimizationQueue>());
 builder.Services.AddHostedService<LwtControlWorker>();
+builder.Services.AddHostedService<EmhassOptimizationWorker>();
 builder.Services.AddHostedService<JointPlanCoordinator>();
 builder.Services.AddHostedService<DhwLifecycleWorker>();
 builder.Services.AddTransient<ThermalModelTrainingJob>();
@@ -175,21 +212,22 @@ builder.Services.AddTransient<DailyPriceHangfireJob>();
 builder.Services.AddTransient<InitialBatchHangfireJob>();
 builder.Services.AddTransient<ScheduleUpdateHangfireJob>();
 
-// CORS: restrict API access to same-origin requests only (exact scheme+host+port match)
+// CORS: same-origin by default, with an explicit exact-origin allowlist when needed.
+var configuredOrigins = builder.Configuration.GetSection("Security:AllowedOrigins").Get<string[]>() ?? [];
+var publicOrigin = builder.Configuration["PublicBaseUrl"];
+var allowedOrigins = configuredOrigins
+    .Concat(Uri.TryCreate(publicOrigin, UriKind.Absolute, out var publicUri)
+        ? [publicUri.GetLeftPart(UriPartial.Authority)]
+        : Array.Empty<string>())
+    .Where(x => Uri.TryCreate(x, UriKind.Absolute, out _))
+    .Select(x => x.TrimEnd('/'))
+    .Distinct(StringComparer.OrdinalIgnoreCase)
+    .ToHashSet(StringComparer.OrdinalIgnoreCase);
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
     {
-        policy.SetIsOriginAllowed(origin =>
-        {
-            if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri))
-            {
-                return false;
-            }
-            // Only allow the exact origin matching the app's listen address
-            var isLocalhost = uri.Host == "localhost" || uri.Host == "127.0.0.1" || uri.Host == "::1";
-            return isLocalhost && uri.Port == listenPort;
-        })
+        policy.SetIsOriginAllowed(origin => allowedOrigins.Contains(origin.TrimEnd('/')))
         .AllowAnyMethod()
         .AllowAnyHeader()
         .AllowCredentials();
@@ -221,9 +259,6 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
-var userSessionCookies = app.Services.GetRequiredService<UserSessionCookieService>();
-var secureSessionCookies = builder.Configuration.GetValue<bool?>("Security:SecureCookies")
-                           ?? !app.Environment.IsDevelopment();
 
 // Apply EF Core migrations on startup (with retry for container orchestration)
 using (var scope = app.Services.CreateScope())
@@ -234,6 +269,34 @@ using (var scope = app.Services.CreateScope())
         try
         {
             db.Database.Migrate();
+            var tokenRepository = scope.ServiceProvider.GetRequiredService<DaikinTokenRepository>();
+            var credentialStorage = await tokenRepository.ReconcileCredentialStorageAsync();
+            if (credentialStorage.EncryptedCount > 0 || credentialStorage.PlaintextClearedCount > 0)
+            {
+                Console.WriteLine($"[Startup] Reconciled Daikin credential storage: encrypted={credentialStorage.EncryptedCount}, plaintextCleared={credentialStorage.PlaintextClearedCount}, rollbackCompatibility={credentialStorage.LegacyPlaintextPreserved}.");
+            }
+            var legacySiteId = builder.Configuration["Daikin:SiteId"];
+            var legacyDeviceId = builder.Configuration["Daikin:DeviceId"];
+            var legacyEmbeddedId = builder.Configuration["Daikin:ManagementPointEmbeddedId"];
+            if (!string.IsNullOrWhiteSpace(legacySiteId) &&
+                !string.IsNullOrWhiteSpace(legacyDeviceId) &&
+                !string.IsNullOrWhiteSpace(legacyEmbeddedId) &&
+                !await db.DaikinInstallations.AnyAsync())
+            {
+                var legacyOwners = await db.DaikinTokens.AsNoTracking().Select(x => x.UserId).Distinct().ToListAsync();
+                if (legacyOwners.Count == 1)
+                {
+                    var installations = scope.ServiceProvider.GetRequiredService<DaikinInstallationRepository>();
+                    await installations.SaveAsync(
+                        legacyOwners[0], legacySiteId, legacyDeviceId, legacyEmbeddedId,
+                        scheduleMode: builder.Configuration["Daikin:ScheduleMode"] ?? "heating");
+                    Console.WriteLine("[Startup] Migrated the single legacy Daikin target into its account-owned installation record.");
+                }
+                else
+                {
+                    Console.WriteLine("[Startup] Legacy Daikin target was not migrated because ownership is ambiguous.");
+                }
+            }
             Console.WriteLine("[Startup] Database migrations applied successfully.");
             break;
         }
@@ -245,12 +308,7 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-// Configure Hangfire middleware
 var hangfirePassword = builder.Configuration["Hangfire:DashboardPassword"];
-app.UseHangfireDashboard("/hangfire", new DashboardOptions
-{
-    Authorization = new[] { new HangfirePasswordAuthorizationFilter(hangfirePassword, builder.Configuration, userSessionCookies) }
-});
 
 // Schedule recurring jobs
 RecurringJob.AddOrUpdate<NordpoolPriceHangfireJob>("nordpool-price-job", 
@@ -510,31 +568,55 @@ app.UseStaticFiles();
 
 // CORS middleware
 app.UseCors();
+app.UseAuthentication();
+app.UseAuthorization();
+app.UseHangfireDashboard("/hangfire", new DashboardOptions
+{
+    Authorization = new[] { new HangfirePasswordAuthorizationFilter(hangfirePassword, builder.Configuration) }
+});
 
 // Rate limiter middleware
 app.UseRateLimiter();
 
-// Signed per-browser identity. Existing known legacy identities can be migrated
-// during a deliberately short transition controlled by configuration.
+// Fail closed for account APIs. Static login assets and the OAuth entry/callback
+// remain public; no anonymous browser identity is manufactured.
 app.Use(async (ctx, next) =>
 {
-    ctx.Request.Cookies.TryGetValue(UserCookieName, out var rawCookie);
-    if (!userSessionCookies.TryUnprotect(rawCookie, out var userId))
+    var path = ctx.Request.Path;
+    var publicApi = path.Equals("/api/session", StringComparison.OrdinalIgnoreCase);
+    var publicOAuth = path.Equals("/auth/daikin/start", StringComparison.OrdinalIgnoreCase) ||
+                      path.Equals("/auth/daikin/callback", StringComparison.OrdinalIgnoreCase);
+    if ((path.StartsWithSegments("/api") && !publicApi || path.StartsWithSegments("/auth/daikin") && !publicOAuth) &&
+        ctx.User.Identity?.IsAuthenticated != true)
     {
-        userId = Guid.NewGuid().ToString("N");
-        var acceptLegacyCookie = builder.Configuration.GetValue("Security:AcceptLegacyUserCookie", false);
-        if (acceptLegacyCookie && AdminService.IsValidUserId(rawCookie))
-        {
-            var db = ctx.RequestServices.GetRequiredService<PrisstyrningDbContext>();
-            var knownLegacyUser = AdminService.IsAdmin(builder.Configuration, rawCookie) ||
-                                  AdminService.HasHangfireAccess(builder.Configuration, rawCookie) ||
-                                  await db.DaikinTokens.AsNoTracking().AnyAsync(x => x.UserId == rawCookie) ||
-                                  await db.UserSettings.AsNoTracking().AnyAsync(x => x.UserId == rawCookie);
-            if (knownLegacyUser) userId = rawCookie!;
-        }
-        userSessionCookies.Append(ctx, userId, secureSessionCookies);
+        await Results.Json(new { error = "Authentication required." }, statusCode: StatusCodes.Status401Unauthorized)
+            .ExecuteAsync(ctx);
+        return;
     }
-    ctx.Items[UserSessionCookieService.HttpContextItemKey] = userId;
+    await next();
+});
+
+// Double-submit antiforgery protection for every authenticated state-changing API call.
+app.Use(async (ctx, next) =>
+{
+    if (ctx.User.Identity?.IsAuthenticated == true &&
+        (HttpMethods.IsPost(ctx.Request.Method) || HttpMethods.IsPut(ctx.Request.Method) ||
+         HttpMethods.IsPatch(ctx.Request.Method) || HttpMethods.IsDelete(ctx.Request.Method)))
+    {
+        if (ctx.Request.Path.StartsWithSegments("/api") || ctx.Request.Path.StartsWithSegments("/auth/daikin"))
+        {
+            try
+            {
+                await ctx.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(ctx);
+            }
+            catch (AntiforgeryValidationException)
+            {
+                await Results.Json(new { error = "Invalid or missing CSRF token." }, statusCode: StatusCodes.Status400BadRequest)
+                    .ExecuteAsync(ctx);
+                return;
+            }
+        }
+    }
     await next();
 });
 
@@ -556,19 +638,32 @@ app.MapGet("/health/ready", async (PrisstyrningDbContext db, CancellationToken c
     }
 });
 
-string? GetUserId(HttpContext c) 
+app.MapGet("/api/session", (HttpContext context, IAntiforgery antiforgery, IConfiguration configuration) =>
 {
-    if (c.Items.TryGetValue(UserSessionCookieService.HttpContextItemKey, out var v) && v is string userId)
+    var tokens = antiforgery.GetAndStoreTokens(context);
+    var userId = AccountAuthentication.UserId(context.User);
+    return Results.Ok(new
     {
-        // Validate that the userId is a proper GUID format or sanitized string
-        if (string.IsNullOrWhiteSpace(userId)) return null;
-        if (userId.Length > MaxUserIdLength) return null; // Reasonable length limit
-        
-        // Only allow alphanumeric characters, hyphens, and underscores (matching DaikinOAuthService.SanitizeUser logic)
-        if (userId.All(c => char.IsLetterOrDigit(c) || c == '-' || c == '_'))
-            return userId;
-    }
-    return null;
+        authenticated = userId is not null,
+        userId,
+        isAdmin = userId is not null && AdminService.IsAdmin(configuration, userId),
+        csrfToken = tokens.RequestToken
+    });
+});
+
+app.MapPost("/api/session/logout", async (
+    HttpContext context,
+    AccountSessionService sessions,
+    CancellationToken cancellationToken) =>
+{
+    await sessions.SignOutAsync(context, cancellationToken);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+string? GetUserId(HttpContext c)
+{
+    var userId = AccountAuthentication.UserId(c.User);
+    return userId is { Length: <= MaxUserIdLength } ? userId : null;
 }
 
 // Prices group
@@ -750,26 +845,24 @@ pricesGroup.MapGet("/trend", async (HttpContext ctx, PriceRepository priceRepo, 
 var daikinAuthGroup = app.MapGroup("/auth/daikin").WithTags("Daikin Auth");
 daikinAuthGroup.MapGet("/start", (DaikinOAuthService daikinOAuth, HttpContext c) => { try { var url = daikinOAuth.GetAuthorizationUrl(c); return Results.Json(new { url }); } catch (Exception ex) { Console.WriteLine($"[API Error] {ex}"); return Results.BadRequest(new { error = "An internal error occurred" }); } });
 
-daikinAuthGroup.MapGet("/callback", async (DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext c, UserSessionCookieService sessionCookies, string? code, string? state) =>
+daikinAuthGroup.MapGet("/callback", async (
+    DaikinOAuthService daikinOAuth,
+    AccountSessionService sessions,
+    IConfiguration cfg,
+    HttpContext c,
+    string? code,
+    string? state,
+    CancellationToken cancellationToken) =>
 {
-    var userId = GetUserId(c);
     if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state))
         return Results.BadRequest(new { error = "Missing code/state" });
-    var result = await daikinOAuth.HandleCallbackWithSubjectAsync(code, state, userId);
+    if (!DaikinOAuthService.ValidateBrowserCorrelation(c, state))
+        return Results.BadRequest(new { error = "Invalid OAuth browser correlation" });
+    var result = await daikinOAuth.HandleCallbackWithSubjectAsync(code, state, userId: null);
     var ok = result.Success;
-    // If we got a stable OIDC subject, remap the user to a deterministic userId
-    if (ok && !string.IsNullOrEmpty(result.Subject))
+    if (ok && !string.IsNullOrEmpty(result.Subject) && !string.IsNullOrEmpty(result.UserId))
     {
-        var stableUserId = DaikinOAuthService.DeriveUserId(result.Subject);
-        if (userId != stableUserId)
-        {
-            // Migrate data from the old browser-random userId to the deterministic one.
-            if (!string.IsNullOrEmpty(userId))
-                await daikinOAuth.MigrateUserDataAsync(userId, stableUserId);
-            // Update the cookie to the deterministic userId
-            sessionCookies.Append(c, stableUserId, secureSessionCookies);
-            Console.WriteLine($"[DaikinOAuth][Callback] Remapped userId={userId} -> {stableUserId}");
-        }
+        await sessions.SignInAsync(c, result.UserId, result.Subject, cancellationToken);
     }
     // Secure redirect handling to avoid open redirect vulnerabilities.
     var configured = cfg["Daikin:PostAuthRedirect"];
@@ -831,7 +924,7 @@ daikinAuthGroup.MapGet("/callback", async (DaikinOAuthService daikinOAuth, IConf
         return rebuilt;
     }
     var dest = AddOrReplaceQueryParam(finalBase, "daikinAuth", ok ? "ok" : "fail");
-    Console.WriteLine($"[DaikinOAuth][Callback] Redirecting userId={userId} success={ok} to={dest}");
+    Console.WriteLine($"[DaikinOAuth][Callback] Redirecting verifiedAccount={result.UserId is not null} success={ok} to={dest}");
     return Results.Redirect(dest, false);
 });
 daikinAuthGroup.MapGet("/status", async (DaikinOAuthService daikinOAuth, HttpContext c) => {
@@ -854,9 +947,9 @@ daikinAuthGroup.MapGet("/status", async (DaikinOAuthService daikinOAuth, HttpCon
     catch { }
     return Results.Json(raw);
 });
-daikinAuthGroup.MapPost("/refresh", async (DaikinOAuthService daikinOAuth, HttpContext c) => { var userId = GetUserId(c); var token = await daikinOAuth.RefreshIfNeededAsync(userId); return token == null ? Results.BadRequest(new { error = "Refresh failed or not authorized" }) : Results.Ok(new { refreshed = true }); });
+daikinAuthGroup.MapPost("/refresh", async (DaikinOAuthService daikinOAuth, HttpContext c) => { var userId = GetUserId(c); var token = await daikinOAuth.RefreshIfNeededAsync(userId); return token == null ? Results.BadRequest(new { error = "Refresh failed or not authorized" }) : Results.Ok(new { refreshed = true }); }).RequireAuthorization();
 daikinAuthGroup.MapGet("/debug", async (DaikinOAuthService daikinOAuth, HttpContext c, IConfiguration cfg) => { if (!IsAdminRequest(c, cfg)) return Results.Json(new { error = "Unauthorized" }, statusCode: 401); var userId = GetUserId(c); return Results.Json(new { status = await daikinOAuth.StatusAsync(userId), userId, now = DateTimeOffset.UtcNow }); });
-daikinAuthGroup.MapPost("/revoke", async (DaikinOAuthService daikinOAuth, HttpContext c) => { var userId = GetUserId(c); var ok = await daikinOAuth.RevokeAsync(userId); return ok ? Results.Ok(new { revoked = true }) : Results.BadRequest(new { error = "Revoke failed" }); });
+daikinAuthGroup.MapPost("/revoke", async (DaikinOAuthService daikinOAuth, HttpContext c) => { var userId = GetUserId(c); var ok = await daikinOAuth.RevokeAsync(userId); return ok ? Results.Ok(new { revoked = true }) : Results.BadRequest(new { error = "Revoke failed" }); }).RequireAuthorization();
 daikinAuthGroup.MapGet("/introspect", async (DaikinOAuthService daikinOAuth, HttpContext c, bool refresh) => { var userId = GetUserId(c); var result = await daikinOAuth.IntrospectAsync(userId, refresh); return result == null ? Results.BadRequest(new { error = "Not authorized" }) : Results.Json(result); });
 
 // Schedule preview/apply
@@ -1136,6 +1229,31 @@ adminGroup.MapDelete("/users/{userId}", async (IConfiguration cfg, HttpContext c
 
 // Daikin data group
 var daikinGroup = app.MapGroup("/api/daikin").WithTags("Daikin");
+daikinGroup.MapGet("/installation", async (
+    HttpContext context,
+    DaikinInstallationService installations,
+    CancellationToken cancellationToken) =>
+{
+    var installation = await installations.GetAsync(GetUserId(context)! , cancellationToken);
+    return installation is null ? Results.NoContent() : Results.Ok(installation);
+});
+daikinGroup.MapPost("/installation/discover", async (
+    HttpContext context,
+    DaikinOAuthService daikinOAuth,
+    DaikinInstallationService installations,
+    IHttpClientFactory httpClientFactory,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    var userId = GetUserId(context)!;
+    var (token, _) = await daikinOAuth.TryGetValidAccessTokenAsync(userId);
+    token ??= await daikinOAuth.RefreshIfNeededAsync(userId);
+    if (token is null) return Results.Unauthorized();
+    var log = configuration.GetValue("Daikin:Http:Log", false);
+    var client = new DaikinApiClient(httpClientFactory.CreateClient("Daikin"), token, log, false, null, configuration["Daikin:ApiBaseUrl"]);
+    try { return Results.Ok(await installations.GetOrDiscoverAsync(userId, client, cancellationToken)); }
+    catch (InvalidOperationException exception) { return Results.BadRequest(new { error = exception.Message }); }
+});
 // Simple proxy for sites (needed by frontend Sites button) – user-scoped
 // Extracted method for /apply endpoint logic
 async Task<IResult> HandleApplyScheduleAsync(BatchRunner batchRunner, HttpContext ctx, IConfiguration configuration, IServiceScopeFactory scopeFactory)
@@ -1364,7 +1482,7 @@ daikinGroup.MapGet("/gateway", async (IHttpClientFactory httpClientFactory, Daik
 
 
 // PUT (upload) a schedule payload to a gateway device management point + optionally activate a scheduleId (mode auto-detect if omitted or 'auto')
-daikinGroup.MapPost("/gateway/schedule/put", async (IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext ctx, ScheduleHistoryRepository historyRepo) =>
+daikinGroup.MapPost("/gateway/schedule/put", async (IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuth, DaikinInstallationService installations, IConfiguration cfg, HttpContext ctx, ScheduleHistoryRepository historyRepo) =>
 {
     var userId = GetUserId(ctx);
     var (token, _) = await daikinOAuth.TryGetValidAccessTokenAsync(userId);
@@ -1391,15 +1509,15 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IHttpClientFactory httpClien
     int.TryParse(cfg["Daikin:Http:BodySnippetLength"], out var bodyLen);
     var baseApi = cfg["Daikin:ApiBaseUrl"];
     var client = new DaikinApiClient(httpClientFactory.CreateClient("Daikin"), token, log, logBody, bodyLen == 0 ? null : bodyLen, baseApi);
+        var accountInstallation = await installations.GetAsync(userId!);
 
         // Auto-detect device IDs if not provided
         string? siteId = null;
         if (string.IsNullOrWhiteSpace(gatewayDeviceId) || string.IsNullOrWhiteSpace(embeddedId))
         {
-            // Check for config overrides
-            var overrideSite = cfg["Daikin:SiteId"];
-            var overrideDevice = cfg["Daikin:DeviceId"];
-            var overrideEmbedded = cfg["Daikin:ManagementPointEmbeddedId"];
+            var overrideSite = accountInstallation?.SiteId;
+            var overrideDevice = accountInstallation?.DeviceId;
+            var overrideEmbedded = accountInstallation?.DhwManagementPointEmbeddedId;
 
             string? detectedSite = null;
             string? detectedDevice = null;
@@ -1462,7 +1580,7 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IHttpClientFactory httpClien
             if (siteId == null)
             {
                 // If we didn't auto-detect above, we need to get the site
-                var overrideSite = cfg["Daikin:SiteId"];
+                var overrideSite = accountInstallation?.SiteId;
                 if (!string.IsNullOrWhiteSpace(overrideSite))
                     siteId = overrideSite;
                 else
@@ -1598,33 +1716,20 @@ internal sealed class HangfirePasswordAuthorizationFilter : IDashboardAuthorizat
 {
     private readonly string? _password;
     private readonly IConfiguration _cfg;
-    private readonly UserSessionCookieService _sessionCookies;
 
     public HangfirePasswordAuthorizationFilter(
         string? password,
-        IConfiguration cfg,
-        UserSessionCookieService sessionCookies)
+        IConfiguration cfg)
     {
         _password = password;
         _cfg = cfg;
-        _sessionCookies = sessionCookies;
     }
 
     public bool Authorize(DashboardContext context)
     {
         var httpContext = context.GetHttpContext();
 
-        // Check 1: Cookie-based access via admin.json hangfireUserIds
-        // Note: must match UserCookieName constant in top-level statements
-        var rawCookie = httpContext.Request.Cookies[UserSessionCookieService.CookieName];
-        var hasProtectedIdentity = _sessionCookies.TryUnprotect(rawCookie, out var userId);
-        if (!hasProtectedIdentity &&
-            _cfg.GetValue("Security:AcceptLegacyUserCookie", false) &&
-            AdminService.IsValidUserId(rawCookie))
-        {
-            userId = rawCookie!;
-        }
-        // Validate cookie value using shared validation logic
+        var userId = AccountAuthentication.UserId(httpContext.User);
         if (AdminService.IsValidUserId(userId))
         {
             if (AdminService.HasHangfireAccess(_cfg, userId))

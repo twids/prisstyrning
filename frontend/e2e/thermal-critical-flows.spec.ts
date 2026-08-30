@@ -1,5 +1,21 @@
 import { expect, test } from '@playwright/test';
 
+test('oinloggad besökare ser bara den gemensamma Daikin-inloggningen', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === 'mobile', 'Samma åtkomstgräns täcks i desktopprojektet.');
+  await page.route('**/api/session', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ authenticated: false, userId: null, isAdmin: false, csrfToken: 'anonymous-csrf' }),
+  }));
+
+  await page.goto('/');
+
+  await expect(page.getByRole('heading', { name: 'Logga in för att fortsätta' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Logga in med Daikin' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Överblick utan överraskningar' })).toHaveCount(0);
+  await expect(page.getByText(/samma verifierade Daikin\/ONECTA-konto/i)).toBeVisible();
+});
+
 test('översikt leder till en förklarad shadowplan', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === 'mobile', 'Samma informationsflöde täcks i desktopprojektet.');
   await page.goto('/');

@@ -1,6 +1,5 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 using Prisstyrning.Data;
 using Prisstyrning.Data.Entities;
 using Prisstyrning.Thermal.Data;
@@ -14,34 +13,33 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IHomeAssistantStateCache _cache;
     private readonly SensorQualityTracker _qualityTracker;
-    private readonly HomeAssistantTelemetryOptions _options;
     private readonly ILogger<HomeAssistantTelemetryCollector> _logger;
 
     public HomeAssistantTelemetryCollector(
         IServiceScopeFactory scopeFactory,
         IHomeAssistantStateCache cache,
         SensorQualityTracker qualityTracker,
-        IOptions<HomeAssistantTelemetryOptions> options,
         ILogger<HomeAssistantTelemetryCollector> logger)
     {
         _scopeFactory = scopeFactory;
         _cache = cache;
         _qualityTracker = qualityTracker;
-        _options = options.Value;
         _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!_options.Enabled) return;
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
         do
         {
             try
             {
                 using var scope = _scopeFactory.CreateScope();
-                var installations = scope.ServiceProvider.GetRequiredService<ThermalInstallationRegistry>();
-                var userIds = await installations.GetUsersAsync(includeLegacy: true, activeLwtOnly: false, cancellationToken: stoppingToken);
+                var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+                var userIds = await db.HomeAssistantConnections.AsNoTracking()
+                    .Where(x => x.TelemetryEnabled)
+                    .Select(x => x.UserId)
+                    .ToListAsync(stoppingToken);
                 foreach (var userId in userIds)
                 {
                     try { await CollectAsync(userId, stoppingToken); }
@@ -61,6 +59,10 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+        var connection = await db.HomeAssistantConnections.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.UserId == userId && x.TelemetryEnabled, cancellationToken);
+        if (connection is null) return;
+        var staleAfter = TimeSpan.FromMinutes(Math.Clamp(connection.StaleAfterMinutes, 1, 60));
         var entities = await db.ThermalEntityConfigs.AsNoTracking()
             .Where(x => x.UserId == userId && x.Enabled)
             .ToListAsync(cancellationToken);
@@ -84,7 +86,7 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
         var weatherForecast = new NormalizedWeatherForecast([], DataQuality.Unavailable, "Ingen väderprognos är mappad.");
         foreach (var entity in entities)
         {
-            _cache.TryGet(entity.EntityId, out var raw);
+            _cache.TryGet(userId, entity.EntityId, out var raw);
             if (entity.Role.Equals(ThermalEntityRoles.WeatherForecast, StringComparison.OrdinalIgnoreCase))
             {
                 weatherForecast = HomeAssistantWeatherForecastParser.Parse(raw, now);
@@ -97,14 +99,16 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
                 entity.MinimumValid,
                 entity.MaximumValid,
                 entity.MaximumRatePerHour,
-                now);
+                now,
+                staleAfter,
+                userId);
         }
 
         var roomValues = new Dictionary<string, double>();
         var roomAssessments = new Dictionary<string, SensorAssessment>();
         foreach (var room in rooms)
         {
-            _cache.TryGet(room.EntityId, out var raw);
+            _cache.TryGet(userId, room.EntityId, out var raw);
             var assessment = Assess(
                 room.EntityId,
                 raw,
@@ -112,7 +116,9 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
                 room.MinimumValidC,
                 room.MaximumValidC,
                 room.MaximumRateCPerHour,
-                now);
+                now,
+                staleAfter,
+                userId);
             roomAssessments[room.EntityId] = assessment;
             if (assessment.Quality == DataQuality.Valid && !assessment.Excluded && assessment.Value is { } valid)
             {
@@ -199,12 +205,14 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
         double? minimum,
         double? maximum,
         double? maximumRatePerHour,
-        DateTimeOffset now) =>
+        DateTimeOffset now,
+        TimeSpan staleAfter,
+        string userId) =>
         _qualityTracker.Assess(
-            entityId,
+            $"{userId}|{entityId}",
             state,
             SensorValueNormalizer.Normalize(state, expectedUnit),
-            new SensorValidationRules(minimum, maximum, maximumRatePerHour, TimeSpan.FromMinutes(_options.StaleAfterMinutes)),
+            new SensorValidationRules(minimum, maximum, maximumRatePerHour, staleAfter),
             now);
 
     private static double? Numeric(IReadOnlyDictionary<string, SensorAssessment> values, string role) =>

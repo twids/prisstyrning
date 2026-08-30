@@ -11,13 +11,14 @@ internal class DaikinOAuthService
     private readonly IHttpClientFactory _httpClientFactory;
     private static readonly ConcurrentDictionary<string, (string verifier, DateTime created)> _stateToVerifier = new();
     internal static readonly TimeSpan StateTtl = TimeSpan.FromMinutes(10);
+    internal const string CorrelationCookieName = "prisstyrning-oauth-correlation";
 
     private readonly IConfiguration _cfg;
     private readonly DaikinTokenRepository _tokenRepo;
     private readonly TimeProvider _timeProvider;
 
     /// <summary>Result of the OAuth callback token exchange, including the OIDC subject if available.</summary>
-    public record CallbackResult(bool Success, string? Subject);
+    public record CallbackResult(bool Success, string? Subject, string? UserId = null, string? Error = null);
 
     private const string DefaultAuthEndpoint = "https://idp.onecta.daikineurope.com/v1/oidc/authorize"; // OIDC authorize
     private const string DefaultTokenEndpoint = "https://idp.onecta.daikineurope.com/v1/oidc/token";   // token
@@ -47,23 +48,33 @@ internal class DaikinOAuthService
         var (codeChallenge, verifier) = CreatePkcePair();
         EvictExpiredStates(_timeProvider);
         _stateToVerifier[state] = (verifier, _timeProvider.GetUtcNow().UtcDateTime);
+        if (httpContext is not null)
+        {
+            var secure = Uri.TryCreate(redirectUri, UriKind.Absolute, out var redirect) &&
+                         redirect.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
+            httpContext.Response.Cookies.Append(CorrelationCookieName, state, new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = secure,
+                SameSite = SameSiteMode.Lax,
+                Path = "/",
+                MaxAge = StateTtl,
+                IsEssential = true
+            });
+        }
         var url = $"{authEndpoint}?response_type=code&client_id={Uri.EscapeDataString(clientId)}&redirect_uri={Uri.EscapeDataString(redirectUri)}&scope={Uri.EscapeDataString(scope)}&state={state}&nonce={nonce}&code_challenge={codeChallenge}&code_challenge_method=S256";
         Console.WriteLine($"[DaikinOAuth] Built authorize URL (host only) authHost={new Uri(authEndpoint).Host} redirect={redirectUri} scope='{scope}' state={state.Substring(0,8)}... offline={(includeOffline?"yes":"no")}");
         return url;
     }
 
-    // Minimal variant utan state/PKCE/nonce – ENDAST för felsökning av 403.
-    public string GetMinimalAuthorizationUrl(HttpContext? httpContext = null)
+    public static bool ValidateBrowserCorrelation(HttpContext context, string state)
     {
-        var clientId = _cfg["Daikin:ClientId"] ?? throw new InvalidOperationException("Daikin:ClientId saknas");
-        var redirectUri = ResolveRedirectUri(_cfg, httpContext);
-        var scopeCfg = _cfg["Daikin:Scope"];
-        var scope = string.IsNullOrWhiteSpace(scopeCfg) ? "openid onecta:basic.integration" : scopeCfg!;
-        // OBS: inget state, ingen PKCE – använd ej i produktion.
-        var authEndpoint = _cfg["Daikin:AuthEndpoint"] ?? DefaultAuthEndpoint;
-        var url = $"{authEndpoint}?response_type=code&client_id={Uri.EscapeDataString(clientId)}&redirect_uri={Uri.EscapeDataString(redirectUri)}&scope={Uri.EscapeDataString(scope)}";
-        Console.WriteLine($"[DaikinOAuth][MIN] URL => {url}");
-        return url;
+        var candidate = context.Request.Cookies[CorrelationCookieName];
+        context.Response.Cookies.Delete(CorrelationCookieName, new CookieOptions { Path = "/" });
+        if (candidate is null || candidate.Length != 32 || state.Length != 32) return false;
+        return CryptographicOperations.FixedTimeEquals(
+            Encoding.ASCII.GetBytes(candidate),
+            Encoding.ASCII.GetBytes(state));
     }
 
     public async Task<bool> HandleCallbackAsync(string code, string state, HttpClient? httpClient = null) => (await HandleCallbackWithSubjectAsync(code, state, userId: null, httpClient)).Success;
@@ -115,12 +126,19 @@ internal class DaikinOAuthService
         var access = root.GetProperty("access_token").GetString()!;
         var refresh = root.GetProperty("refresh_token").GetString()!;
         var expiresIn = root.TryGetProperty("expires_in", out var ei) ? ei.GetInt32() : 3600;
-        var expiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn - 30);
-        var subject = ExtractSubjectFromIdToken(root, clientId);
-        await _tokenRepo.SaveAsync(userId ?? string.Empty, access, refresh, expiresAt, subject);
-        Console.WriteLine($"[DaikinOAuth] Token exchange OK expiresAt={expiresAt:O} refresh={(refresh?.Length>8?refresh[..8]+"...":"(none)")} hasSubject={subject != null}");
+        var expiresAt = _timeProvider.GetUtcNow().AddSeconds(expiresIn - 30);
+        var identity = await IntrospectIdentityAsync(http, access, clientId, clientSecret, cancellationToken: default);
+        if (identity is null)
+        {
+            Console.WriteLine("[DaikinOAuth][Error] Token exchange succeeded but server-authenticated identity validation failed.");
+            if (httpClient == null) http.Dispose();
+            return new CallbackResult(false, null, null, "identity-validation-failed");
+        }
+        var stableUserId = DeriveUserId(identity.Subject);
+        await _tokenRepo.SaveAsync(stableUserId, access, refresh, expiresAt, identity.Subject);
+        Console.WriteLine($"[DaikinOAuth] Token exchange and identity validation OK expiresAt={expiresAt:O}");
         if (httpClient == null) http.Dispose();
-        return new CallbackResult(true, subject);
+        return new CallbackResult(true, identity.Subject, stableUserId);
     }
 
     public async Task<(string? accessToken, DateTimeOffset? expiresAt)> TryGetValidAccessTokenAsync(string? userId = null)
@@ -248,11 +266,43 @@ internal class DaikinOAuthService
             }
     }
 
-    public async Task<string?> GetAccessTokenUnsafeAsync(string? userId = null)
+    private async Task<VerifiedIdentity?> IntrospectIdentityAsync(
+        HttpClient http,
+        string accessToken,
+        string clientId,
+        string? clientSecret,
+        CancellationToken cancellationToken)
     {
-        var t = await _tokenRepo.LoadAsync(userId ?? string.Empty);
-        return t?.AccessToken;
+        if (string.IsNullOrWhiteSpace(clientSecret))
+            throw new InvalidOperationException("Daikin client secret is required for authenticated token introspection.");
+        var endpoint = _cfg["Daikin:IntrospectEndpoint"] ?? DefaultIntrospectEndpoint;
+        using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
+        var bytes = Encoding.ASCII.GetBytes(clientId + ":" + clientSecret);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", Convert.ToBase64String(bytes));
+        request.Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["token"] = accessToken });
+        using var response = await http.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode) return null;
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        var root = document.RootElement;
+        if (!root.TryGetProperty("active", out var active) || active.ValueKind != JsonValueKind.True) return null;
+        if (!ClientMatches(root, clientId)) return null;
+        if (!root.TryGetProperty("sub", out var subjectElement) || string.IsNullOrWhiteSpace(subjectElement.GetString())) return null;
+        return new VerifiedIdentity(subjectElement.GetString()!);
     }
+
+    private static bool ClientMatches(JsonElement root, string clientId)
+    {
+        if (root.TryGetProperty("client_id", out var client) && client.ValueKind == JsonValueKind.String)
+            return string.Equals(client.GetString(), clientId, StringComparison.Ordinal);
+        if (!root.TryGetProperty("aud", out var audience)) return false;
+        if (audience.ValueKind == JsonValueKind.String)
+            return string.Equals(audience.GetString(), clientId, StringComparison.Ordinal);
+        return audience.ValueKind == JsonValueKind.Array && audience.EnumerateArray()
+            .Any(x => x.ValueKind == JsonValueKind.String && string.Equals(x.GetString(), clientId, StringComparison.Ordinal));
+    }
+
+    private sealed record VerifiedIdentity(string Subject);
 
     /// <summary>
     /// Derives a deterministic, browser-agnostic userId from the OIDC subject claim.

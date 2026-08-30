@@ -30,6 +30,7 @@ public class FlexibleBatchStateTests : IDisposable
         services.AddDbContext<PrisstyrningDbContext>(o =>
             o.UseInMemoryDatabase(dbName));
         services.AddSingleton(cfg);
+        services.AddTestCredentialProtection();
 
         var httpFactory = MockServiceFactory.CreateMockHttpClientFactory(mockHandler);
         services.AddSingleton<IHttpClientFactory>(httpFactory);
@@ -40,7 +41,9 @@ public class FlexibleBatchStateTests : IDisposable
         services.AddScoped<FlexibleScheduleStateRepository>();
         services.AddScoped<PriceRepository>();
         services.AddScoped<DaikinOAuthService>();
-        services.AddScoped<BatchRunner>();
+        services.AddScoped(sp => new BatchRunner(
+            sp.GetRequiredService<IHttpClientFactory>(),
+            sp.GetRequiredService<DaikinOAuthService>()));
 
         _serviceProvider = services.BuildServiceProvider();
 

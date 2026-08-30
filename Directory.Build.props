@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <DefaultItemExcludes>$(DefaultItemExcludes);$(MSBuildThisFileDirectory).artifacts/**;$(MSBuildThisFileDirectory)frontend/node_modules/**;$(MSBuildThisFileDirectory)frontend/.vite/**;$(MSBuildThisFileDirectory)coverage/**</DefaultItemExcludes>
+    <DefaultItemExcludesInProjectFolder>$(DefaultItemExcludesInProjectFolder);.artifacts/**;frontend/node_modules/**;frontend/.vite/**;coverage/**</DefaultItemExcludesInProjectFolder>
+    <EnableDefaultNoneItems>false</EnableDefaultNoneItems>
+  </PropertyGroup>
+</Project>

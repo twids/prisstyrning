@@ -10,6 +10,21 @@ namespace Prisstyrning.Tests.Fixtures;
 /// </summary>
 public static class MockServiceFactory
 {
+    internal static void AddSuccessfulDaikinIdentity(
+        MockHttpMessageHandler handler,
+        string subject,
+        string clientId = "test-client-id")
+    {
+        handler.AddRoute("idp.onecta.daikineurope.com/v1/oidc/introspect",
+            HttpStatusCode.OK,
+            JsonSerializer.Serialize(new
+            {
+                active = true,
+                client_id = clientId,
+                sub = subject
+            }));
+    }
+
     /// <summary>
     /// Creates a test IHttpClientFactory that returns HttpClient instances with the provided message handler.
     /// If no handler is provided, creates one with default Nordpool mock responses.
@@ -72,7 +87,7 @@ public static class MockServiceFactory
             .Options;
         var db = new Prisstyrning.Data.PrisstyrningDbContext(options);
         db.Database.EnsureCreated();
-        var tokenRepo = new Prisstyrning.Data.Repositories.DaikinTokenRepository(db);
+        var tokenRepo = new Prisstyrning.Data.Repositories.DaikinTokenRepository(db, TestSecretProtector.Instance);
         return new DaikinOAuthService(cfg, tokenRepo, factory);
     }
     

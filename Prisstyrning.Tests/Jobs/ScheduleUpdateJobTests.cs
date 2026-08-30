@@ -32,11 +32,14 @@ public class ScheduleUpdateJobTests : IDisposable
             o.UseInMemoryDatabase(dbName));
         services.AddSingleton(cfg);
         services.AddSingleton<IHttpClientFactory>(MockServiceFactory.CreateMockHttpClientFactory());
+        services.AddTestCredentialProtection();
         services.AddScoped<UserSettingsRepository>();
         services.AddScoped<ScheduleHistoryRepository>();
         services.AddScoped<DaikinTokenRepository>();
         services.AddScoped<DaikinOAuthService>();
-        services.AddScoped<BatchRunner>();
+        services.AddScoped(sp => new BatchRunner(
+            sp.GetRequiredService<IHttpClientFactory>(),
+            sp.GetRequiredService<DaikinOAuthService>()));
         services.AddScoped<DhwWriterGuard>();
         services.AddScoped<DhwWriterLeaseService>();
         _serviceProvider = services.BuildServiceProvider();

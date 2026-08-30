@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../api/client';
-import type { ControlMode, ThermalConfig } from '../../types/api';
+import type { ControlMode, ThermalConfig, UpdateHomeAssistantConnection } from '../../types/api';
 
 export function useThermalStatus() {
   return useQuery({
@@ -86,6 +86,10 @@ export function useThermalModels() {
 
 export function useHomeAssistant() {
   const queryClient = useQueryClient();
+  const config = useQuery({
+    queryKey: ['home-assistant', 'config'],
+    queryFn: () => apiClient.getHomeAssistantConfig(),
+  });
   const status = useQuery({
     queryKey: ['home-assistant', 'status'],
     queryFn: () => apiClient.getHomeAssistantStatus(),
@@ -101,6 +105,22 @@ export function useHomeAssistant() {
     mutationFn: () => apiClient.testHomeAssistant(),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: ['home-assistant'] }),
   });
+  const save = useMutation({
+    mutationFn: (request: UpdateHomeAssistantConnection) => apiClient.saveHomeAssistantConfig(request),
+    onSuccess: (connection) => {
+      queryClient.setQueryData(['home-assistant', 'config'], connection);
+      void queryClient.invalidateQueries({ queryKey: ['home-assistant'] });
+      void queryClient.invalidateQueries({ queryKey: ['thermal', 'readiness'] });
+    },
+  });
+  const remove = useMutation({
+    mutationFn: () => apiClient.deleteHomeAssistantConfig(),
+    onSuccess: () => {
+      queryClient.setQueryData(['home-assistant', 'config'], null);
+      void queryClient.invalidateQueries({ queryKey: ['home-assistant'] });
+      void queryClient.invalidateQueries({ queryKey: ['thermal', 'readiness'] });
+    },
+  });
   const importHistory = useMutation({
     mutationFn: ({ fromUtc, toUtc }: { fromUtc: string; toUtc: string }) =>
       apiClient.importHomeAssistantHistory(fromUtc, toUtc),
@@ -109,5 +129,5 @@ export function useHomeAssistant() {
       void queryClient.invalidateQueries({ queryKey: ['thermal', 'events'] });
     },
   });
-  return { status, entities, test, importHistory };
+  return { config, status, entities, test, save, remove, importHistory };
 }

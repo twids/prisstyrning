@@ -2,9 +2,9 @@ using System.Net;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Options;
 using Prisstyrning.Data;
 using Prisstyrning.Data.Entities;
+using Prisstyrning.Tests.Fixtures;
 using Prisstyrning.Thermal.Domain;
 using Prisstyrning.Thermal.Control;
 using Prisstyrning.Thermal.HomeAssistant;
@@ -161,6 +161,15 @@ public class HomeAssistantTelemetryTests
             ActiveDeviationLimitC = 1
         });
         await db.SaveChangesAsync();
+        var connections = CreateConnectionService(db);
+        await connections.SaveAsync("control-user", new UpdateHomeAssistantConnectionRequest(
+            "https://ha.example.se",
+            "telemetry-secret",
+            "control-secret",
+            TelemetryEnabled: true,
+            ControlEnabled: true,
+            HeatingDeviationEntityId: "number.heating_deviation",
+            StaleAfterMinutes: 10));
 
         var cache = new HomeAssistantStateCache();
         string? path = null;
@@ -169,21 +178,12 @@ public class HomeAssistantTelemetryTests
         {
             path = request.RequestUri?.AbsolutePath;
             authorization = request.Headers.Authorization?.ToString();
-            cache.Upsert(State("number.heating_deviation", "1", "°C") with { ReceivedAtUtc = DateTimeOffset.UtcNow });
+            cache.Upsert("control-user", State("number.heating_deviation", "1", "°C") with { ReceivedAtUtc = DateTimeOffset.UtcNow });
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
         });
-        var credentials = new HomeAssistantCredentialProvider(
-            Options.Create(new HomeAssistantTelemetryOptions()),
-            Options.Create(new HomeAssistantControlOptions { Token = "control-secret" }));
         var client = new HomeAssistantControlClient(
             new StubFactory(new HttpClient(handler)),
-            Options.Create(new HomeAssistantControlOptions
-            {
-                BaseUrl = "http://home-assistant.local:8123",
-                Token = "control-secret",
-                HeatingDeviationEntityId = "number.heating_deviation"
-            }),
-            credentials,
+            connections,
             cache,
             db,
             new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -212,19 +212,10 @@ public class HomeAssistantTelemetryTests
         });
         await db.SaveChangesAsync();
 
-        var options = Options.Create(new HomeAssistantControlOptions
-        {
-            BaseUrl = "http://home-assistant.local:8123",
-            Token = "control-secret",
-            HeatingDeviationEntityId = "number.heating_deviation"
-        });
-        var credentials = new HomeAssistantCredentialProvider(
-            Options.Create(new HomeAssistantTelemetryOptions()), options);
         var client = new HomeAssistantControlClient(
             new StubFactory(new HttpClient(new StubHandler(_ =>
                 Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK))))),
-            options,
-            credentials,
+            CreateConnectionService(db),
             new HomeAssistantStateCache(),
             db,
             new ConfigurationBuilder().Build());
@@ -280,31 +271,6 @@ public class HomeAssistantTelemetryTests
         Assert.Equal(10d, result.Points[0].WindSpeedMps!.Value, 5);
     }
 
-    [Fact]
-    public void Credentials_UseSeparateDockerSecretFilesWithoutExposingMetadata()
-    {
-        var telemetryFile = Path.GetTempFileName();
-        var controlFile = Path.GetTempFileName();
-        try
-        {
-            File.WriteAllText(telemetryFile, "telemetry-identity\n");
-            File.WriteAllText(controlFile, "control-identity\n");
-            var provider = new HomeAssistantCredentialProvider(
-                Options.Create(new HomeAssistantTelemetryOptions { TokenFile = telemetryFile }),
-                Options.Create(new HomeAssistantControlOptions { TokenFile = controlFile }));
-
-            Assert.Equal("telemetry-identity", provider.GetTelemetryToken());
-            Assert.Equal("control-identity", provider.GetControlToken());
-            Assert.True(provider.HasTelemetryToken);
-            Assert.True(provider.HasControlToken);
-        }
-        finally
-        {
-            File.Delete(telemetryFile);
-            File.Delete(controlFile);
-        }
-    }
-
     private static HomeAssistantState State(string entityId, string value, string unit, DateTimeOffset? updated = null) => new(
         entityId,
         value,
@@ -321,5 +287,14 @@ public class HomeAssistantTelemetryTests
     private sealed class StubHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> handler) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) => handler(request);
+    }
+
+    private static HomeAssistantConnectionService CreateConnectionService(PrisstyrningDbContext db) =>
+        new(db, TestSecretProtector.Instance, new AcceptingEndpointValidator());
+
+    private sealed class AcceptingEndpointValidator : IHomeAssistantEndpointValidator
+    {
+        public Task<Uri> ValidateAsync(string value, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new Uri(value));
     }
 }

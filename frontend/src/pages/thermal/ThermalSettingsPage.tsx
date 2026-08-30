@@ -10,7 +10,8 @@ import SaveOutlinedIcon from '@mui/icons-material/SaveOutlined';
 import CableOutlinedIcon from '@mui/icons-material/CableOutlined';
 import { useHomeAssistant, useSaveThermalConfig, useThermalConfig } from '../../hooks/thermal/useThermal';
 import { PageHeader, QualityChip, formatRelative } from '../../components/thermal/thermalUi';
-import type { HomeAssistantEntity, ThermalConfig, ThermalEntityConfig, ThermalRoomConfig } from '../../types/api';
+import ConfirmDialog from '../../components/ConfirmDialog';
+import type { HomeAssistantConnection, HomeAssistantEntity, ThermalConfig, ThermalEntityConfig, ThermalRoomConfig, UpdateHomeAssistantConnection } from '../../types/api';
 
 const roles = [
   ['outside_temperature', 'Utetemperatur', '°C'],
@@ -63,7 +64,7 @@ export default function ThermalSettingsPage() {
       <PageHeader
         eyebrow="Konfiguration med skyddsräcken"
         title="Inställningar"
-        description="Friendly names för vardagen, exakta entity-ID:n för spårbarhet. Hemligheter lagras aldrig i databasen eller visas i loggar."
+        description="Friendly names för vardagen, exakta entity-ID:n för spårbarhet. Hemligheter lagras krypterat per konto och visas aldrig igen eller skrivs i loggar."
         action={<Stack direction="row" gap={1} alignItems="center">{dirty && <Chip color="warning" label="Osparade ändringar" />}<Button variant="contained" startIcon={<SaveOutlinedIcon />} onClick={persist} disabled={!dirty || errors.length > 0 || save.isPending}>{save.isPending ? 'Sparar…' : 'Spara'}</Button></Stack>}
       />
       {save.isSuccess && <Alert severity="success">Inställningarna är sparade. Driftläge och DHW-writer ändrades inte.</Alert>}
@@ -92,23 +93,83 @@ export default function ThermalSettingsPage() {
 }
 
 function HomeAssistantTab({ ha }: { ha: ReturnType<typeof useHomeAssistant> }) {
+  if (ha.config.isLoading) return <CircularProgress aria-label="Laddar Home Assistant-anslutning" />;
+  if (ha.config.isError) return <Alert severity="error">{ha.config.error.message}</Alert>;
+  return <HomeAssistantConnectionPanel key={ha.config.data?.updatedAtUtc ?? 'new'} ha={ha} connection={ha.config.data ?? null} />;
+}
+
+export function HomeAssistantConnectionPanel({ ha, connection }: { ha: ReturnType<typeof useHomeAssistant>; connection: HomeAssistantConnection | null }) {
   const now = useMemo(() => new Date(), []);
+  const initial = useMemo<UpdateHomeAssistantConnection>(() => ({
+    baseUrl: connection?.baseUrl ?? '',
+    telemetryToken: null,
+    controlToken: null,
+    telemetryEnabled: connection?.telemetryEnabled ?? true,
+    controlEnabled: connection?.controlEnabled ?? false,
+    heatingDeviationEntityId: connection?.heatingDeviationEntityId ?? '',
+    staleAfterMinutes: connection?.staleAfterMinutes ?? 10,
+    clearControlToken: false,
+  }), [connection]);
+  const [connectionDraft, setConnectionDraft] = useState(initial);
+  const [removeOpen, setRemoveOpen] = useState(false);
   const [historyFrom, setHistoryFrom] = useState(() => toLocalDateTimeInput(new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)));
   const [historyTo, setHistoryTo] = useState(() => toLocalDateTimeInput(now));
+  const connectionErrors = useMemo(() => validateHomeAssistantConnection(connectionDraft, connection), [connectionDraft, connection]);
+  const connectionDirty = JSON.stringify(connectionDraft) !== JSON.stringify(initial);
+  const saveConnection = () => ha.save.mutate({
+    ...connectionDraft,
+    baseUrl: connectionDraft.baseUrl.trim(),
+    telemetryToken: connectionDraft.telemetryToken?.trim() || null,
+    controlToken: connectionDraft.controlToken?.trim() || null,
+    heatingDeviationEntityId: connectionDraft.heatingDeviationEntityId.trim(),
+  });
   const importHistory = () => ha.importHistory.mutate({
     fromUtc: new Date(historyFrom).toISOString(),
     toUtc: new Date(historyTo).toISOString(),
   });
   return <Stack spacing={3}>
     <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={2}>
-      <Box><Typography variant="h5">Separata identiteter</Typography><Typography color="text.secondary">Telemetritoken är läsande. Styrtoken har en kodmässig allowlist och används bara i aktiva lägen.</Typography></Box>
-      <Stack direction="row" gap={1} alignItems="center"><Chip label={ha.status.data?.configured ? 'Konfigurerad' : 'Ej konfigurerad'} color={ha.status.data?.configured ? 'success' : 'default'} /><Button variant="outlined" startIcon={<CableOutlinedIcon />} onClick={() => ha.test.mutate()} disabled={ha.test.isPending}>{ha.test.isPending ? 'Testar…' : 'Testa anslutning'}</Button></Stack>
+      <Box><Typography variant="h5">Ditt kontos Home Assistant</Typography><Typography color="text.secondary">Anslutningen följer det verifierade Daikin-kontot. Telemetritoken bör vara läsande; styrtoken används bara för exakt tillåten P1P2-entity i aktiva lägen.</Typography></Box>
+      <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap"><Chip label={ha.status.data?.configured ? 'Konfigurerad' : 'Ej konfigurerad'} color={ha.status.data?.configured ? 'success' : 'default'} /><Button variant="outlined" startIcon={<CableOutlinedIcon />} onClick={() => ha.test.mutate()} disabled={!connection || connectionDirty || ha.test.isPending}>{ha.test.isPending ? 'Testar…' : 'Testa sparad anslutning'}</Button></Stack>
     </Stack>
+    <Alert severity="info">Tokenvärden skickas över den inloggade HTTPS-sessionen, krypteras med installationens credential-nyckel och returneras aldrig av API:t. Tomma tokenfält behåller redan sparade tokens.</Alert>
+    <Paper variant="outlined" sx={{ p: 2.5 }}>
+      <Stack spacing={2.5}>
+        <Stack direction={{ xs: 'column', md: 'row' }} gap={2} alignItems={{ md: 'flex-start' }}>
+          <TextField fullWidth required label="Home Assistant-adress" placeholder="https://ha.example.se" value={connectionDraft.baseUrl} onChange={(event) => setConnectionDraft({ ...connectionDraft, baseUrl: event.target.value })} helperText="Publik HTTPS-adress utan sökvägsparametrar eller inloggningsuppgifter." />
+          <TextField type="number" label="Gammal efter, minuter" value={connectionDraft.staleAfterMinutes} onChange={(event) => setConnectionDraft({ ...connectionDraft, staleAfterMinutes: Number(event.target.value) })} inputProps={{ min: 1, max: 60 }} sx={{ minWidth: 190 }} />
+        </Stack>
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>
+          <Paper variant="outlined" sx={{ p: 2 }}>
+            <Typography fontWeight={750}>Telemetri</Typography>
+            <Typography variant="body2" color="text.secondary" mb={2}>Använd en separat, läsande långlivad HA-token.</Typography>
+            <TextField fullWidth type="password" autoComplete="new-password" label={connection?.telemetryTokenConfigured ? 'Ny telemetritoken (valfritt)' : 'Telemetritoken'} value={connectionDraft.telemetryToken ?? ''} onChange={(event) => setConnectionDraft({ ...connectionDraft, telemetryToken: event.target.value || null })} helperText={connection?.telemetryTokenConfigured ? 'En token är sparad. Lämna tomt för att behålla den.' : 'Krävs första gången.'} />
+            <FormControlLabel sx={{ mt: 1 }} control={<Switch checked={connectionDraft.telemetryEnabled} onChange={(event) => setConnectionDraft({ ...connectionDraft, telemetryEnabled: event.target.checked })} />} label="Samla telemetri" />
+          </Paper>
+          <Paper variant="outlined" sx={{ p: 2 }}>
+            <Typography fontWeight={750}>P1P2-styrning</Typography>
+            <Typography variant="body2" color="text.secondary" mb={2}>Endast <code>number.set_value</code> till entityn nedan är tillåtet.</Typography>
+            <TextField fullWidth type="password" autoComplete="new-password" label={connection?.controlTokenConfigured ? 'Ny styrtoken (valfritt)' : 'Styrtoken'} value={connectionDraft.controlToken ?? ''} onChange={(event) => setConnectionDraft({ ...connectionDraft, controlToken: event.target.value || null, clearControlToken: false })} helperText={connection?.controlTokenConfigured ? 'En styrtoken är sparad. Lämna tomt för att behålla den.' : 'Behövs först när styrning ska aktiveras.'} />
+            <TextField fullWidth sx={{ mt: 2 }} label="Tillåten LWT-avvikelse-entity" placeholder="number.daikin_deviation_heating" value={connectionDraft.heatingDeviationEntityId} onChange={(event) => setConnectionDraft({ ...connectionDraft, heatingDeviationEntityId: event.target.value })} />
+            <FormControlLabel sx={{ mt: 1 }} control={<Switch checked={connectionDraft.controlEnabled} onChange={(event) => setConnectionDraft({ ...connectionDraft, controlEnabled: event.target.checked })} />} label="Tillåt styrklienten" />
+            {connection?.controlTokenConfigured && <FormControlLabel control={<Switch checked={connectionDraft.clearControlToken} onChange={(event) => setConnectionDraft({ ...connectionDraft, clearControlToken: event.target.checked, controlEnabled: event.target.checked ? false : connectionDraft.controlEnabled, controlToken: null })} />} label="Ta bort sparad styrtoken vid nästa sparande" />}
+          </Paper>
+        </Box>
+        {connectionErrors.map((error) => <Alert key={error} severity="error">{error}</Alert>)}
+        {ha.save.isSuccess && <Alert severity="success">Anslutningen är sparad för ditt Daikin-konto. Inget driftläge aktiverades.</Alert>}
+        {ha.save.isError && <Alert severity="error">{ha.save.error.message}</Alert>}
+        {connectionDirty && <Alert severity="warning">Förhandsvisning: anslutning eller tokeninställningar ändras. Telemetri startar först från den sparade anslutningen; LWT-kommandon är fortfarande blockerade i Legacy och Shadow.</Alert>}
+        <Stack direction={{ xs: 'column-reverse', sm: 'row' }} justifyContent="space-between" gap={1}>
+          <Button color="error" onClick={() => setRemoveOpen(true)} disabled={!connection || ha.remove.isPending}>Ta bort anslutning</Button>
+          <Button variant="contained" startIcon={<SaveOutlinedIcon />} onClick={saveConnection} disabled={!connectionDirty || connectionErrors.length > 0 || ha.save.isPending}>{ha.save.isPending ? 'Sparar…' : 'Spara HA-anslutning'}</Button>
+        </Stack>
+      </Stack>
+    </Paper>
     {ha.test.isSuccess && <Alert severity="success">Telemetriidentiteten når Home Assistant.</Alert>}
     {ha.test.isError && <Alert severity="error">{ha.test.error.message}</Alert>}
     <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>
-      <Paper variant="outlined" sx={{ p: 2.5 }}><Typography fontWeight={750}>Telemetri</Typography><Typography variant="body2" color="text.secondary" mb={2}>Sökväg till Docker-secret: <code>HomeAssistant__Telemetry__TokenFile</code></Typography><Stack direction="row" justifyContent="space-between"><Typography>WebSocket/startbild</Typography><Typography fontWeight={700}>{ha.status.data?.connected ? 'Ansluten' : 'Frånkopplad'}</Typography></Stack><Stack direction="row" justifyContent="space-between"><Typography>Cache</Typography><Typography fontWeight={700}>{ha.status.data?.cachedEntities ?? 0} entities</Typography></Stack><Stack direction="row" justifyContent="space-between"><Typography>Senaste startbild</Typography><Typography fontWeight={700}>{formatRelative(ha.status.data?.lastSnapshotUtc)}</Typography></Stack><Stack direction="row" justifyContent="space-between"><Typography>Senaste aktivitet</Typography><Typography fontWeight={700}>{formatRelative(ha.status.data?.lastActivityUtc)}</Typography></Stack></Paper>
-      <Paper variant="outlined" sx={{ p: 2.5 }}><Typography fontWeight={750}>Styrning</Typography><Typography variant="body2" color="text.secondary" mb={2}>Sökväg till Docker-secret: <code>HomeAssistant__Control__TokenFile</code></Typography><Typography variant="body2">Endast <code>number.set_value</code> till exakt konfigurerad <code>Deviation_Heating</code> kan skickas. Inget generellt serviceanrop exponeras.</Typography></Paper>
+      <Paper variant="outlined" sx={{ p: 2.5 }}><Typography fontWeight={750}>Liveanslutning</Typography><Stack direction="row" justifyContent="space-between"><Typography>WebSocket/startbild</Typography><Typography fontWeight={700}>{ha.status.data?.connected ? 'Ansluten' : 'Frånkopplad'}</Typography></Stack><Stack direction="row" justifyContent="space-between"><Typography>Cache</Typography><Typography fontWeight={700}>{ha.status.data?.cachedEntities ?? 0} entities</Typography></Stack><Stack direction="row" justifyContent="space-between"><Typography>Senaste startbild</Typography><Typography fontWeight={700}>{formatRelative(ha.status.data?.lastSnapshotUtc)}</Typography></Stack><Stack direction="row" justifyContent="space-between"><Typography>Senaste aktivitet</Typography><Typography fontWeight={700}>{formatRelative(ha.status.data?.lastActivityUtc)}</Typography></Stack></Paper>
+      <Paper variant="outlined" sx={{ p: 2.5 }}><Typography fontWeight={750}>Sparat för kontot</Typography><Stack direction="row" justifyContent="space-between"><Typography>Telemetritoken</Typography><Typography fontWeight={700}>{connection?.telemetryTokenConfigured ? 'Sparad' : 'Saknas'}</Typography></Stack><Stack direction="row" justifyContent="space-between"><Typography>Styrtoken</Typography><Typography fontWeight={700}>{connection?.controlTokenConfigured ? 'Sparad' : 'Saknas'}</Typography></Stack><Stack direction="row" justifyContent="space-between"><Typography>Senast ändrad</Typography><Typography fontWeight={700}>{formatRelative(connection?.updatedAtUtc)}</Typography></Stack></Paper>
     </Box>
     <Paper variant="outlined" sx={{ p: 2.5 }}>
       <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={2} alignItems={{ md: 'flex-end' }}>
@@ -122,8 +183,24 @@ function HomeAssistantTab({ ha }: { ha: ReturnType<typeof useHomeAssistant> }) {
       {ha.importHistory.isSuccess && <Alert severity={ha.importHistory.data.entitiesWithoutHistory.length ? 'warning' : 'success'} sx={{ mt: 2 }}>{ha.importHistory.data.importedSamples} nya punkter importerades och {ha.importHistory.data.existingSamplesPreserved} befintliga bevarades.{ha.importHistory.data.entitiesWithoutHistory.length > 0 ? ` Historik saknades för: ${ha.importHistory.data.entitiesWithoutHistory.join(', ')}.` : ''}</Alert>}
       {ha.importHistory.isError && <Alert severity="error" sx={{ mt: 2 }}>{ha.importHistory.error.message}</Alert>}
     </Paper>
-    <Alert severity="info">Tokens, tokenfragment och tokenlängd visas eller loggas aldrig. Adress och secrets ändras i containerkonfigurationen, inte i databasen.</Alert>
+    <ConfirmDialog open={removeOpen} title="Ta bort Home Assistant-anslutningen?" message="Telemetri och entity-listan stoppas för kontot. Åtgärden är blockerad i aktiva LWT-lägen och ändrar aldrig legacy-DHW." confirmText="Ta bort" cancelText="Avbryt" isDestructive onCancel={() => setRemoveOpen(false)} onConfirm={() => { setRemoveOpen(false); ha.remove.mutate(); }} />
   </Stack>;
+}
+
+export function validateHomeAssistantConnection(draft: UpdateHomeAssistantConnection, saved: HomeAssistantConnection | null): string[] {
+  const errors: string[] = [];
+  try {
+    const url = new URL(draft.baseUrl);
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) errors.push('Home Assistant-adressen måste vara en HTTPS-adress utan användaruppgifter, query eller fragment.');
+  } catch {
+    errors.push('Ange en giltig fullständig Home Assistant-adress.');
+  }
+  if (draft.staleAfterMinutes < 1 || draft.staleAfterMinutes > 60) errors.push('Gammal-gränsen måste vara 1–60 minuter.');
+  if (!saved?.telemetryTokenConfigured && !draft.telemetryToken?.trim()) errors.push('En separat telemetritoken krävs första gången.');
+  const controlTokenAvailable = !draft.clearControlToken && (Boolean(draft.controlToken?.trim()) || saved?.controlTokenConfigured === true);
+  if (draft.controlEnabled && !controlTokenAvailable) errors.push('Aktiv styrklient kräver en separat styrtoken.');
+  if (draft.controlEnabled && !/^number\.[a-z0-9_.]+$/.test(draft.heatingDeviationEntityId.trim())) errors.push('Styrning kräver ett giltigt number-entity-ID för LWT-avvikelsen.');
+  return [...new Set(errors)];
 }
 
 function EntitiesTab({ draft, setDraft, entities }: { draft: ThermalConfig; setDraft: (value: ThermalConfig) => void; entities: HomeAssistantEntity[] }) {

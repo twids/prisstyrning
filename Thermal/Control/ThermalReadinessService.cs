@@ -1,6 +1,5 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 using Prisstyrning.Data;
 using Prisstyrning.Thermal.Domain;
 using Prisstyrning.Thermal.HomeAssistant;
@@ -11,22 +10,16 @@ public sealed class ThermalReadinessService
 {
     private readonly PrisstyrningDbContext _db;
     private readonly IHomeAssistantStateCache _cache;
-    private readonly HomeAssistantTelemetryOptions _telemetryOptions;
-    private readonly HomeAssistantControlOptions _controlOptions;
-    private readonly IHomeAssistantCredentialProvider _credentials;
+    private readonly HomeAssistantConnectionService _connections;
 
     public ThermalReadinessService(
         PrisstyrningDbContext db,
         IHomeAssistantStateCache cache,
-        IOptions<HomeAssistantTelemetryOptions> telemetryOptions,
-        IOptions<HomeAssistantControlOptions> controlOptions,
-        IHomeAssistantCredentialProvider credentials)
+        HomeAssistantConnectionService connections)
     {
         _db = db;
         _cache = cache;
-        _telemetryOptions = telemetryOptions.Value;
-        _controlOptions = controlOptions.Value;
-        _credentials = credentials;
+        _connections = connections;
     }
 
     public async Task<IReadOnlyList<ReadinessCheck>> EvaluateAsync(
@@ -35,6 +28,7 @@ public sealed class ThermalReadinessService
         CancellationToken cancellationToken = default)
     {
         var now = DateTimeOffset.UtcNow;
+        var connection = await _connections.GetAsync(userId, cancellationToken);
         var site = await _db.ThermalSiteConfigs.AsNoTracking().SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
         var entities = await _db.ThermalEntityConfigs.AsNoTracking().Where(x => x.UserId == userId && x.Enabled).ToListAsync(cancellationToken);
         var rooms = await _db.ThermalRoomConfigs.AsNoTracking().Where(x => x.UserId == userId && x.Enabled).ToListAsync(cancellationToken);
@@ -45,9 +39,9 @@ public sealed class ThermalReadinessService
 
         var checks = new List<ReadinessCheck>
         {
-            Check("ha-telemetry-configured", "Home Assistant-telemetri är separat konfigurerad", _telemetryOptions.Enabled && HomeAssistantTelemetryClient.IsSupportedBaseUrl(_telemetryOptions.BaseUrl) && _credentials.HasTelemetryToken, "Ange en HTTP(S)-adress och telemetritoken i containerns secrets."),
-            Check("ha-snapshot", "En startbild finns från Home Assistant", _cache.LastSnapshotUtc is not null, "Kontrollera HA-anslutningen så att en ny startbild kan hämtas."),
-            Check("ha-live", "Home Assistants WebSocket är ansluten", _cache.Connected, "Kontrollera nätverk, token och WebSocket-status."),
+            Check("ha-telemetry-configured", "Home Assistant-telemetri är konfigurerad för kontot", connection is { TelemetryEnabled: true, TelemetryTokenConfigured: true } && HomeAssistantTelemetryClient.IsSupportedBaseUrl(connection.BaseUrl), "Konfigurera kontots Home Assistant-adress och separata telemetritoken under Inställningar."),
+            Check("ha-snapshot", "En startbild finns från Home Assistant", _cache.LastSnapshotUtcFor(userId) is not null, "Kontrollera HA-anslutningen så att en ny startbild kan hämtas."),
+            Check("ha-live", "Home Assistants WebSocket är ansluten", _cache.IsConnected(userId), "Kontrollera nätverk, token och WebSocket-status."),
             Check("telemetry-fresh", "Senaste femminuterstelemetri är högst tio minuter gammal", latest is not null && now - latest.TimestampUtc <= TimeSpan.FromMinutes(10), "Åtgärda saknade eller gamla sensordata."),
             Check("critical-room", "Minst ett kritiskt rum har en aktiverad givare", rooms.Any(x => x.IsCritical), "Markera minst ett komfortkritiskt rum."),
             Check("thermal-inputs", "Utetemperatur, LWT, RWT och flöde är mappade", RequiredRoles(entities, ThermalEntityRoles.OutsideTemperature, ThermalEntityRoles.LeavingWaterTemperature, ThermalEntityRoles.ReturnWaterTemperature, ThermalEntityRoles.Flow), "Mappa obligatoriska P1P2-entities i Inställningar.")
@@ -103,11 +97,11 @@ public sealed class ThermalReadinessService
             checks.Add(Check(
                 "p1p2-control",
                 "P1P2-avvikelsen har en separat styranslutning och exakt tillåten number-entity",
-                _credentials.HasControlToken &&
-                HomeAssistantTelemetryClient.IsSupportedBaseUrl(_controlOptions.BaseUrl) &&
-                HomeAssistantControlClient.IsAllowedNumberEntity(_controlOptions.HeatingDeviationEntityId) &&
-                entities.Any(x => x.Role == ThermalEntityRoles.HeatingDeviation && x.EntityId == _controlOptions.HeatingDeviationEntityId),
-                "Ange HA-adress och separat styrsecret samt mappa exakt Deviation_Heating-entity."));
+                connection is { ControlEnabled: true, ControlTokenConfigured: true } &&
+                HomeAssistantTelemetryClient.IsSupportedBaseUrl(connection.BaseUrl) &&
+                HomeAssistantControlClient.IsAllowedNumberEntity(connection.HeatingDeviationEntityId) &&
+                entities.Any(x => x.Role == ThermalEntityRoles.HeatingDeviation && x.EntityId == connection.HeatingDeviationEntityId),
+                "Aktivera kontots separata HA-styrtoken och mappa exakt Deviation_Heating-entity."));
 
             if (site?.ActiveDeviationLimitC > 1)
             {

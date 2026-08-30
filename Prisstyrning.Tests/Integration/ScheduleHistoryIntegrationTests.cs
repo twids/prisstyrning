@@ -45,7 +45,6 @@ public class ScheduleHistoryIntegrationTests
         
         // Arrange
         using var fs = new TempFileSystem();
-        var _userId = "test-apply-saves-history"; // prefixed to suppress unused warning (test is skipped)
         var date = new DateTime(2026, 2, 7);
         
         var today = TestDataFactory.CreatePriceData(date);

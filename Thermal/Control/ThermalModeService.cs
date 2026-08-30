@@ -1,5 +1,4 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 using Prisstyrning.Data;
 using Prisstyrning.Data.Entities;
 using Prisstyrning.Thermal.Domain;
@@ -15,7 +14,6 @@ internal sealed class ThermalModeService
     private readonly BatchRunner _batchRunner;
     private readonly IConfiguration _configuration;
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly string _heatingDeviationEntityId;
     private readonly DhwWriterLeaseService _dhwLease;
 
     public ThermalModeService(
@@ -25,7 +23,6 @@ internal sealed class ThermalModeService
         BatchRunner batchRunner,
         IConfiguration configuration,
         IServiceScopeFactory scopeFactory,
-        IOptions<HomeAssistantControlOptions> controlOptions,
         DhwWriterLeaseService dhwLease)
     {
         _db = db;
@@ -34,7 +31,6 @@ internal sealed class ThermalModeService
         _batchRunner = batchRunner;
         _configuration = configuration;
         _scopeFactory = scopeFactory;
-        _heatingDeviationEntityId = controlOptions.Value.HeatingDeviationEntityId;
         _dhwLease = dhwLease;
     }
 
@@ -60,6 +56,9 @@ internal sealed class ThermalModeService
             _db.ThermalSiteConfigs.Add(site);
         }
         var current = ThermalEnumParser.ControlModeOrLegacy(site.ControlMode);
+        var heatingDeviationEntityId = await _db.HomeAssistantConnections.AsNoTracking()
+            .Where(x => x.UserId == userId).Select(x => x.HeatingDeviationEntityId)
+            .SingleOrDefaultAsync(cancellationToken) ?? string.Empty;
         if (current == request.Mode) return (true, "Driftläget är redan aktivt.");
         if (!IsAllowedTransition(current, request.Mode)) return (false, $"Otillåtet lägesbyte från {current} till {request.Mode}.");
 
@@ -85,7 +84,7 @@ internal sealed class ThermalModeService
                 _db.ThermalControlCommands.Add(Command(
                     userId,
                     "LwtDeviation",
-                    _heatingDeviationEntityId,
+                    heatingDeviationEntityId,
                     0,
                     previousDeviation,
                     "Accepted",
@@ -97,7 +96,7 @@ internal sealed class ThermalModeService
                 _db.ThermalControlCommands.Add(Command(
                     userId,
                     "LwtDeviation",
-                    _heatingDeviationEntityId,
+                    heatingDeviationEntityId,
                     0,
                     previousDeviation,
                     "Rejected",

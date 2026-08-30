@@ -1,7 +1,10 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Prisstyrning.Data;
 using Prisstyrning.Data.Entities;
 using Prisstyrning.Data.Repositories;
+using Prisstyrning.Security;
+using Prisstyrning.Tests.Fixtures;
 
 namespace Prisstyrning.Tests.Unit.Data;
 
@@ -20,7 +23,7 @@ public class DaikinTokenRepositoryTests : IDisposable
 
     public void Dispose() => _db.Dispose();
 
-    private DaikinTokenRepository CreateRepo() => new(_db);
+    private DaikinTokenRepository CreateRepo() => new(_db, TestSecretProtector.Instance);
 
     #region SaveAsync
 
@@ -34,8 +37,11 @@ public class DaikinTokenRepositoryTests : IDisposable
 
         var token = await _db.DaikinTokens.SingleAsync();
         Assert.Equal("user1", token.UserId);
-        Assert.Equal("access-token-1", token.AccessToken);
-        Assert.Equal("refresh-token-1", token.RefreshToken);
+        Assert.Empty(token.AccessToken);
+        Assert.Empty(token.RefreshToken);
+        Assert.NotEqual("access-token-1", token.AccessTokenCiphertext);
+        Assert.NotEqual("refresh-token-1", token.RefreshTokenCiphertext);
+        Assert.Equal(1, token.EncryptionVersion);
         Assert.Equal(expires, token.ExpiresAtUtc);
     }
 
@@ -52,8 +58,11 @@ public class DaikinTokenRepositoryTests : IDisposable
         var count = await _db.DaikinTokens.CountAsync();
         Assert.Equal(1, count);
         var token = await _db.DaikinTokens.SingleAsync();
-        Assert.Equal("access-2", token.AccessToken);
-        Assert.Equal("refresh-2", token.RefreshToken);
+        Assert.Empty(token.AccessToken);
+        Assert.Empty(token.RefreshToken);
+        var decrypted = await repo.LoadAsync("user1");
+        Assert.Equal("access-2", decrypted!.AccessToken);
+        Assert.Equal("refresh-2", decrypted.RefreshToken);
         Assert.Equal(expires2, token.ExpiresAtUtc);
     }
 
@@ -141,6 +150,48 @@ public class DaikinTokenRepositoryTests : IDisposable
         var userIds = await repo.GetAllUserIdsAsync();
 
         Assert.Empty(userIds);
+    }
+
+    [Fact]
+    public async Task ReconcileCredentialStorage_PreservesRollbackColumnsUntilCompatibilityIsDisabled()
+    {
+        _db.DaikinTokens.Add(new DaikinToken
+        {
+            UserId = "legacy-user",
+            AccessToken = "legacy-access",
+            RefreshToken = "legacy-refresh",
+            ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(1)
+        });
+        await _db.SaveChangesAsync();
+        var compatibilityRepo = new DaikinTokenRepository(
+            _db,
+            TestSecretProtector.Instance,
+            Options.Create(new CredentialEncryptionOptions { PreserveLegacyDaikinTokenColumns = true }));
+
+        var migrated = await compatibilityRepo.ReconcileCredentialStorageAsync();
+        _db.ChangeTracker.Clear();
+        var rollbackCompatible = await _db.DaikinTokens.SingleAsync();
+
+        Assert.Equal(1, migrated.EncryptedCount);
+        Assert.True(migrated.LegacyPlaintextPreserved);
+        Assert.Equal("legacy-access", rollbackCompatible.AccessToken);
+        Assert.Equal("legacy-refresh", rollbackCompatible.RefreshToken);
+        Assert.Equal(1, rollbackCompatible.EncryptionVersion);
+        Assert.False(string.IsNullOrWhiteSpace(rollbackCompatible.AccessTokenCiphertext));
+
+        var hardenedRepo = new DaikinTokenRepository(
+            _db,
+            TestSecretProtector.Instance,
+            Options.Create(new CredentialEncryptionOptions { PreserveLegacyDaikinTokenColumns = false }));
+        var hardened = await hardenedRepo.ReconcileCredentialStorageAsync();
+        _db.ChangeTracker.Clear();
+        var encryptedOnly = await _db.DaikinTokens.SingleAsync();
+
+        Assert.Equal(0, hardened.EncryptedCount);
+        Assert.Equal(1, hardened.PlaintextClearedCount);
+        Assert.Empty(encryptedOnly.AccessToken);
+        Assert.Empty(encryptedOnly.RefreshToken);
+        Assert.Equal("legacy-access", (await hardenedRepo.LoadAsync("legacy-user"))!.AccessToken);
     }
 
     #endregion

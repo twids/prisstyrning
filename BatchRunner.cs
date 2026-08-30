@@ -13,12 +13,69 @@ internal class BatchRunner
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly DaikinOAuthService _daikinOAuthService;
+    private readonly DaikinInstallationService? _installations;
 
-    public BatchRunner(IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuthService)
+    public BatchRunner(
+        IHttpClientFactory httpClientFactory,
+        DaikinOAuthService daikinOAuthService,
+        DaikinInstallationService installations)
+    {
+        _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
+        _daikinOAuthService = daikinOAuthService ?? throw new ArgumentNullException(nameof(daikinOAuthService));
+        _installations = installations ?? throw new ArgumentNullException(nameof(installations));
+    }
+
+    internal BatchRunner(IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuthService)
     {
         _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
         _daikinOAuthService = daikinOAuthService ?? throw new ArgumentNullException(nameof(daikinOAuthService));
     }
+
+    private async Task<(string SiteId, string DeviceId, string DhwEmbeddedId, string ScheduleMode)> ResolveInstallationAsync(
+        string? userId,
+        DaikinApiClient client,
+        string fallbackScheduleMode)
+    {
+        if (_installations is not null)
+        {
+            if (!AdminService.IsValidUserId(userId)) throw new InvalidOperationException("A valid account is required to resolve the Daikin installation.");
+            var installation = await _installations.GetOrDiscoverAsync(userId!, client);
+            return (installation.SiteId, installation.DeviceId, installation.DhwManagementPointEmbeddedId, installation.ScheduleMode);
+        }
+
+        // Unit-test compatibility only; production always persists the discovered
+        // installation through DaikinInstallationService.
+        var sitesJson = await client.GetSitesAsync();
+        var siteId = DeviceAutoDetection.GetFirstSiteId(sitesJson) ?? throw new InvalidOperationException("No site found.");
+        var devicesJson = await client.GetDevicesAsync(siteId);
+        var (deviceId, rawDevice) = DeviceAutoDetection.GetFirstDevice(devicesJson);
+        if (deviceId is null || rawDevice is null) throw new InvalidOperationException("No device found.");
+        var embeddedId = DeviceAutoDetection.FindDhwEmbeddedId(rawDevice) ?? throw new InvalidOperationException("No DHW management point found.");
+        return (siteId, deviceId, embeddedId, fallbackScheduleMode);
+    }
+
+    private async Task<string> ResolveDaikinAccessTokenAsync(IConfiguration config, string? userId)
+    {
+        // Production writes are account-scoped. If an authenticated account has
+        // no usable token, fail closed instead of falling back to another
+        // account's global credential.
+        if (AdminService.IsValidUserId(userId))
+        {
+            var (accountToken, _) = await _daikinOAuthService.TryGetValidAccessTokenAsync(userId);
+            accountToken ??= await _daikinOAuthService.RefreshIfNeededAsync(userId);
+            return accountToken ?? string.Empty;
+        }
+
+        // Retain the explicit configuration path only for pre-account legacy
+        // calls and isolated tests. The historical template value is not a
+        // credential and must be treated as unset.
+        var configuredToken = config["Daikin:AccessToken"];
+        return IsConfiguredAccessToken(configuredToken) ? configuredToken!.Trim() : string.Empty;
+    }
+
+    private static bool IsConfiguredAccessToken(string? value) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        !value.Trim().Equals("ACCESS_TOKEN", StringComparison.OrdinalIgnoreCase);
 
     private static TimeZoneInfo ResolveTimeZoneForNordpoolZone(string? zone)
     {
@@ -315,13 +372,7 @@ internal class BatchRunner
         if (!applyEnabled || string.IsNullOrEmpty(dynamicSchedulePayload))
             return false;
 
-        var accessToken = config["Daikin:AccessToken"] ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(accessToken))
-        {
-            var (tkn, _) = await _daikinOAuthService.TryGetValidAccessTokenAsync(userId);
-            if (tkn == null) tkn = await _daikinOAuthService.RefreshIfNeededAsync(userId);
-            accessToken = tkn ?? string.Empty;
-        }
+        var accessToken = await ResolveDaikinAccessTokenAsync(config, userId);
         if (string.IsNullOrEmpty(accessToken))
             return false;
 
@@ -335,10 +386,13 @@ internal class BatchRunner
                 bool logBody = (config["Daikin:Http:LogBody"] ?? config["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
                 int.TryParse(config["Daikin:Http:BodySnippetLength"], out var snipLen);
                 var daikin = new DaikinApiClient(_httpClientFactory.CreateClient("Daikin"), token, log, logBody, snipLen == 0 ? null : snipLen);
-                var overrideSite = config["Daikin:SiteId"];
-                var overrideDevice = config["Daikin:DeviceId"];
-                var overrideEmbedded = config["Daikin:ManagementPointEmbeddedId"];
-                var scheduleMode = config["Daikin:ScheduleMode"] ?? "heating";
+                var accountInstallation = _installations is not null && AdminService.IsValidUserId(userId)
+                    ? await _installations.GetAsync(userId!)
+                    : null;
+                var overrideSite = accountInstallation?.SiteId;
+                var overrideDevice = accountInstallation?.DeviceId;
+                var overrideEmbedded = accountInstallation?.DhwManagementPointEmbeddedId;
+                var scheduleMode = accountInstallation?.ScheduleMode ?? config["Daikin:ScheduleMode"] ?? "heating";
 
                 if (!string.IsNullOrWhiteSpace(overrideSite)) appliedSite = overrideSite;
                 if (appliedSite == null)
@@ -403,6 +457,9 @@ internal class BatchRunner
                     return true;
                 }
 
+                if (accountInstallation is null && _installations is not null && AdminService.IsValidUserId(userId))
+                    await _installations.SaveAsync(userId!, appliedSite, appliedDevice, embeddedId, scheduleMode);
+
                 await daikin.PutSchedulesAsync(appliedDevice, embeddedId, scheduleMode, dynamicSchedulePayload);
                 await TrySetCurrentScheduleNonFatalAsync(daikin, appliedDevice, embeddedId, scheduleMode, "[Schedule/Flexible]");
                 Console.WriteLine($"[Schedule/Flexible] apply OK site={appliedSite} device={appliedDevice} embedded={embeddedId}");
@@ -434,13 +491,7 @@ internal class BatchRunner
     private async Task<(bool generated, JsonNode? schedulePayload, string message)> RunBatchInternalAsync(IConfiguration config, UserScheduleSettings settings, int activationLimit, bool applySchedule, bool persist, string? userId)
     {
         var environment = config["ASPNETCORE_ENVIRONMENT"] ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production";
-        var accessToken = config["Daikin:AccessToken"] ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(accessToken))
-        {
-            var (tkn, _) = await _daikinOAuthService.TryGetValidAccessTokenAsync(userId);
-            if (tkn == null) tkn = await _daikinOAuthService.RefreshIfNeededAsync(userId);
-            accessToken = tkn ?? string.Empty;
-        }
+        var accessToken = await ResolveDaikinAccessTokenAsync(config, userId);
         var zone = config["Price:Nordpool:DefaultZone"] ?? "SE3";
         var currency = config["Price:Nordpool:Currency"] ?? "SEK";
         Console.WriteLine($"[Batch] Start env={environment} zone={zone} source=Nordpool");
@@ -497,11 +548,13 @@ internal class BatchRunner
                 bool logBody = (config["Daikin:Http:LogBody"] ?? config["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
                 int.TryParse(config["Daikin:Http:BodySnippetLength"], out var snipLen);
                 var daikin = new DaikinApiClient(_httpClientFactory.CreateClient("Daikin"), token, log, logBody, snipLen == 0 ? null : snipLen);
-                // Overrides via config (optional)
-                var overrideSite = config["Daikin:SiteId"];
-                var overrideDevice = config["Daikin:DeviceId"];
-                var overrideEmbedded = config["Daikin:ManagementPointEmbeddedId"]; // e.g. "2"
-                var scheduleMode = config["Daikin:ScheduleMode"] ?? "heating"; // heating / cooling / any
+                var accountInstallation = _installations is not null && AdminService.IsValidUserId(userId)
+                    ? await _installations.GetAsync(userId!)
+                    : null;
+                var overrideSite = accountInstallation?.SiteId;
+                var overrideDevice = accountInstallation?.DeviceId;
+                var overrideEmbedded = accountInstallation?.DhwManagementPointEmbeddedId;
+                var scheduleMode = accountInstallation?.ScheduleMode ?? config["Daikin:ScheduleMode"] ?? "heating";
                 if (!string.IsNullOrWhiteSpace(overrideSite)) appliedSite = overrideSite;
                 if (appliedSite == null)
                 {
@@ -566,6 +619,9 @@ internal class BatchRunner
                     Console.WriteLine($"[Schedule] legacy apply OK site={appliedSite} device={appliedDevice} retry={isRetry}");
                     return true;
                 }
+
+                if (accountInstallation is null && _installations is not null && AdminService.IsValidUserId(userId))
+                    await _installations.SaveAsync(userId!, appliedSite, appliedDevice, embeddedId, scheduleMode);
 
                 // PUT full schedules then enable current schedule (scheduleId 0)
                 Console.WriteLine($"[Schedule] applying schedule bytes={dynamicSchedulePayload.Length} mode={scheduleMode}");

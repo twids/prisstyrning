@@ -16,6 +16,7 @@ import ThermalEventsPage from './pages/thermal/ThermalEventsPage';
 import ThermalSettingsPage from './pages/thermal/ThermalSettingsPage';
 import ErrorBoundary from './components/ErrorBoundary';
 import { TimezoneProvider } from './context/TimezoneContext';
+import SessionGate from './components/SessionGate';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -34,8 +35,9 @@ function App() {
           <CssBaseline />
           <TimezoneProvider>
             <BrowserRouter key="router">
-              <Layout>
-                <Routes>
+              <SessionGate>
+                <Layout>
+                  <Routes>
                   <Route path="/" element={<ThermalOverviewPage />} />
                   <Route path="/plan" element={<ThermalPlanPage />} />
                   <Route path="/rooms" element={<ThermalRoomsPage />} />
@@ -47,8 +49,9 @@ function App() {
                   <Route path="/legacy/settings" element={<SettingsPage />} />
                   <Route path="/admin" element={<AdminPage />} />
                   <Route path="*" element={<NotFoundPage />} />
-                </Routes>
-              </Layout>
+                  </Routes>
+                </Layout>
+              </SessionGate>
             </BrowserRouter>
           </TimezoneProvider>
         </ThemeProvider>
