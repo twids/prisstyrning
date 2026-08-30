@@ -13,7 +13,7 @@
   <ItemGroup>
     <Compile Include="*.cs" />
     <Compile Include="Controllers/**/*.cs" />
-    <Compile Include="data/**/*.cs" />
+    <Compile Include="Data/**/*.cs" />
     <Compile Include="Jobs/**/*.cs" />
     <Compile Include="Properties/**/*.cs" />
     <Compile Include="Thermal/**/*.cs" />
