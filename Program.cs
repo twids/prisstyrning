@@ -86,16 +86,7 @@ builder.Services.AddAuthentication(AccountAuthentication.Scheme)
         options.EventsType = typeof(AccountCookieEvents);
     });
 builder.Services.AddAuthorization();
-builder.Services.AddAntiforgery(options =>
-{
-    options.Cookie.Name = "__Host-prisstyrning-csrf";
-    options.Cookie.HttpOnly = true;
-    options.Cookie.SameSite = SameSiteMode.Strict;
-    options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
-        ? CookieSecurePolicy.SameAsRequest
-        : CookieSecurePolicy.Always;
-    options.HeaderName = "X-CSRF-TOKEN";
-});
+builder.Services.AddAccountAntiforgery(builder.Environment.IsDevelopment());
 
 // PostgreSQL + EF Core
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
