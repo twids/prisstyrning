@@ -54,6 +54,7 @@ builder.WebHost.ConfigureKestrel(o =>
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddTrustedProxyForwarding(builder.Configuration);
 
 var configuredStorageDirectory = builder.Configuration["Storage:Directory"] ?? "data";
 var configuredKeyDirectory = builder.Configuration["Security:DataProtectionKeysPath"];
@@ -542,6 +543,10 @@ catch (Exception ex)
 {
     Console.WriteLine($"[Startup] DB preload failed: {ex.Message}");
 }
+
+// Resolve the public HTTPS scheme only from explicitly configured reverse proxies.
+// This must run before authentication and antiforgery issue secure cookies.
+app.UseForwardedHeaders();
 
 // Security headers middleware (skip CSP for Swagger in Development to allow inline scripts)
 app.Use(async (ctx, next) =>
