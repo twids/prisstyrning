@@ -54,6 +54,7 @@ const checks = [
 ].map(([key, requirement, passed, action]) => ({ key, requirement, passed, action, severity: passed ? 'Information' : 'ActionRequired' }));
 
 function fixture(pathname) {
+  if (pathname === '/api/session') return { authenticated: true, userId: 'default', isAdmin: true, csrfToken: 'visual-qa-csrf-token' };
   if (pathname === '/api/admin/status') return { isAdmin: true, userId: 'default' };
   if (pathname === '/api/thermal/status') return { mode: 'Shadow', dhwWriter: 'Legacy', lastTelemetryUtc: iso(-2), overallDataQuality: 'Valid', emhassAvailable: true, planCreatedUtc: iso(-7), planAgeMinutes: 7, currentLwtDeviationC: 0, fallbackReason: null, nextControlEventUtc: iso(42), manualOverride: false };
   if (pathname === '/api/thermal/config') return { site, rooms, entities: [] };
@@ -64,6 +65,7 @@ function fixture(pathname) {
   if (pathname === '/api/thermal/dhw') return [{ id: 1, kind: 'Eco', source: 'Shadow', status: 'Planned', plannedStartUtc: iso(42), scheduleAcceptedUtc: null, actualStartUtc: null, targetReachedUtc: null, actualEndUtc: null, startTemperatureC: 47.8, targetTemperatureC: 50, predictedDurationMinutes: 45, reservedDurationMinutes: 55, predictedCost: 1.84, actualCost: null, backupHeaterUsed: false, targetVerificationCount: 0, estimatedCompletionUtc: iso(97) }];
   if (pathname === '/api/thermal/models') return [{ id: 4, modelType: '2R2C', createdAtUtc: iso(-600), trainingFromUtc: iso(-60 * 24 * 30), trainingToUtc: iso(-600), isActive: true, parametersJson: JSON.stringify({ envelopeConductanceKwPerC: .34, massCapacityKwhPerC: 38.2, massCouplingKwPerC: .81, baseCurveSlope: -.46 }), metricsJson: JSON.stringify({ twoHourMaeC: .21, dayMaeC: .47 }) }];
   if (pathname === '/api/home-assistant/status') return { configured: true, connected: true, lastSnapshotUtc: iso(-2), lastActivityUtc: iso(-1), cachedEntities: haEntities.length };
+  if (pathname === '/api/home-assistant/config') return { baseUrl: 'https://ha.example.se', telemetryEnabled: true, controlEnabled: false, heatingDeviationEntityId: 'number.altherma_deviation_heating', staleAfterMinutes: 10, telemetryTokenConfigured: true, controlTokenConfigured: false, updatedAtUtc: iso(-60) };
   if (pathname === '/api/home-assistant/entities') return haEntities;
   if (pathname === '/api/home-assistant/import-history') return { importedSamples: 8460, existingSamplesPreserved: 180, requestedEntities: 12, entitiesWithoutHistory: [] };
   return null;

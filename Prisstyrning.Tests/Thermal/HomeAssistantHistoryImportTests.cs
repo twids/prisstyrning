@@ -75,12 +75,12 @@ public sealed class HomeAssistantHistoryImportTests
         private readonly IReadOnlyDictionary<string, IReadOnlyList<HomeAssistantState>> _history;
 
         public FakeHistoryClient(IReadOnlyDictionary<string, IReadOnlyList<HomeAssistantState>> history) => _history = history;
-        public Task<bool> TestConnectionAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
-        public Task<HomeAssistantState?> GetStateAsync(string entityId, CancellationToken cancellationToken = default) =>
+        public Task<bool> TestConnectionAsync(string userId, CancellationToken cancellationToken = default) => Task.FromResult(true);
+        public Task<HomeAssistantState?> GetStateAsync(string userId, string entityId, CancellationToken cancellationToken = default) =>
             Task.FromResult(_history.TryGetValue(entityId, out var states) ? states.LastOrDefault() : null);
-        public Task<IReadOnlyList<HomeAssistantState>> GetStatesAsync(CancellationToken cancellationToken = default) =>
+        public Task<IReadOnlyList<HomeAssistantState>> GetStatesAsync(string userId, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<HomeAssistantState>>(_history.Values.SelectMany(x => x).ToArray());
-        public Task<IReadOnlyList<HomeAssistantState>> GetHistoryAsync(string entityId, DateTimeOffset fromUtc, DateTimeOffset toUtc, CancellationToken cancellationToken = default) =>
+        public Task<IReadOnlyList<HomeAssistantState>> GetHistoryAsync(string userId, string entityId, DateTimeOffset fromUtc, DateTimeOffset toUtc, CancellationToken cancellationToken = default) =>
             Task.FromResult(_history.TryGetValue(entityId, out var states) ? states : (IReadOnlyList<HomeAssistantState>)[]);
     }
 }

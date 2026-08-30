@@ -55,12 +55,6 @@ services:
         condition: service_healthy
     environment:
       PRISSTYRNING_ConnectionStrings__DefaultConnection: Host=postgres;Database=prisstyrning;Username=prisstyrning;Password=${POSTGRES_PASSWORD}
-      PRISSTYRNING_HomeAssistant__Telemetry__Enabled: ${HA_TELEMETRY_ENABLED:-false}
-      PRISSTYRNING_HomeAssistant__Telemetry__BaseUrl: ${HOME_ASSISTANT_URL:?Set HOME_ASSISTANT_URL}
-      PRISSTYRNING_HomeAssistant__Telemetry__TokenFile: /run/secrets/ha_telemetry_token
-      PRISSTYRNING_HomeAssistant__Control__BaseUrl: ${HOME_ASSISTANT_URL}
-      PRISSTYRNING_HomeAssistant__Control__TokenFile: /run/secrets/ha_control_token
-      PRISSTYRNING_HomeAssistant__Control__HeatingDeviationEntityId: ${P1P2_DEVIATION_ENTITY_ID:-}
       PRISSTYRNING_Emhass__Enabled: ${EMHASS_ENABLED:-false}
       PRISSTYRNING_Emhass__BaseUrl: http://emhass:5000
       PRISSTYRNING_Emhass__ResultPath: /emhass-data/opt_res_latest.csv
@@ -70,15 +64,16 @@ services:
       # Behåll samma ONECTA-/Nord Pool-/legacyvärden som den nuvarande installationen.
       # ApplySchedule ska inte ändras bara för att shadowtelemetri läggs till.
       PRISSTYRNING_Daikin__ApplySchedule: ${DAIKIN_APPLY_SCHEDULE:-false}
-      PRISSTYRNING_Security__AcceptLegacyUserCookie: ${ACCEPT_LEGACY_USER_COOKIE:-false}
       PRISSTYRNING_Security__DataProtectionKeysPath: /data/data-protection-keys
+      PRISSTYRNING_Security__CredentialEncryption__KeyFile: /run/secrets/credential_encryption_key
+      # Behåll true under canary så föregående image fortfarande kan läsa Daikin-token vid rollback.
+      PRISSTYRNING_Security__CredentialEncryption__PreserveLegacyDaikinTokenColumns: ${PRESERVE_LEGACY_DAIKIN_TOKEN_COLUMNS:-true}
       PRISSTYRNING_Thermal__EnableDhwWriterCoordination: "false"
       PRISSTYRNING_Thermal__AllowLwtActive: "false"
       PRISSTYRNING_Thermal__AllowFullActive: "false"
       PRISSTYRNING_PORT: "5000"
     secrets:
-      - ha_telemetry_token
-      - ha_control_token
+      - credential_encryption_key
     volumes:
       - emhass-data:/emhass-data:ro
       - ./data:/data
@@ -89,10 +84,8 @@ services:
       - thermal-internal
 
 secrets:
-  ha_telemetry_token:
-    file: ${HA_TELEMETRY_TOKEN_FILE:-./secrets/ha_telemetry_token}
-  ha_control_token:
-    file: ${HA_CONTROL_TOKEN_FILE:-./secrets/ha_control_token}
+  credential_encryption_key:
+    file: ${CREDENTIAL_ENCRYPTION_KEY_FILE:-./secrets/credential_encryption_key}
 
 volumes:
   pgdata:

@@ -194,8 +194,12 @@ public sealed class JointPlanCoordinator : BackgroundService
             dhw?.Profile.PowerSteps.Max(x => x.ElectricPowerKw) * 1000 ?? 2500,
             site.TariffEnabled,
             CapacityCost(site.TariffDefinitionJson));
-        var emhass = scope.ServiceProvider.GetRequiredService<IEmhassClient>();
-        var optimized = await emhass.OptimizeAsync(request, cancellationToken);
+        var optimizer = scope.ServiceProvider.GetRequiredService<IEmhassOptimizationDispatcher>();
+        var optimized = await optimizer.EnqueueAndWaitAsync(
+            userId,
+            "JointPlan",
+            request,
+            cancellationToken: cancellationToken);
         var comfortBreach = optimized.Steps.FirstOrDefault(step =>
             step.PredictedTemperatureC is { } predicted && predicted < minimum[step.Index] - 0.01);
         if (comfortBreach is not null)

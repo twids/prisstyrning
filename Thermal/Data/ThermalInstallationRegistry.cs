@@ -21,32 +21,11 @@ public sealed class ThermalInstallationRegistry
     {
         if (!AdminService.IsValidUserId(requestedUserId))
             throw new ArgumentException("Invalid thermal installation user id.", nameof(requestedUserId));
-
-        var siteUsers = await _db.ThermalSiteConfigs.AsNoTracking()
-            .Select(x => x.UserId)
-            .Distinct()
-            .ToListAsync(cancellationToken);
-        if (siteUsers.Count == 1) return siteUsers[0];
-        if (siteUsers.Count > 1)
-        {
-            if (siteUsers.Contains(requestedUserId, StringComparer.Ordinal)) return requestedUserId;
-            throw new InvalidOperationException("Flera termiska installationer finns; välj den befintliga ägaren innan konfigurationen ändras.");
-        }
-
-        // On first use, bind the single thermal installation to the existing
-        // legacy DHW owner whenever that owner can be determined unambiguously.
-        var automaticLegacyUsers = await _db.UserSettings.AsNoTracking()
-            .Where(x => x.AutoApplySchedule)
-            .Select(x => x.UserId)
-            .Distinct()
-            .ToListAsync(cancellationToken);
-        if (automaticLegacyUsers.Count == 1) return automaticLegacyUsers[0];
-
-        var tokenUsers = await _db.DaikinTokens.AsNoTracking()
-            .Select(x => x.UserId)
-            .Distinct()
-            .ToListAsync(cancellationToken);
-        return tokenUsers.Count == 1 ? tokenUsers[0] : requestedUserId;
+        // Account isolation is the boundary: never redirect a signed-in account
+        // to the sole installation found in the database. Legacy ownership is
+        // migrated explicitly by migration code, not inferred on requests.
+        await Task.CompletedTask;
+        return requestedUserId;
     }
 
     public async Task<IReadOnlyList<string>> GetUsersAsync(

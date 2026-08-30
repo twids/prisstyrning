@@ -2,7 +2,6 @@ using System.Net.Http.Headers;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 using Prisstyrning.Data;
 using Prisstyrning.Thermal.Domain;
 
@@ -13,23 +12,20 @@ public sealed class HomeAssistantControlClient : IHomeAssistantControlClient
     private const string AllowedDomain = "number";
     private const string AllowedService = "set_value";
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly HomeAssistantControlOptions _options;
-    private readonly IHomeAssistantCredentialProvider _credentials;
+    private readonly HomeAssistantConnectionService _connections;
     private readonly IHomeAssistantStateCache _cache;
     private readonly PrisstyrningDbContext _db;
     private readonly IConfiguration _configuration;
 
     public HomeAssistantControlClient(
         IHttpClientFactory httpClientFactory,
-        IOptions<HomeAssistantControlOptions> options,
-        IHomeAssistantCredentialProvider credentials,
+        HomeAssistantConnectionService connections,
         IHomeAssistantStateCache cache,
         PrisstyrningDbContext db,
         IConfiguration configuration)
     {
         _httpClientFactory = httpClientFactory;
-        _options = options.Value;
-        _credentials = credentials;
+        _connections = connections;
         _cache = cache;
         _db = db;
         _configuration = configuration;
@@ -57,19 +53,20 @@ public sealed class HomeAssistantControlClient : IHomeAssistantControlClient
             throw new ArgumentOutOfRangeException(nameof(deviationC), $"Deviation exceeds the configured ±{configuredLimit:0.0} °C limit.");
         }
 
-        var entityId = _options.HeatingDeviationEntityId;
-        var token = _credentials.GetControlToken();
+        var connection = await _connections.ResolveAsync(userId, cancellationToken);
+        var entityId = connection?.HeatingDeviationEntityId ?? string.Empty;
+        var token = connection is { ControlEnabled: true } ? connection.ControlToken : null;
+        var baseUri = connection?.BaseUri;
         if (!IsAllowedNumberEntity(entityId) ||
             string.IsNullOrWhiteSpace(token) ||
-            !HomeAssistantTelemetryClient.IsSupportedBaseUrl(_options.BaseUrl) ||
-            !Uri.TryCreate(_options.BaseUrl, UriKind.Absolute, out var baseUri))
+            baseUri is null)
         {
             throw new InvalidOperationException("Home Assistant control is not safely configured.");
         }
 
         var client = _httpClientFactory.CreateClient("HomeAssistantControl");
         var sentAtUtc = DateTimeOffset.UtcNow;
-        var alreadyAtRequestedValue = _cache.TryGet(entityId, out var beforeWrite) &&
+        var alreadyAtRequestedValue = _cache.TryGet(userId, entityId, out var beforeWrite) &&
                                       IsRecentMatchingState(beforeWrite, deviationC, sentAtUtc);
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
@@ -82,7 +79,7 @@ public sealed class HomeAssistantControlClient : IHomeAssistantControlClient
 
         for (var attempt = 0; attempt < 20; attempt++)
         {
-            if (_cache.TryGet(entityId, out var observed) && IsVerifiedState(observed, deviationC, sentAtUtc)) return;
+            if (_cache.TryGet(userId, entityId, out var observed) && IsVerifiedState(observed, deviationC, sentAtUtc)) return;
             await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken);
         }
         throw new InvalidOperationException("Home Assistant accepterade anropet men P1P2-värdet kunde inte verifieras inom tio sekunder.");

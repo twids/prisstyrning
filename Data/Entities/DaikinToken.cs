@@ -8,4 +8,8 @@ public class DaikinToken
     public DateTimeOffset ExpiresAtUtc { get; set; }
     /// <summary>Raw OIDC 'sub' claim from the Daikin IDP id_token. Nullable for tokens saved before this field existed.</summary>
     public string? DaikinSubject { get; set; }
+    public string? AccessTokenCiphertext { get; set; }
+    public string? RefreshTokenCiphertext { get; set; }
+    public int EncryptionVersion { get; set; }
+    public Guid ConcurrencyStamp { get; set; }
 }

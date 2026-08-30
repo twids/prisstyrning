@@ -5,6 +5,13 @@ export interface DaikinAuthStatus {
   expiresAtUtc?: string;
 }
 
+export interface SessionStatus {
+  authenticated: boolean;
+  userId: string | null;
+  isAdmin: boolean;
+  csrfToken: string | null;
+}
+
 export interface PricePoint {
   start: string;
   value: number;
@@ -381,6 +388,28 @@ export interface HomeAssistantStatus {
   lastSnapshotUtc: string | null;
   lastActivityUtc: string | null;
   cachedEntities: number;
+}
+
+export interface HomeAssistantConnection {
+  baseUrl: string;
+  telemetryEnabled: boolean;
+  controlEnabled: boolean;
+  heatingDeviationEntityId: string;
+  staleAfterMinutes: number;
+  telemetryTokenConfigured: boolean;
+  controlTokenConfigured: boolean;
+  updatedAtUtc: string;
+}
+
+export interface UpdateHomeAssistantConnection {
+  baseUrl: string;
+  telemetryToken: string | null;
+  controlToken: string | null;
+  telemetryEnabled: boolean;
+  controlEnabled: boolean;
+  heatingDeviationEntityId: string;
+  staleAfterMinutes: number;
+  clearControlToken: boolean;
 }
 
 export interface HomeAssistantEntity {

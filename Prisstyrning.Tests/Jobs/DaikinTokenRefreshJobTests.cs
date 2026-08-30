@@ -23,13 +23,14 @@ public class DaikinTokenRefreshJobTests
             .Options;
         var db = new PrisstyrningDbContext(options);
         db.Database.EnsureCreated();
-        var tokenRepo = new DaikinTokenRepository(db);
+        var tokenRepo = new DaikinTokenRepository(db, TestSecretProtector.Instance);
 
         var config = cfg ?? new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>()).Build();
 
         var services = new ServiceCollection();
         services.AddSingleton(options);
         services.AddSingleton<IConfiguration>(config);
+        services.AddTestCredentialProtection();
         services.AddScoped<PrisstyrningDbContext>(sp => new PrisstyrningDbContext(sp.GetRequiredService<DbContextOptions<PrisstyrningDbContext>>()));
         services.AddScoped<DaikinTokenRepository>();
         services.AddSingleton<IHttpClientFactory>(MockServiceFactory.CreateMockHttpClientFactory());

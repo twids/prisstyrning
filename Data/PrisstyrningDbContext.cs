@@ -12,6 +12,11 @@ public class PrisstyrningDbContext : DbContext
     public DbSet<PriceSnapshot> PriceSnapshots => Set<PriceSnapshot>();
     public DbSet<ScheduleHistoryEntry> ScheduleHistory => Set<ScheduleHistoryEntry>();
     public DbSet<DaikinToken> DaikinTokens => Set<DaikinToken>();
+    public DbSet<UserAccount> UserAccounts => Set<UserAccount>();
+    public DbSet<UserSession> UserSessions => Set<UserSession>();
+    public DbSet<DaikinInstallation> DaikinInstallations => Set<DaikinInstallation>();
+    public DbSet<HomeAssistantConnection> HomeAssistantConnections => Set<HomeAssistantConnection>();
+    public DbSet<ThermalOptimizationJob> ThermalOptimizationJobs => Set<ThermalOptimizationJob>();
     public DbSet<FlexibleScheduleState> FlexibleScheduleStates => Set<FlexibleScheduleState>();
     public DbSet<ThermalSiteConfig> ThermalSiteConfigs => Set<ThermalSiteConfig>();
     public DbSet<ThermalRoomConfig> ThermalRoomConfigs => Set<ThermalRoomConfig>();
@@ -81,6 +86,65 @@ public class PrisstyrningDbContext : DbContext
         {
             e.HasKey(x => x.UserId);
             e.Property(x => x.UserId).HasMaxLength(100);
+            e.Property(x => x.AccessToken).HasDefaultValue(string.Empty);
+            e.Property(x => x.RefreshToken).HasDefaultValue(string.Empty);
+            e.Property(x => x.AccessTokenCiphertext).HasColumnType("text");
+            e.Property(x => x.RefreshTokenCiphertext).HasColumnType("text");
+            e.Property(x => x.ConcurrencyStamp).IsConcurrencyToken();
+        });
+
+        modelBuilder.Entity<UserAccount>(e =>
+        {
+            e.HasKey(x => x.UserId);
+            e.Property(x => x.UserId).HasMaxLength(100);
+            e.Property(x => x.DaikinSubjectHash).HasMaxLength(64).IsRequired();
+            e.HasIndex(x => x.DaikinSubjectHash).IsUnique();
+        });
+
+        modelBuilder.Entity<UserSession>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.UserId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.UserAgentHash).HasMaxLength(64);
+            e.HasIndex(x => new { x.UserId, x.ExpiresAtUtc });
+        });
+
+        modelBuilder.Entity<DaikinInstallation>(e =>
+        {
+            e.HasKey(x => x.UserId);
+            e.Property(x => x.UserId).HasMaxLength(100);
+            e.Property(x => x.SiteId).HasMaxLength(200).IsRequired();
+            e.Property(x => x.DeviceId).HasMaxLength(200).IsRequired();
+            e.Property(x => x.DhwManagementPointEmbeddedId).HasMaxLength(200).IsRequired();
+            e.Property(x => x.HeatingManagementPointEmbeddedId).HasMaxLength(200);
+            e.Property(x => x.ScheduleMode).HasMaxLength(50).HasDefaultValue("heating");
+        });
+
+        modelBuilder.Entity<HomeAssistantConnection>(e =>
+        {
+            e.HasKey(x => x.UserId);
+            e.Property(x => x.UserId).HasMaxLength(100);
+            e.Property(x => x.BaseUrl).HasMaxLength(500).IsRequired();
+            e.Property(x => x.TelemetryTokenCiphertext).HasColumnType("text");
+            e.Property(x => x.ControlTokenCiphertext).HasColumnType("text");
+            e.Property(x => x.HeatingDeviationEntityId).HasMaxLength(255);
+        });
+
+        modelBuilder.Entity<ThermalOptimizationJob>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.UserId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.PendingKey).HasMaxLength(100);
+            e.Property(x => x.Status).HasMaxLength(30).IsRequired();
+            e.Property(x => x.Reason).HasMaxLength(100).IsRequired();
+            e.Property(x => x.RequestJson).HasColumnType("jsonb");
+            e.Property(x => x.ResultJson).HasColumnType("jsonb");
+            e.Property(x => x.Error).HasMaxLength(1000);
+            e.Property(x => x.LeaseOwner).HasMaxLength(100);
+            e.Property(x => x.ConcurrencyStamp).IsConcurrencyToken();
+            e.HasIndex(x => new { x.Status, x.Priority, x.CreatedAtUtc });
+            e.HasIndex(x => new { x.UserId, x.Status });
+            e.HasIndex(x => x.PendingKey).IsUnique();
         });
 
         modelBuilder.Entity<ThermalSiteConfig>(e =>

@@ -24,10 +24,11 @@ public sealed record NormalizedSensorValue(
 
 public interface IHomeAssistantTelemetryClient
 {
-    Task<bool> TestConnectionAsync(CancellationToken cancellationToken = default);
-    Task<HomeAssistantState?> GetStateAsync(string entityId, CancellationToken cancellationToken = default);
-    Task<IReadOnlyList<HomeAssistantState>> GetStatesAsync(CancellationToken cancellationToken = default);
+    Task<bool> TestConnectionAsync(string userId, CancellationToken cancellationToken = default);
+    Task<HomeAssistantState?> GetStateAsync(string userId, string entityId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<HomeAssistantState>> GetStatesAsync(string userId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<HomeAssistantState>> GetHistoryAsync(
+        string userId,
         string entityId,
         DateTimeOffset fromUtc,
         DateTimeOffset toUtc,
@@ -50,4 +51,13 @@ public interface IHomeAssistantStateCache
     void MarkDisconnected();
     bool TryGet(string entityId, out HomeAssistantState? state);
     IReadOnlyList<HomeAssistantState> Snapshot();
+    DateTimeOffset? LastSnapshotUtcFor(string userId);
+    DateTimeOffset? LastActivityUtcFor(string userId);
+    bool IsConnected(string userId);
+    void Replace(string userId, IEnumerable<HomeAssistantState> states);
+    void Upsert(string userId, HomeAssistantState state);
+    void MarkConnected(string userId);
+    void MarkDisconnected(string userId);
+    bool TryGet(string userId, string entityId, out HomeAssistantState? state);
+    IReadOnlyList<HomeAssistantState> Snapshot(string userId);
 }

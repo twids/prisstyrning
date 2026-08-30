@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.AspNetCore.Http;
 using Prisstyrning.Data;
 using Prisstyrning.Data.Repositories;
 using Prisstyrning.Tests.Fixtures;
@@ -23,7 +24,7 @@ public class OAuthStateTtlTests
             .Options;
         var db = new PrisstyrningDbContext(options);
         db.Database.EnsureCreated();
-        var tokenRepo = new DaikinTokenRepository(db);
+        var tokenRepo = new DaikinTokenRepository(db, TestSecretProtector.Instance);
         return (new DaikinOAuthService(config, tokenRepo, MockServiceFactory.CreateMockHttpClientFactory(), timeProvider), tokenRepo, db);
     }
 
@@ -58,11 +59,33 @@ public class OAuthStateTtlTests
                     expires_in = 3600,
                     token_type = "Bearer"
                 }));
+            MockServiceFactory.AddSuccessfulDaikinIdentity(mockHandler, "state-test-subject");
 
             var mockHttpClient = new HttpClient(mockHandler);
             var result = await service.HandleCallbackAsync("auth-code-123", state, userId: "test-user", mockHttpClient);
 
             Assert.True(result, "Token exchange should succeed with fresh state");
+        }
+    }
+
+    [Fact]
+    public void BrowserCorrelation_BindsCallbackStateToTheBrowserThatStartedLogin()
+    {
+        var (service, _, db) = CreateService(CreateConfig());
+        using (db)
+        {
+            var startContext = new DefaultHttpContext();
+            var authUrl = service.GetAuthorizationUrl(startContext);
+            var state = ExtractParameter(authUrl, "state");
+            Assert.Contains(DaikinOAuthService.CorrelationCookieName, startContext.Response.Headers.SetCookie.ToString());
+
+            var callbackContext = new DefaultHttpContext();
+            callbackContext.Request.Headers.Cookie = $"{DaikinOAuthService.CorrelationCookieName}={state}";
+            Assert.True(DaikinOAuthService.ValidateBrowserCorrelation(callbackContext, state));
+
+            var unrelatedBrowser = new DefaultHttpContext();
+            unrelatedBrowser.Request.Headers.Cookie = $"{DaikinOAuthService.CorrelationCookieName}={new string('0', 32)}";
+            Assert.False(DaikinOAuthService.ValidateBrowserCorrelation(unrelatedBrowser, state));
         }
     }
 
@@ -103,6 +126,7 @@ public class OAuthStateTtlTests
                     expires_in = 3600,
                     token_type = "Bearer"
                 }));
+            MockServiceFactory.AddSuccessfulDaikinIdentity(mockHandler, "single-use-subject");
 
             var mockHttpClient = new HttpClient(mockHandler);
             var firstResult = await service.HandleCallbackAsync("auth-code-123", state, userId: "test-user", mockHttpClient);
@@ -139,6 +163,7 @@ public class OAuthStateTtlTests
                     expires_in = 3600,
                     token_type = "Bearer"
                 }));
+            MockServiceFactory.AddSuccessfulDaikinIdentity(mockHandler, "expired-state-subject");
 
             var mockHttpClient = new HttpClient(mockHandler);
             var result = await service.HandleCallbackAsync("auth-code-123", state, userId: "test-user", mockHttpClient);
@@ -189,6 +214,7 @@ public class OAuthStateTtlTests
                     expires_in = 3600,
                     token_type = "Bearer"
                 }));
+            MockServiceFactory.AddSuccessfulDaikinIdentity(mockHandler, "fresh-state-subject");
             var mockHttpClient = new HttpClient(mockHandler);
             var result3 = await service.HandleCallbackAsync("code", state3, userId: "u", mockHttpClient);
             Assert.True(result3, "Fresh state3 should survive eviction and succeed");

@@ -8,10 +8,12 @@ Run commands from `frontend/`:
 npm ci
 npm run dev
 npm run build
+npm test
+npm run test:e2e
 npm run preview
 ```
 
-`npm run build` is the available type-check and production-build verification. No frontend test, lint, or formatting command is defined.
+`npm run build` is the type-check and production-build verification. `npm test` runs Vitest, while `npm run test:e2e` builds and runs Playwright. No frontend lint or formatting command is defined.
 
 Follow the existing strict TypeScript and functional React style: two-space indentation, semicolons, single quotes, typed API results, TanStack Query hooks for server state, and Material UI components/theme tokens for presentation. Reuse the shared timezone/date-format helpers for displayed dates and times.
 

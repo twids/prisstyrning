@@ -2,7 +2,7 @@
 
 ## Project overview
 
-Prisstyrning is an actively developed ASP.NET Core 8 application that builds price-aware domestic-hot-water schedules. It integrates Nordpool prices, Daikin ONECTA OAuth/device APIs, PostgreSQL via EF Core, and Hangfire jobs. The browser UI is a React 18/TypeScript/Vite application built into the backend's static `wwwroot/` directory.
+Prisstyrning is an actively developed ASP.NET Core 10 application that builds price-aware domestic-hot-water schedules. It integrates Nordpool prices, Daikin ONECTA OAuth/device APIs, PostgreSQL via EF Core, and Hangfire jobs. The browser UI is a React 18/TypeScript/Vite application built into the backend's static `wwwroot/` directory.
 
 ## Repository map and boundaries
 
@@ -18,7 +18,7 @@ Keep API contracts in `Program.cs`/`Controllers/`, TypeScript types in `frontend
 
 ## Setup, build, and run
 
-Prerequisites evidenced by CI and manifests are the .NET 8 SDK, Node.js 20 with npm, and PostgreSQL for a running application. Docker is optional.
+Prerequisites evidenced by CI and manifests are the .NET 10 SDK, Node.js 20 with npm, and PostgreSQL for a running application. Docker is optional.
 
 From the repository root:
 
@@ -51,7 +51,7 @@ For an individual backend test:
 dotnet test --filter "FullyQualifiedName~TestMethodName"
 ```
 
-The frontend `build` script runs TypeScript checking (`tsc`) before Vite. There is no separate frontend test, lint, or format script, and no repository-wide formatter configuration. Treat those commands as unknown/unavailable rather than inventing substitutes.
+The frontend `build` script runs TypeScript checking (`tsc`) before Vite. `npm test` runs Vitest and `npm run test:e2e` runs the Playwright suite after a production build. There is no frontend lint or format script and no repository-wide formatter configuration.
 
 Optional container commands documented by the repository are:
 

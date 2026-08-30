@@ -8,7 +8,7 @@ namespace Prisstyrning.Tests.Thermal;
 public sealed class ThermalInstallationRegistryTests
 {
     [Fact]
-    public async Task ResolveUser_BindsFirstThermalConfigurationToUniqueLegacyWriter()
+    public async Task ResolveUser_DoesNotInferLegacyOwnerForAnotherAccount()
     {
         await using var db = Database();
         db.UserSettings.Add(new UserSettings { UserId = "legacy-owner", AutoApplySchedule = true });
@@ -17,11 +17,11 @@ public sealed class ThermalInstallationRegistryTests
         var registry = new ThermalInstallationRegistry(db);
         var resolved = await registry.ResolveUserAsync("new-browser-session", CancellationToken.None);
 
-        Assert.Equal("legacy-owner", resolved);
+        Assert.Equal("new-browser-session", resolved);
     }
 
     [Fact]
-    public async Task ResolveUser_ReusesExistingInstallationAcrossBrowserSessions()
+    public async Task ResolveUser_DoesNotCrossAccountBoundary()
     {
         await using var db = Database();
         db.ThermalSiteConfigs.Add(new ThermalSiteConfig
@@ -36,7 +36,7 @@ public sealed class ThermalInstallationRegistryTests
         var plannedUsers = await registry.GetUsersAsync(includeLegacy: false, activeLwtOnly: false, cancellationToken: CancellationToken.None);
         var lwtUsers = await registry.GetUsersAsync(includeLegacy: false, activeLwtOnly: true, cancellationToken: CancellationToken.None);
 
-        Assert.Equal("installation-owner", resolved);
+        Assert.Equal("another-browser", resolved);
         Assert.Equal(["installation-owner"], plannedUsers);
         Assert.Empty(lwtUsers);
     }

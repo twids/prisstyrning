@@ -6,6 +6,7 @@ using Prisstyrning.Thermal.Data;
 using Prisstyrning.Thermal.Domain;
 using Prisstyrning.Thermal.HomeAssistant;
 using Prisstyrning.Thermal.Optimization;
+using Prisstyrning.Security;
 
 namespace Prisstyrning.Thermal;
 
@@ -14,12 +15,6 @@ public static class ThermalApiEndpoints
     public static IEndpointRouteBuilder MapThermalApi(this IEndpointRouteBuilder app)
     {
         var thermal = app.MapGroup("/api/thermal");
-        thermal.AddEndpointFilter(async (invocation, next) =>
-        {
-            var configuration = invocation.HttpContext.RequestServices.GetRequiredService<IConfiguration>();
-            if (!IsAdmin(invocation.HttpContext, configuration)) return AdminRequired();
-            return await next(invocation);
-        });
         thermal.AddEndpointFilter(async (invocation, next) =>
         {
             try
@@ -39,12 +34,8 @@ public static class ThermalApiEndpoints
         thermal.MapGet("/config", async (
             HttpContext context,
             ThermalDataService data,
-            PrisstyrningDbContext db,
-            IConfiguration appConfiguration,
             CancellationToken cancellationToken) =>
         {
-            if (!await db.ThermalSiteConfigs.AsNoTracking().AnyAsync(cancellationToken) && !IsAdmin(context, appConfiguration))
-                return AdminRequired();
             return Results.Ok(await data.GetConfigAsync(UserId(context), cancellationToken));
         });
 
@@ -52,10 +43,8 @@ public static class ThermalApiEndpoints
             HttpContext context,
             ThermalConfigDto config,
             ThermalDataService data,
-            IConfiguration appConfiguration,
             CancellationToken cancellationToken) =>
         {
-            if (!IsAdmin(context, appConfiguration)) return AdminRequired();
             try
             {
                 return Results.Ok(await data.UpdateConfigAsync(UserId(context), config, cancellationToken));
@@ -145,10 +134,8 @@ public static class ThermalApiEndpoints
             HttpContext context,
             ThermalModeRequest request,
             ThermalModeService modes,
-            IConfiguration appConfiguration,
             CancellationToken cancellationToken) =>
         {
-            if (!IsAdmin(context, appConfiguration)) return AdminRequired();
             var result = await modes.ChangeModeAsync(UserId(context), request, cancellationToken);
             return result.Success ? Results.Ok(new { message = result.Message }) : Results.BadRequest(new { error = result.Message });
         });
@@ -157,10 +144,8 @@ public static class ThermalApiEndpoints
             HttpContext context,
             ThermalOverrideRequest request,
             ThermalModeService modes,
-            IConfiguration appConfiguration,
             CancellationToken cancellationToken) =>
         {
-            if (!IsAdmin(context, appConfiguration)) return AdminRequired();
             try
             {
                 await modes.SetOverrideAsync(UserId(context), request, cancellationToken);
@@ -175,44 +160,70 @@ public static class ThermalApiEndpoints
         thermal.MapDelete("/override", async (
             HttpContext context,
             ThermalModeService modes,
-            IConfiguration appConfiguration,
             CancellationToken cancellationToken) =>
         {
-            if (!IsAdmin(context, appConfiguration)) return AdminRequired();
             await modes.ClearOverrideAsync(UserId(context), cancellationToken);
             return Results.NoContent();
         });
 
         var homeAssistant = app.MapGroup("/api/home-assistant");
-        homeAssistant.AddEndpointFilter(async (invocation, next) =>
+        homeAssistant.MapGet("/config", async (
+            HttpContext context,
+            HomeAssistantConnectionService connections,
+            CancellationToken cancellationToken) =>
         {
-            var configuration = invocation.HttpContext.RequestServices.GetRequiredService<IConfiguration>();
-            if (!IsAdmin(invocation.HttpContext, configuration)) return AdminRequired();
-            return await next(invocation);
+            var config = await connections.GetAsync(UserId(context), cancellationToken);
+            return config is null ? Results.NoContent() : Results.Ok(config);
         });
-        homeAssistant.MapGet("/status", (
-            IHomeAssistantStateCache cache,
-            IOptions<HomeAssistantTelemetryOptions> options,
-            IHomeAssistantCredentialProvider credentials) =>
+        homeAssistant.MapPut("/config", async (
+            HttpContext context,
+            UpdateHomeAssistantConnectionRequest request,
+            HomeAssistantConnectionService connections,
+            CancellationToken cancellationToken) =>
         {
-            var lastSnapshot = cache.LastSnapshotUtc;
+            try { return Results.Ok(await connections.SaveAsync(UserId(context), request, cancellationToken)); }
+            catch (ArgumentException exception)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["connection"] = [exception.Message] });
+            }
+            catch (InvalidOperationException exception) { return Results.Conflict(new { error = exception.Message }); }
+        });
+        homeAssistant.MapDelete("/config", async (
+            HttpContext context,
+            HomeAssistantConnectionService connections,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                await connections.DeleteAsync(UserId(context), cancellationToken);
+                return Results.NoContent();
+            }
+            catch (InvalidOperationException exception) { return Results.Conflict(new { error = exception.Message }); }
+        });
+        homeAssistant.MapGet("/status", async (
+            HttpContext context,
+            IHomeAssistantStateCache cache,
+            HomeAssistantConnectionService connections,
+            CancellationToken cancellationToken) =>
+        {
+            var userId = UserId(context);
+            var config = await connections.GetAsync(userId, cancellationToken);
+            var lastSnapshot = cache.LastSnapshotUtcFor(userId);
             return Results.Ok(new
             {
-                configured = options.Value.Enabled && HomeAssistantTelemetryClient.IsSupportedBaseUrl(options.Value.BaseUrl) && credentials.HasTelemetryToken,
-                connected = cache.Connected,
+                configured = config?.TelemetryEnabled == true && config.TelemetryTokenConfigured,
+                connected = cache.IsConnected(userId),
                 lastSnapshotUtc = lastSnapshot,
-                lastActivityUtc = cache.LastActivityUtc,
-                cachedEntities = cache.Snapshot().Count
+                lastActivityUtc = cache.LastActivityUtcFor(userId),
+                cachedEntities = cache.Snapshot(userId).Count
             });
         });
         homeAssistant.MapPost("/test", async (
             HttpContext context,
             IHomeAssistantTelemetryClient client,
-            IConfiguration appConfiguration,
             CancellationToken cancellationToken) =>
         {
-            if (!IsAdmin(context, appConfiguration)) return AdminRequired();
-            return (await client.TestConnectionAsync(cancellationToken))
+            return (await client.TestConnectionAsync(UserId(context), cancellationToken))
                 ? Results.Ok(new { connected = true })
                 : Results.BadRequest(new { connected = false, error = "Home Assistant kunde inte nås med telemetriidentiteten." });
         });
@@ -221,10 +232,8 @@ public static class ThermalApiEndpoints
             HomeAssistantHistoryImportRequest request,
             HomeAssistantHistoryImportService importer,
             ThermalInstallationRegistry registry,
-            IConfiguration appConfiguration,
             CancellationToken cancellationToken) =>
         {
-            if (!IsAdmin(context, appConfiguration)) return AdminRequired();
             try
             {
                 var userId = await registry.ResolveUserAsync(SessionUserId(context), cancellationToken);
@@ -239,11 +248,17 @@ public static class ThermalApiEndpoints
                 return Results.BadRequest(new { error = "Home Assistant-historiken kunde inte hämtas." });
             }
         });
-        homeAssistant.MapGet("/entities", (IHomeAssistantStateCache cache, IOptions<HomeAssistantTelemetryOptions> options) =>
+        homeAssistant.MapGet("/entities", async (
+            HttpContext context,
+            IHomeAssistantStateCache cache,
+            HomeAssistantConnectionService connections,
+            CancellationToken cancellationToken) =>
         {
-            var staleAfter = TimeSpan.FromMinutes(options.Value.StaleAfterMinutes);
+            var userId = UserId(context);
+            var config = await connections.GetAsync(userId, cancellationToken);
+            var staleAfter = TimeSpan.FromMinutes(config?.StaleAfterMinutes ?? 10);
             var now = DateTimeOffset.UtcNow;
-            var result = cache.Snapshot().Select(state => new ThermalEntityStateDto(
+            var result = cache.Snapshot(userId).Select(state => new ThermalEntityStateDto(
                 state.EntityId,
                 state.FriendlyName,
                 state.State,
@@ -302,18 +317,9 @@ public static class ThermalApiEndpoints
 
     private static string SessionUserId(HttpContext context)
     {
-        if (context.Items.TryGetValue(UserSessionCookieService.HttpContextItemKey, out var value) &&
-            value is string userId &&
-            AdminService.IsValidUserId(userId))
-            return userId;
-        return "default";
+        return AccountAuthentication.UserId(context.User)
+               ?? throw new InvalidOperationException("Authenticated account identity is missing.");
     }
-
-    private static bool IsAdmin(HttpContext context, IConfiguration configuration) =>
-        AdminService.IsAdmin(configuration, SessionUserId(context));
-
-    private static IResult AdminRequired() =>
-        Results.Json(new { error = "Adminbehörighet krävs för att läsa, ändra eller testa termisk styrning." }, statusCode: StatusCodes.Status403Forbidden);
 
     private const string InstallationUserItem = "thermal_installation_user";
 }

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import {
   AppBar, Box, Button, Container, Divider, List, ListItemButton, ListItemIcon,
-  ListItemText, Stack, Toolbar, Typography,
+  ListItemText, Stack, Toolbar, Tooltip, Typography,
 } from '@mui/material';
 import { Link as RouterLink, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -15,8 +15,10 @@ import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import HistoryOutlinedIcon from '@mui/icons-material/HistoryOutlined';
 import AdminPanelSettingsOutlinedIcon from '@mui/icons-material/AdminPanelSettingsOutlined';
 import HeatPumpOutlinedIcon from '@mui/icons-material/HeatPumpOutlined';
+import LogoutOutlinedIcon from '@mui/icons-material/LogoutOutlined';
 import { apiClient } from '../api/client';
 import ThermalStatusStrip from './thermal/ThermalStatusStrip';
+import { useLogout } from '../hooks/useSession';
 
 interface LayoutProps { children: ReactNode }
 
@@ -34,6 +36,7 @@ export default function Layout({ children }: LayoutProps) {
   const location = useLocation();
   const adminStatusQuery = useQuery({ queryKey: ['admin-status'], queryFn: () => apiClient.getAdminStatus(), staleTime: 5 * 60 * 1000 });
   const isAdmin = adminStatusQuery.data?.isAdmin ?? false;
+  const logout = useLogout();
 
   const navItem = (item: typeof thermalNavigation[number]) => {
     const selected = item.path === '/' ? location.pathname === '/' : location.pathname.startsWith(item.path);
@@ -57,6 +60,7 @@ export default function Layout({ children }: LayoutProps) {
             </Box>
           </Stack>
           <Button component={RouterLink} to="/legacy" color="inherit" startIcon={<HistoryOutlinedIcon />} sx={{ display: { xs: 'none', sm: 'inline-flex' } }}>Legacy-vy</Button>
+          <Tooltip title="Logga ut från Prisstyrning"><Button color="inherit" startIcon={<LogoutOutlinedIcon />} onClick={() => logout.mutate()} disabled={logout.isPending}>{logout.isPending ? 'Loggar ut…' : 'Logga ut'}</Button></Tooltip>
         </Toolbar>
         <Box component="nav" aria-label="Huvudnavigation" sx={{ display: { xs: 'flex', lg: 'none' }, overflowX: 'auto', px: 1, pb: 1, gap: .5, scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' } }}>
           {thermalNavigation.map((item) => (

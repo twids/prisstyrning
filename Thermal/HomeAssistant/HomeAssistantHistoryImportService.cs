@@ -60,7 +60,7 @@ public sealed class HomeAssistantHistoryImportService
         var missing = new List<string>();
         foreach (var entityId in entityIds)
         {
-            var history = await _client.GetHistoryAsync(entityId, fromUtc, toUtc, cancellationToken);
+            var history = await _client.GetHistoryAsync(userId, entityId, fromUtc, toUtc, cancellationToken);
             if (history.Count == 0) missing.Add(entityId);
             cursors[entityId] = new HistoryCursor(history);
         }
