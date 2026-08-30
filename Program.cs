@@ -311,46 +311,47 @@ using (var scope = app.Services.CreateScope())
 var hangfirePassword = builder.Configuration["Hangfire:DashboardPassword"];
 
 // Schedule recurring jobs
-RecurringJob.AddOrUpdate<NordpoolPriceHangfireJob>("nordpool-price-job", 
-    job => job.ExecuteAsync(), 
+var recurringJobs = app.Services.GetRequiredService<IRecurringJobManager>();
+recurringJobs.AddOrUpdate<NordpoolPriceHangfireJob>("nordpool-price-job",
+    job => job.ExecuteAsync(),
     "0 13 * * *", // Daily at 13:00 Europe/Stockholm local time (CET/CEST, when Nordpool publishes day-ahead prices)
     new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm") });
 
-RecurringJob.AddOrUpdate<ScheduleUpdateHangfireJob>("schedule-update-job-midnight",
+recurringJobs.AddOrUpdate<ScheduleUpdateHangfireJob>("schedule-update-job-midnight",
     job => job.ExecuteAsync(),
     "35 1 * * *", // Daily at 01:35 (1.5h after midnight, allows for price data availability)
     new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm") });
 
-RecurringJob.AddOrUpdate<ScheduleUpdateHangfireJob>("schedule-update-job-noon",
+recurringJobs.AddOrUpdate<ScheduleUpdateHangfireJob>("schedule-update-job-noon",
     job => job.ExecuteAsync(),
     "35 13 * * *", // Daily at 13:35 (1.5h after noon, ensures tomorrow's prices are available)
     new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm") });
 
-RecurringJob.AddOrUpdate<DaikinTokenRefreshHangfireJob>("daikin-token-refresh-job",
+recurringJobs.AddOrUpdate<DaikinTokenRefreshHangfireJob>("daikin-token-refresh-job",
     job => job.ExecuteAsync(),
     "*/5 * * * *"); // Every 5 minutes
 
-RecurringJob.AddOrUpdate<DailyPriceHangfireJob>("daily-price-job",
+recurringJobs.AddOrUpdate<DailyPriceHangfireJob>("daily-price-job",
     job => job.ExecuteAsync(),
     "*/10 * * * *"); // Every 10 minutes
 
 // Schedule initial batch job to run daily at 14:30
-RecurringJob.AddOrUpdate<InitialBatchHangfireJob>("initial-batch-job",
+recurringJobs.AddOrUpdate<InitialBatchHangfireJob>("initial-batch-job",
     job => job.ExecuteAsync(),
     "30 14 * * *", // Daily at 14:30
     new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm") });
 
-RecurringJob.AddOrUpdate<ThermalModelTrainingJob>("thermal-model-training-job",
+recurringJobs.AddOrUpdate<ThermalModelTrainingJob>("thermal-model-training-job",
     job => job.ExecuteAsync(CancellationToken.None),
     "20 2 * * *",
     new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm") });
 
-RecurringJob.AddOrUpdate<CopModelTrainingJob>("cop-model-training-job",
+recurringJobs.AddOrUpdate<CopModelTrainingJob>("cop-model-training-job",
     job => job.ExecuteAsync(CancellationToken.None),
     "40 2 * * *",
     new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm") });
 
-RecurringJob.AddOrUpdate<ThermalRetentionJob>("thermal-retention-job",
+recurringJobs.AddOrUpdate<ThermalRetentionJob>("thermal-retention-job",
     job => job.ExecuteAsync(CancellationToken.None),
     "10 3 * * *",
     new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm") });
