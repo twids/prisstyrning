@@ -92,6 +92,7 @@ Double underscore `__` maps to nested sections (standard .NET config convention)
 | Schedule | ComfortNextHourMaxIncreasePct | `PRISSTYRNING_Schedule__ComfortNextHourMaxIncreasePct` | Max % increase allowed for extending comfort block |
 | Storage | Directory | `PRISSTYRNING_Storage__Directory` | Directory for persisted price/schedule snapshots |
 | Security | DataProtectionKeysPath | `PRISSTYRNING_Security__DataProtectionKeysPath` | Persistent directory for session-signing keys; normally below `/data` |
+| Security | TrustedProxyNetworks | `PRISSTYRNING_Security__TrustedProxyNetworks` | Comma-separated CIDR networks for trusted reverse proxies; forwarded HTTPS headers are accepted for one hop only |
 | Security:CredentialEncryption | KeyFile | `PRISSTYRNING_Security__CredentialEncryption__KeyFile` | Required file containing one base64-encoded 32-byte key for account credentials |
 | Security:CredentialEncryption | PreserveLegacyDaikinTokenColumns | `PRISSTYRNING_Security__CredentialEncryption__PreserveLegacyDaikinTokenColumns` | Keep legacy plaintext Daikin columns during the rollback canary; default `true`, set `false` only after the new image is accepted |
 | Thermal | EnableDhwWriterCoordination | `PRISSTYRNING_Thermal__EnableDhwWriterCoordination` | Enables the new database lease around legacy and joint DHW writes; default `false` so the first Legacy canary uses the unchanged write path |
