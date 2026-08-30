@@ -189,7 +189,7 @@ After completing OAuth, Daikin tokens are persisted per verified account in Post
 
 **Backend:**
 ```bash
-dotnet --version  # 10.0.111 or a compatible .NET 10 patch SDK
+dotnet --version  # 10.0.400 or a compatible .NET 10 patch SDK
 dotnet restore
 dotnet build --configuration Release
 dotnet test --configuration Release

@@ -16,7 +16,7 @@ RUN npm run build
 # Output: wwwroot artifacts will be in ../wwwroot (parent directory)
 
 # Stage 2: Build backend with .NET SDK
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS backend-build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.400 AS backend-build
 WORKDIR /src
 
 # Pin the same SDK used locally/CI before restore, then cache the project graph.
