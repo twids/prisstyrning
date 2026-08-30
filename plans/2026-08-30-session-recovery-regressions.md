@@ -30,7 +30,7 @@ Legacyalgoritm, ONECTA-payloads, jobbtider, kontoansvar, HA-credentials, databas
 - Ingen omedelbar omdeploy behövs för dessa lokala ändringar. Före eventuell publicering/merge behövs CI för den nya revisionen; de sju gröna checkarna för produktionsrevision `233afa4` ska inte räknas som CI för denna kod.
 - Fortsätt ordinarie read-only-uppföljning av legacykörningen 01:35 Europe/Stockholm. Den tidigare accepterade engångsskrivningen är dokumenterad, men en fysisk DHW-cykel är fortfarande inte verifierad här.
 - Fullt autentiserat kontoflöde och kontobunden HA-konfiguration kräver verifierat kontoansvar. Äldre auto-apply-record utan token lämnas orört tills detta är utrett.
-- Fortsatt lokal säkerhetsverifiering kan bygga en isolerad HTTP-testvärd för API-session/behörighet/CSRF utan att starta produktionsmigreringar eller värmearbetare. De befintliga överhoppade HTTP-testerna är en kvarvarande täckningslucka, inte driftgodkännande.
+- Uppföljning 2026-08-31: den isolerade HTTP-testvärden för API-session/behörighet/CSRF är nu implementerad utan produktionsmigreringar eller värmearbetare. Tre tomma admin-HTTP-undantag har ersatts; sex andra backendundantag återstår. Se [den nya lokala verifieringen](2026-08-31-account-http-verification.md) för hittade fel, rättningar, UI-arbete och testresultat. Detta är fortfarande inte driftgodkännande.
 - Verkliga Shadow-/komfort-/modell-/DHW-grindar återstår enligt huvudplanen. Ingen aktiv LWT eller gemensam DHW-writer har aktiverats.
 
 Huvudplanen och driftverifieringen i kodrepositoryt är uppdaterade. De gemensamma dokumenten under Dokument är fortfarande blockerade av Kontrollerad mappåtkomst; den tidigare färdiga patchen ligger kvar. Skyddet har inte ändrats eller kringgåtts.

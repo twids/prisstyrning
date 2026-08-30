@@ -69,23 +69,7 @@ builder.Services.AddDataProtection()
 builder.Services.Configure<CredentialEncryptionOptions>(
     builder.Configuration.GetSection(CredentialEncryptionOptions.SectionName));
 builder.Services.AddSingleton<IAccountSecretProtector, AccountSecretProtector>();
-builder.Services.AddScoped<AccountSessionService>();
-builder.Services.AddScoped<AccountCookieEvents>();
-builder.Services.AddAuthentication(AccountAuthentication.Scheme)
-    .AddCookie(AccountAuthentication.Scheme, options =>
-    {
-        options.Cookie.Name = "__Host-prisstyrning-session";
-        options.Cookie.HttpOnly = true;
-        options.Cookie.SameSite = SameSiteMode.Lax;
-        options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
-            ? CookieSecurePolicy.SameAsRequest
-            : CookieSecurePolicy.Always;
-        options.Cookie.Path = "/";
-        options.ExpireTimeSpan = AccountAuthentication.InactivityTimeout;
-        options.SlidingExpiration = true;
-        options.EventsType = typeof(AccountCookieEvents);
-    });
-builder.Services.AddAuthorization();
+builder.Services.AddAccountSessions(builder.Environment.IsDevelopment());
 builder.Services.AddAccountAntiforgery(builder.Environment.IsDevelopment());
 
 // PostgreSQL + EF Core
@@ -226,29 +210,7 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Rate limiting for admin login endpoint (partitioned per remote IP)
-builder.Services.AddRateLimiter(options =>
-{
-    options.AddPolicy("admin-login", httpContext =>
-    {
-        var remoteIp = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-
-        return RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: remoteIp,
-            factory: _ => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = 5,
-                Window = TimeSpan.FromMinutes(1),
-                QueueLimit = 0
-            });
-    });
-    options.OnRejected = async (context, cancellationToken) =>
-    {
-        context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
-        await context.HttpContext.Response.WriteAsJsonAsync(
-            new { error = "Too many attempts. Please try again later." }, cancellationToken);
-    };
-});
+builder.Services.AddAdminLoginRateLimiting();
 
 var app = builder.Build();
 
@@ -575,47 +537,7 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 // Rate limiter middleware
 app.UseRateLimiter();
 
-// Fail closed for account APIs. Static login assets and the OAuth entry/callback
-// remain public; no anonymous browser identity is manufactured.
-app.Use(async (ctx, next) =>
-{
-    var path = ctx.Request.Path;
-    var publicApi = path.Equals("/api/session", StringComparison.OrdinalIgnoreCase);
-    var publicOAuth = path.Equals("/auth/daikin/start", StringComparison.OrdinalIgnoreCase) ||
-                      path.Equals("/auth/daikin/callback", StringComparison.OrdinalIgnoreCase);
-    if ((path.StartsWithSegments("/api") && !publicApi || path.StartsWithSegments("/auth/daikin") && !publicOAuth) &&
-        ctx.User.Identity?.IsAuthenticated != true)
-    {
-        await Results.Json(new { error = "Authentication required." }, statusCode: StatusCodes.Status401Unauthorized)
-            .ExecuteAsync(ctx);
-        return;
-    }
-    await next();
-});
-
-// Double-submit antiforgery protection for every authenticated state-changing API call.
-app.Use(async (ctx, next) =>
-{
-    if (ctx.User.Identity?.IsAuthenticated == true &&
-        (HttpMethods.IsPost(ctx.Request.Method) || HttpMethods.IsPut(ctx.Request.Method) ||
-         HttpMethods.IsPatch(ctx.Request.Method) || HttpMethods.IsDelete(ctx.Request.Method)))
-    {
-        if (ctx.Request.Path.StartsWithSegments("/api") || ctx.Request.Path.StartsWithSegments("/auth/daikin"))
-        {
-            try
-            {
-                await ctx.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(ctx);
-            }
-            catch (AntiforgeryValidationException)
-            {
-                await Results.Json(new { error = "Invalid or missing CSRF token." }, statusCode: StatusCodes.Status400BadRequest)
-                    .ExecuteAsync(ctx);
-                return;
-            }
-        }
-    }
-    await next();
-});
+app.UseAccountApiSecurity();
 
 app.MapGet("/health/live", () => Results.Ok(new { status = "live" }));
 app.MapGet("/health/ready", async (PrisstyrningDbContext db, CancellationToken cancellationToken) =>
@@ -635,27 +557,7 @@ app.MapGet("/health/ready", async (PrisstyrningDbContext db, CancellationToken c
     }
 });
 
-app.MapGet("/api/session", (HttpContext context, IAntiforgery antiforgery, IConfiguration configuration) =>
-{
-    var tokens = antiforgery.GetAndStoreTokens(context);
-    var userId = AccountAuthentication.UserId(context.User);
-    return Results.Ok(new
-    {
-        authenticated = userId is not null,
-        userId,
-        isAdmin = userId is not null && AdminService.IsAdmin(configuration, userId),
-        csrfToken = tokens.RequestToken
-    });
-});
-
-app.MapPost("/api/session/logout", async (
-    HttpContext context,
-    AccountSessionService sessions,
-    CancellationToken cancellationToken) =>
-{
-    await sessions.SignOutAsync(context, cancellationToken);
-    return Results.NoContent();
-}).RequireAuthorization();
+app.MapAccountSessionEndpoints();
 
 string? GetUserId(HttpContext c)
 {
@@ -1019,210 +921,9 @@ scheduleGroup.MapPost("/comfort", async (HttpContext ctx, BatchRunner batchRunne
     }
 });
 
-// Admin group
-var adminGroup = app.MapGroup("/api/admin").WithTags("Admin");
+app.MapAdminEndpoints();
 
-bool IsAdminRequest(HttpContext ctx, IConfiguration cfg)
-{
-    var userId = GetUserId(ctx);
-    var password = ctx.Request.Headers["X-Admin-Password"].FirstOrDefault();
-    var (isAdmin, _) = AdminService.CheckAdminAccess(cfg, userId, password);
-    return isAdmin;
-}
-
-static bool IsValidUserId(string? userId)
-{
-    if (string.IsNullOrWhiteSpace(userId) || userId.Length > 100)
-        return false;
-    return userId.All(c => char.IsLetterOrDigit(c) || c == '-' || c == '_');
-}
-
-adminGroup.MapGet("/status", (IConfiguration cfg, HttpContext c) =>
-{
-    var userId = GetUserId(c);
-    var isAdmin = IsAdminRequest(c, cfg);
-    return Results.Json(new { isAdmin, userId });
-});
-
-adminGroup.MapPost("/login", async (IConfiguration cfg, HttpContext c) =>
-{
-    var userId = GetUserId(c);
-    var configuredPassword = cfg["Admin:Password"];
-    if (string.IsNullOrEmpty(configuredPassword))
-        return Results.Json(new { error = "No admin password configured" }, statusCode: 403);
-
-    var password = c.Request.Headers["X-Admin-Password"].FirstOrDefault();
-    if (string.IsNullOrEmpty(password) || !AdminService.SecureCompare(password, configuredPassword))
-        return Results.Json(new { error = "Invalid admin password" }, statusCode: 401);
-
-    if (!string.IsNullOrEmpty(userId))
-        await AdminService.GrantAdmin(cfg, userId);
-
-    return Results.Json(new { granted = true, userId });
-}).RequireRateLimiting("admin-login");
-
-adminGroup.MapGet("/users", async (IConfiguration cfg, HttpContext c, UserSettingsRepository settingsRepo, DaikinTokenRepository tokenRepo, ScheduleHistoryRepository historyRepo) =>
-{
-    if (!IsAdminRequest(c, cfg))
-        return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
-
-    var currentUserId = GetUserId(c);
-
-    // Get all known user IDs from DB (tokens + settings + history)
-    var tokenUserIds = await tokenRepo.GetAllUserIdsAsync();
-    var userIds = new HashSet<string>(tokenUserIds);
-
-    var adminUserIds = AdminService.GetAdminUserIds(cfg);
-    var hangfireUserIds = AdminService.GetHangfireUserIds(cfg);
-    var users = new List<object>();
-
-    foreach (var uid in userIds)
-    {
-        var settings = settingsRepo.LoadScheduleSettings(uid);
-        var zone = settingsRepo.GetUserZone(uid);
-        var token = await tokenRepo.LoadAsync(uid);
-        var daikinAuthorized = token != null;
-        string? daikinExpiresAtUtc = token?.ExpiresAtUtc.ToString("o");
-        string? daikinSubject = token?.DaikinSubject;
-
-        var historyCount = await historyRepo.CountAsync(uid);
-        var hasScheduleHistory = historyCount > 0;
-        int? scheduleCount = hasScheduleHistory ? historyCount : null;
-        string? lastScheduleDate = null;
-        if (hasScheduleHistory)
-        {
-            var entries = await historyRepo.LoadAsync(uid);
-            lastScheduleDate = entries.FirstOrDefault()?.Timestamp.ToString("o");
-        }
-
-        users.Add(new
-        {
-            userId = uid,
-            settings = new { settings.ComfortHours, settings.TurnOffPercentile, settings.MaxComfortGapHours },
-            zone,
-            daikinAuthorized,
-            daikinExpiresAtUtc,
-            daikinSubject,
-            hasScheduleHistory,
-            scheduleCount,
-            lastScheduleDate,
-            isAdmin = adminUserIds.Contains(uid),
-            hasHangfireAccess = hangfireUserIds.Contains(uid),
-            isCurrentUser = uid == currentUserId
-        });
-    }
-
-    return Results.Json(new { users }, new JsonSerializerOptions { PropertyNamingPolicy = null });
-});
-
-adminGroup.MapPost("/users/{userId}/grant", async (IConfiguration cfg, HttpContext c, string userId) =>
-{
-    if (!IsAdminRequest(c, cfg))
-        return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
-
-    if (!IsValidUserId(userId))
-        return Results.Json(new { error = "Invalid user ID" }, statusCode: 400);
-
-    await AdminService.GrantAdmin(cfg, userId);
-    return Results.Json(new { granted = true, userId });
-});
-
-adminGroup.MapDelete("/users/{userId}/grant", async (IConfiguration cfg, HttpContext c, string userId) =>
-{
-    if (!IsAdminRequest(c, cfg))
-        return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
-
-    if (!IsValidUserId(userId))
-        return Results.Json(new { error = "Invalid user ID" }, statusCode: 400);
-
-    var currentUserId = GetUserId(c);
-    if (userId == currentUserId)
-        return Results.Json(new { error = "Cannot revoke your own admin access" }, statusCode: 400);
-
-    await AdminService.RevokeAdmin(cfg, userId);
-    return Results.Json(new { revoked = true, userId });
-});
-
-adminGroup.MapPost("/users/{userId}/hangfire", async (IConfiguration cfg, HttpContext c, string userId) =>
-{
-    if (!IsAdminRequest(c, cfg))
-        return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
-
-    if (!IsValidUserId(userId))
-        return Results.Json(new { error = "Invalid user ID" }, statusCode: 400);
-
-    await AdminService.GrantHangfireAccess(cfg, userId);
-    return Results.Json(new { granted = true, userId });
-});
-
-adminGroup.MapDelete("/users/{userId}/hangfire", async (IConfiguration cfg, HttpContext c, string userId) =>
-{
-    if (!IsAdminRequest(c, cfg))
-        return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
-
-    if (!IsValidUserId(userId))
-        return Results.Json(new { error = "Invalid user ID" }, statusCode: 400);
-
-    await AdminService.RevokeHangfireAccess(cfg, userId);
-    return Results.Json(new { revoked = true, userId });
-});
-
-adminGroup.MapDelete("/users/{userId}", async (IConfiguration cfg, HttpContext c, string userId, DaikinTokenRepository tokenRepo, ScheduleHistoryRepository historyRepo) =>
-{
-    if (!IsAdminRequest(c, cfg))
-        return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
-
-    if (!IsValidUserId(userId))
-        return Results.Json(new { error = "Invalid user ID" }, statusCode: 400);
-
-    var currentUserId = GetUserId(c);
-    if (userId == currentUserId)
-        return Results.Json(new { error = "Cannot delete your own user" }, statusCode: 400);
-
-    var deleted = false;
-    var warnings = new List<string>();
-
-    // Delete tokens from database
-    try
-    {
-        await tokenRepo.DeleteAsync(userId);
-        deleted = true;
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"[Admin] Failed to delete tokens for user {userId}: {ex.Message}");
-        warnings.Add("Failed to delete tokens");
-    }
-
-    // Delete schedule history from database
-    try
-    {
-        var historyDeleted = await historyRepo.DeleteAllOlderThanAsync(DateTimeOffset.MinValue);
-        deleted = true;
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"[Admin] Failed to delete schedule history for user {userId}: {ex.Message}");
-        warnings.Add("Failed to delete schedule history");
-    }
-
-    // Remove from admin.json if present
-    try
-    {
-        await AdminService.RevokeAdmin(cfg, userId);
-        await AdminService.RevokeHangfireAccess(cfg, userId);
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"[Admin] Failed to update admin.json for user {userId}: {ex.Message}");
-        warnings.Add("Failed to update admin configuration");
-    }
-
-    if (!deleted)
-        return Results.Json(new { error = "User not found" }, statusCode: 404);
-
-    return Results.Json(new { deleted = true, userId, warnings });
-});
+bool IsAdminRequest(HttpContext ctx, IConfiguration cfg) => AdminEndpoints.IsAdminRequest(ctx, cfg);
 
 // Daikin data group
 var daikinGroup = app.MapGroup("/api/daikin").WithTags("Daikin");

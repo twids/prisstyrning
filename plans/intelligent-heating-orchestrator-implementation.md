@@ -2,7 +2,7 @@
 
 Status: the first .NET 10 release is deployed in the existing Dockhand `daikin` stack as revision `233afa4` (2026-08-30). Production remains `ControlMode=Legacy` / `DhwWriter=Legacy`; LWT/FullActive are disabled. Health, anonymous access protection and a real accepted legacy ONECTA write are verified in [the production record](2026-08-30-production-verification.md). Intelligent control is not operationally approved.
 
-Post-deployment source-only work is recorded in [session recovery and proxy regressions](2026-08-30-session-recovery-regressions.md). Those changes have not been deployed.
+Post-deployment source-only work is recorded in [session recovery and proxy regressions](2026-08-30-session-recovery-regressions.md) and [account HTTP and logout verification](2026-08-31-account-http-verification.md). Those changes have not been deployed.
 
 ## Delivered
 
@@ -19,6 +19,8 @@ Post-deployment source-only work is recorded in [session recovery and proxy regr
 - Sequential `Legacy` → `Shadow` → `LwtActive` → `FullActive` mode service, measured readiness gates, installation ownership, expiring database-backed DHW write exclusion, atomic writer handover and visible rollback.
 - A signed, database-backed session reuses the server-verified Daikin identity for legacy and thermal functionality. All account APIs require that session, all authenticated mutations require antiforgery validation, and administrative operations still require the admin role.
 - The login gate offers an accessible, read-only retry after a failed session check. It hides cached installation views while verification is failing and never renders raw proxy/identity-provider error responses. This follow-up is locally verified, not yet deployed.
+- Shared production/test HTTP registrations verify signed sessions, revocation, account/API isolation, CSRF and admin authorization without starting control workers. Account APIs return explicit 401/403 instead of cookie-login redirects; admin discovery includes credentialless existing records without modifying them. These fixes are locally verified, not yet deployed.
+- Failed logout is clearly reported without revealing raw server errors or falsely claiming success. Responsive navigation has valid list markup, distinct landmark names and non-overlapping mobile links; logout/retry and keyboard navigation are covered locally, not yet deployed.
 - Swedish responsive UI for Overview, Plan, Rooms, Hot water, Model, Events and Settings while keeping the legacy grid/admin pages.
 - Vitest/React Testing Library/accessibility tests and Playwright critical-flow coverage in the PR gate.
 - Digest-locked EMHASS reference topology in `docker-compose.thermal.example.yml` with a private internal network and persistent `/share` and `/data`.
@@ -26,11 +28,12 @@ Post-deployment source-only work is recorded in [session recovery and proxy regr
 ## Verified locally
 
 - Existing baseline before implementation: 425 backend tests passed, 9 skipped.
-- Latest follow-up on 2026-08-30: Release build succeeded; the full .NET 10 backend suite passed 532 tests, with 9 existing skips and 0 failures. The deployed PR #120 previously passed 521 tests; the additional 11 tests are source-only proxy/antiforgery integration coverage.
+- Latest follow-up on 2026-08-31: Release build succeeded; the full .NET 10 backend suite passed 566 tests, with 6 existing skips and 0 failures. The previous source-only follow-up passed 532/9; this work adds 31 HTTP test cases and replaces three skipped admin placeholders with real tests. The deployed PR #120 previously passed 521/9; none of the follow-up changes are deployed.
 - Production forwarding and antiforgery registrations are tested together using the real middleware and ephemeral test keys: trusted IPv4/mapped IPv6, untrusted headers, single-hop processing, ignored host spoofing, Secure/HttpOnly cookies, and rejection of missing/invalid/cross-account CSRF tokens. These tests do not start the full application or replace authenticated production acceptance.
+- An isolated TestServer uses the real account session/admin handlers, cookie validation, API/CSRF boundary and rate limiter. It verifies logout revocation/replay, stale/revoked/forged identity rejection, every mutation method and administrator access. EF InMemory and synthetic identities do not prove live PostgreSQL behavior or Daikin OAuth login; no control services or production migrations are started.
 - Focused thermal unit/integration-contract suite: 75 passed and 0 failed, including 92/96/100-quarter DST days, every allowed ten-minute DHW start boundary, incomplete-price fallback, empirical backup-heater phases, delayed/missed DHW runs, EMHASS CSV validation/mutual exclusion/hard timeout/tariff behavior, confirmed P1P2 writes and every LWT safe-zero trigger.
-- Frontend: 14 Vitest component, interaction and accessibility tests passed in the latest follow-up.
-- Playwright: 8 applicable desktop/mobile flows passed locally (6 existing duplicate-project exclusions), including the unauthenticated login boundary, sessions-error retry without control calls, readiness blocking, dirty-state preview, history import and mobile overflow/status navigation. The retry view's desktop/mobile screenshots were also visually inspected.
+- Frontend: 17 Vitest component, interaction and accessibility tests passed in the latest follow-up.
+- Playwright: 10 applicable desktop/mobile flows passed locally (6 existing duplicate-project exclusions), including the unauthenticated login boundary, session-error retry without control calls, failed/successful logout, cached-view exclusion after logout/back, readiness blocking, dirty-state preview, history import and mobile overflow/keyboard navigation. Retry/logout desktop/mobile screenshots were visually inspected.
 - TypeScript/Vite production build passed in the latest follow-up.
 
 Earlier verification, retained for traceability (not all checks were rerun in the follow-up):
@@ -45,5 +48,7 @@ Earlier verification, retained for traceability (not all checks were rerun in th
 ## Operational acceptance still required
 
 Code verification does not satisfy the real-house gates. The initial deployment is verified in `Legacy` with existing ONECTA settings preserved. The user still needs to complete the authenticated account UI check and configure the account-owned HA connection before collection/model validation can begin. Continue read-only observation of ordinary legacy runs, then collect/validate the required shadow period, weather-curve days, model errors, DHW cycles and hygiene cycle through the UI. `FullActive` remains blocked until readiness is green.
+
+Bounded source follow-ups remain: preserve informational recovery severity in the Rooms view instead of displaying every non-critical event as a warning; separately verify the old admin deletion lifecycle before treating it as complete. Neither finding authorizes changes to existing production accounts. Six pre-existing backend test exclusions and real authenticated production acceptance remain open; the new HTTP test host is not full application-startup coverage.
 
 Actual container/network/rollback facts are recorded in the production record. Windows Controlled Folder Access blocks changes to the shared infrastructure project's documents. A prepared patch is saved as `plans/2026-08-30-shared-infrastructure-update.patch`; the shared files remain unchanged and the protection must not be disabled or bypassed.

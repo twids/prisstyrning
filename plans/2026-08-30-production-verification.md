@@ -54,6 +54,14 @@ De nio skipparna är befintliga tester som kräver nätverk eller saknar full HT
 - Den driftsatta PR #120:s sju checkar bekräftades fortsatt gröna. De avser den driftsatta revisionen, inte den nya lokala uppföljningen.
 - Ingen deploy, ny testsändning, kontoändring eller aktivering gjordes. Lokala förbättringar och deras separata tester finns i [uppföljningsrapporten](2026-08-30-session-recovery-regressions.md).
 
+### Read-only-uppföljning 21:41 UTC / 23:41 CEST
+
+- App, PostgreSQL och EMHASS kör fortsatt med noll omstarter och samma digests. Ingen deploy eller ändring av stacken gjordes.
+- `/health/live`, `/health/ready` och anonym `/api/session` gav 200; sessionen var oautentiserad med utfärdad CSRF-token. `/api/thermal/status` gav 401. Inga token- eller cookievärden skrevs ut.
+- Databasen hade fortsatt en thermal-konfiguration i `Legacy/Legacy` och noll thermal-styrkommandon.
+- Ingen senare `ScheduleUpdate`-/`apply OK`-post fanns i de kontrollerade loggarna sedan 20:42 UTC. Ordinarie 01:35-körning var fortfarande framtida; ingen extra testsändning gjordes.
+- Fortsatt lokal implementation gäller HTTP-säkerhet, adminlistning, utloggningsåterkoppling och navigation. Den separata [kodverifieringen 2026-08-31](2026-08-31-account-http-verification.md) redovisar 566 godkända backendtester, 6 kvarvarande undantag, 17 UI-tester och 10 tillämpliga E2E-flöden. Dessa ändringar är inte driftsatta och resultaten ska inte sammanblandas med produktionens verifiering ovan.
+
 ## Rollback
 
 Vanlig rollback görs i samma Dockhand-stack utan databasåterläsning. Behåll de additiva tabellerna och krypteringsnyckeln.

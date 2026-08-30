@@ -65,8 +65,15 @@ test('HA-historikimport förklarar bevarande och visar resultat', async ({ page 
 test('mobilvyn har ingen sidledes sidscroll och behåller statusnavigering', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'mobile', 'Detta är en mobil kontroll.');
   await page.goto('/');
-  await expect(page.getByRole('navigation', { name: 'Huvudnavigation' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Huvudnavigation, kompakt' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Styrsystemets status' })).toBeVisible();
   const dimensions = await page.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }));
   expect(dimensions.scroll).toBe(dimensions.client);
+  const navigation = page.getByRole('navigation', { name: 'Huvudnavigation, kompakt' });
+  const items = await navigation.getByRole('link').evaluateAll(links => links.map(link => ({
+    label: link.textContent, client: link.clientWidth, scroll: link.scrollWidth,
+  })));
+  for (const item of items) expect(item.scroll, `Navigationstexten ${item.label} ska rymmas i sin länk`).toBeLessThanOrEqual(item.client + 1);
+  await navigation.getByRole('link', { name: 'Inställningar', exact: true }).focus();
+  await expect(navigation.getByRole('link', { name: 'Inställningar', exact: true })).toBeInViewport();
 });
