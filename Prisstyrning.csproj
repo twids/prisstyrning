@@ -38,7 +38,7 @@
     <PrivateAssets>all</PrivateAssets>
   </PackageReference>
   <Content Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-  <Content Include="appsettings.development.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  <Content Include="appsettings.development.json" Condition="Exists('appsettings.development.json')" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
