@@ -145,6 +145,46 @@ public class LwtRegulatorTests
     }
 
     [Fact]
+    public void Evaluate_InvalidPlanEvidenceImmediatelyRequestsSafeZero()
+    {
+        var decision = new LwtRegulator().Evaluate(ValidInput() with
+        {
+            SafetyInvalidReason = "Planens verifierade underlag gäller inte längre.",
+            CurrentDeviationC = 1
+        });
+
+        Assert.True(decision.ShouldWrite);
+        Assert.True(decision.IsFallback);
+        Assert.Equal(0, decision.RequestedDeviationC);
+        Assert.Contains("underlag", decision.Reason);
+    }
+
+    [Theory]
+    [InlineData("current")]
+    [InlineData("planned")]
+    [InlineData("integral")]
+    [InlineData("limit")]
+    public void Evaluate_NonFiniteSafetyInputImmediatelyRequestsSafeZero(string fault)
+    {
+        var input = ValidInput();
+        input = fault switch
+        {
+            "current" => input with { CurrentDeviationC = double.NaN },
+            "planned" => input with { PlannedDeviationC = double.PositiveInfinity },
+            "integral" => input with { Integral = double.NegativeInfinity },
+            "limit" => input with { DeviationLimitC = double.NaN },
+            _ => throw new InvalidOperationException()
+        };
+
+        var decision = new LwtRegulator().Evaluate(input);
+
+        Assert.Equal(fault == "current", decision.ShouldWrite);
+        Assert.True(decision.IsFallback);
+        Assert.Equal(0, decision.RequestedDeviationC);
+        Assert.Contains("säkerhetsunderlag", decision.Reason);
+    }
+
+    [Fact]
     public void Evaluate_P1P2FailureRequestsSafeZero()
     {
         var decision = new LwtRegulator().Evaluate(ValidInput() with

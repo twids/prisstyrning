@@ -79,6 +79,48 @@ public sealed class JointPlanModelConsumptionTests
     }
 
     [Theory]
+    [InlineData("partial-horizon")]
+    [InlineData("wrong-index")]
+    [InlineData("duplicate-index")]
+    [InlineData("negative-power")]
+    [InlineData("excess-power")]
+    [InlineData("nan-power")]
+    [InlineData("missing-temperature")]
+    [InlineData("nan-temperature")]
+    [InlineData("below-comfort")]
+    [InlineData("above-comfort")]
+    [InlineData("nan-unit-cost")]
+    [InlineData("slow-solver")]
+    [InlineData("wrong-objective")]
+    public async Task Replan_RejectsInvalidSolverResultBeforePlanOrDhwPersistence(string fault)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        fixture.Dispatcher.ResultFactory = request =>
+        {
+            var steps = request.LoadCostForecast.Select((price, index) =>
+                new EmhassOptimizationStep(index, 1200, 21, (double)price)).ToList();
+            if (fault == "partial-horizon") steps.RemoveAt(steps.Count - 1);
+            if (fault == "wrong-index") steps[0] = steps[0] with { Index = 1 };
+            if (fault == "duplicate-index") steps[1] = steps[1] with { Index = 0 };
+            if (fault == "negative-power") steps[0] = steps[0] with { SpaceHeatingPowerW = -1 };
+            if (fault == "excess-power") steps[0] = steps[0] with { SpaceHeatingPowerW = 2600 };
+            if (fault == "nan-power") steps[0] = steps[0] with { SpaceHeatingPowerW = double.NaN };
+            if (fault == "missing-temperature") steps[0] = steps[0] with { PredictedTemperatureC = null };
+            if (fault == "nan-temperature") steps[0] = steps[0] with { PredictedTemperatureC = double.NaN };
+            if (fault == "below-comfort") steps[0] = steps[0] with { PredictedTemperatureC = 20.98 };
+            if (fault == "above-comfort") steps[0] = steps[0] with { PredictedTemperatureC = 22.22 };
+            if (fault == "nan-unit-cost") steps[0] = steps[0] with { UnitCost = double.NaN };
+            var objective = ExpectedObjective(request, steps);
+            return new(steps, fault == "slow-solver" ? 45_001 : 100, fault == "wrong-objective" ? objective + 1 : objective);
+        };
+
+        await Assert.ThrowsAsync<ThermalPlanningEvidenceException>(() => fixture.ReplanAsync());
+
+        Assert.Equal(1, fixture.Dispatcher.Calls);
+        await fixture.AssertNoPlansOrCommandsAsync();
+    }
+
+    [Theory]
     [InlineData("deactivated-model")]
     [InlineData("changed-metrics")]
     [InlineData("changed-settings")]
@@ -140,6 +182,24 @@ public sealed class JointPlanModelConsumptionTests
             Assert.Equal("Warning", entry.Severity);
             Assert.Contains("COP-modellen behöver tränas om", entry.Message);
             Assert.Contains("60 minuter", entry.Message);
+        });
+        await fixture.AssertNoPlansOrCommandsAsync();
+    }
+
+    [Fact]
+    public async Task ComfortBreach_IsRecordedAsAnActionRequiredShadowBlocker()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+
+        await fixture.Coordinator.RecordPlanningFailureAsync(
+            "account-a", EmhassOptimizationValidation.ComfortBreachReason, CancellationToken.None, evidenceFailure: true);
+
+        await fixture.ChangeAsync(async db =>
+        {
+            var entry = await db.ThermalEvents.SingleAsync();
+            Assert.Equal("ActionRequired", entry.Severity);
+            Assert.Equal("SimulatedComfortBreach", entry.Category);
+            Assert.Contains("ingen ny plan", entry.Message);
         });
         await fixture.AssertNoPlansOrCommandsAsync();
     }
@@ -221,6 +281,7 @@ public sealed class JointPlanModelConsumptionTests
         internal int Calls { get; private set; }
         internal EmhassOptimizationRequest? Request { get; private set; }
         internal Func<Task>? BeforeReturn { get; set; }
+        internal Func<EmhassOptimizationRequest, EmhassOptimizationResult>? ResultFactory { get; set; }
 
         public async Task<EmhassOptimizationResult> EnqueueAndWaitAsync(string userId, string reason, EmhassOptimizationRequest request,
             int priority = 0, CancellationToken cancellationToken = default)
@@ -228,7 +289,9 @@ public sealed class JointPlanModelConsumptionTests
             Calls++;
             Request = request;
             if (BeforeReturn is not null) await BeforeReturn();
-            return new(request.LoadCostForecast.Select((price, index) => new EmhassOptimizationStep(index, 1200, 21, (double)price)).ToArray(), 100, 1m);
+            if (ResultFactory is not null) return ResultFactory(request);
+            var steps = request.LoadCostForecast.Select((price, index) => new EmhassOptimizationStep(index, 1200, 21, (double)price)).ToArray();
+            return new(steps, 100, ExpectedObjective(request, steps));
         }
     }
 
@@ -236,11 +299,18 @@ public sealed class JointPlanModelConsumptionTests
     {
         internal int Calls { get; private set; }
         internal Func<Task>? BeforeReturn { get; set; }
+        internal Func<EmhassOptimizationRequest, EmhassOptimizationResult>? ResultFactory { get; set; }
         public async Task<EmhassOptimizationResult> OptimizeAsync(EmhassOptimizationRequest request, CancellationToken cancellationToken = default)
         {
             Calls++;
             if (BeforeReturn is not null) await BeforeReturn();
-            return new(request.LoadCostForecast.Select((price, index) => new EmhassOptimizationStep(index, 1200, 21, (double)price)).ToArray(), 100, 1m);
+            if (ResultFactory is not null) return ResultFactory(request);
+            var steps = request.LoadCostForecast.Select((price, index) => new EmhassOptimizationStep(index, 1200, 21, (double)price)).ToArray();
+            return new(steps, 100, ExpectedObjective(request, steps));
         }
     }
+
+    internal static decimal ExpectedObjective(EmhassOptimizationRequest request, IEnumerable<EmhassOptimizationStep> steps) =>
+        decimal.Round(steps.Where(x => x.Index >= 0 && x.Index < request.LoadCostForecast.Count && double.IsFinite(x.SpaceHeatingPowerW))
+            .Sum(step => (decimal)(step.SpaceHeatingPowerW / 1000d * 15d / 60d) * request.LoadCostForecast[step.Index]), 4);
 }

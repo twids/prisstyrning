@@ -49,6 +49,7 @@ public sealed record ThermalOptimizationQueueSnapshot(
 
 public sealed class ThermalOptimizationQueue : IEmhassOptimizationDispatcher
 {
+    private const string EvidenceErrorPrefix = "MODEL_EVIDENCE:";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ThermalOptimizationQueueOptions _options;
@@ -224,13 +225,14 @@ public sealed class ThermalOptimizationQueue : IEmhassOptimizationDispatcher
     internal async Task FailAsync(
         ClaimedThermalOptimizationJob claimed,
         string error,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool evidenceFailure = false)
     {
         await UpdateClaimedAsync(claimed, job =>
         {
             var now = DateTimeOffset.UtcNow;
             job.Status = ThermalOptimizationJobStatuses.Failed;
-            job.Error = Limit(error, 1000);
+            job.Error = Limit(evidenceFailure ? EvidenceErrorPrefix + error : error, 1000);
             job.CompletedAtUtc = now;
             job.UpdatedAtUtc = now;
         }, cancellationToken);
@@ -279,7 +281,11 @@ public sealed class ThermalOptimizationQueue : IEmhassOptimizationDispatcher
                     return JsonSerializer.Deserialize<EmhassOptimizationResult>(job.ResultJson ?? string.Empty, JsonOptions)
                            ?? throw new InvalidOperationException("Optimization job completed without a valid result.");
                 if (job.Status == ThermalOptimizationJobStatuses.Failed)
+                {
+                    if (job.Error?.StartsWith(EvidenceErrorPrefix, StringComparison.Ordinal) == true)
+                        throw new ThermalPlanningEvidenceException(job.Error[EvidenceErrorPrefix.Length..]);
                     throw new InvalidOperationException(job.Error ?? "EMHASS optimization failed.");
+                }
                 await Task.Delay(delay, timeout.Token);
             }
         }

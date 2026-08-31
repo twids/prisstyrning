@@ -102,6 +102,27 @@ public sealed class EmhassModelConsumptionTests
         });
     }
 
+    [Fact]
+    public async Task Worker_InvalidSolverResultNeverCompletesPersistentJob()
+    {
+        await using var fixture = await JointPlanModelConsumptionTests.Fixture.CreateAsync();
+        await fixture.ReplanAsync();
+        var queue = CreateQueue(fixture);
+        var request = fixture.Dispatcher.Request!;
+        var claim = await EnqueueAsync(queue, request);
+        using var worker = CreateWorker(fixture, queue);
+        fixture.Solver.ResultFactory = value =>
+        {
+            var steps = value.LoadCostForecast.Select((price, index) => new EmhassOptimizationStep(index, 1200, 21, (double)price)).SkipLast(1).ToArray();
+            return new(steps, 100, JointPlanModelConsumptionTests.ExpectedObjective(value, steps));
+        };
+
+        await Assert.ThrowsAsync<ThermalPlanningEvidenceException>(() => worker.ProcessClaimAsync(claim, CancellationToken.None));
+
+        Assert.Equal(1, fixture.Solver.Calls);
+        await AssertNotCompletedAsync(fixture);
+    }
+
     private static Task AssertNotCompletedAsync(JointPlanModelConsumptionTests.Fixture fixture) => fixture.ChangeAsync(async db =>
     {
         var job = await db.ThermalOptimizationJobs.SingleAsync();

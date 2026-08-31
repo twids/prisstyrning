@@ -6,6 +6,7 @@ using Prisstyrning.Thermal.Control;
 using Prisstyrning.Thermal.Data;
 using Prisstyrning.Thermal.Domain;
 using Prisstyrning.Thermal.HomeAssistant;
+using Prisstyrning.Thermal.Optimization;
 
 namespace Prisstyrning.Thermal.Jobs;
 
@@ -64,49 +65,77 @@ public sealed class LwtControlWorker : BackgroundService
         var mode = ThermalEnumParser.ControlModeOrLegacy(site?.ControlMode);
         if (mode is not (ControlMode.LwtActive or ControlMode.FullActive)) return;
 
+        var now = DateTimeOffset.UtcNow;
+        ValidatedThermalPlan? validatedPlan = null;
+        string? invalidPlanReason = null;
+        try
+        {
+            validatedPlan = await ThermalPlanConsumption.ReadCurrentAsync(db, userId, now, cancellationToken);
+        }
+        catch (ThermalPlanningEvidenceException)
+        {
+            invalidPlanReason = "Planens verifierade underlag gäller inte längre; LWT återgår säkert till noll.";
+            _logger.LogWarning("LWT plan evidence is no longer valid for account {UserId}.", userId);
+        }
         var lease = scope.ServiceProvider.GetRequiredService<WriterLeaseService>();
         var leaseHeld = await lease.TryAcquireOrRenewAsync(userId, _leaseIdentity.Owner, TimeSpan.FromMinutes(15), cancellationToken);
         db.ChangeTracker.Clear();
         var state = await db.ThermalControlStates.SingleAsync(x => x.UserId == userId, cancellationToken);
         var telemetry = await db.ThermalTelemetrySamples.AsNoTracking()
             .Where(x => x.UserId == userId).OrderByDescending(x => x.TimestampUtc).FirstOrDefaultAsync(cancellationToken);
-        var plan = await db.ThermalPlans.AsNoTracking()
-            .Where(x => x.UserId == userId && x.ValidFromUtc <= DateTimeOffset.UtcNow && x.ValidUntilUtc > DateTimeOffset.UtcNow)
-            .OrderByDescending(x => x.CreatedAtUtc).FirstOrDefaultAsync(cancellationToken);
-        var planStep = plan is null ? null : await db.ThermalPlanSteps.AsNoTracking()
-            .Where(x => x.ThermalPlanId == plan.Id && x.StartUtc <= DateTimeOffset.UtcNow && x.EndUtc > DateTimeOffset.UtcNow)
-            .OrderByDescending(x => x.StartUtc).FirstOrDefaultAsync(cancellationToken);
+        var plan = validatedPlan?.Plan;
+        var planStep = validatedPlan?.CurrentStep;
         var rooms = await db.ThermalRoomConfigs.AsNoTracking().Where(x => x.UserId == userId && x.Enabled).ToListAsync(cancellationToken);
+        var entities = await db.ThermalEntityConfigs.AsNoTracking().Where(x => x.UserId == userId && x.Enabled).ToListAsync(cancellationToken);
         var haConnection = await db.HomeAssistantConnections.AsNoTracking()
             .SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
         var heatingDeviationEntityId = haConnection?.HeatingDeviationEntityId ?? string.Empty;
-        var (representativeError, criticalBelow) = RoomComfort(telemetry?.RoomTemperaturesJson, rooms, site);
+        var controlTelemetry = ThermalControlTelemetry.Assess(telemetry, rooms, entities, site, now);
         var writeFailureLatched = state.FallbackReason.StartsWith("P1P2-skrivningen", StringComparison.Ordinal);
         var p1p2Healthy = !writeFailureLatched &&
                           haConnection?.ControlEnabled == true &&
                           _cache.TryGet(userId, heatingDeviationEntityId, out var p1p2State) &&
                           p1p2State?.LastUpdatedUtc is { } p1p2Updated &&
-                          DateTimeOffset.UtcNow - p1p2Updated <= TimeSpan.FromMinutes(10) &&
+                          now - p1p2Updated <= TimeSpan.FromMinutes(10) &&
                           !p1p2State.State.Equals("unavailable", StringComparison.OrdinalIgnoreCase);
 
-        var decision = _regulator.Evaluate(new LwtRegulatorInput(
+        var input = new LwtRegulatorInput(
             mode,
-            DateTimeOffset.UtcNow,
+            now,
             telemetry?.TimestampUtc,
             plan?.CreatedAtUtc,
             planStep?.DesiredLwtDeviationC ?? 0,
-            representativeError,
-            criticalBelow,
-            telemetry?.DhwActive == true,
-            telemetry?.DefrostActive == true,
-            telemetry?.FlowLitresPerMinute,
+            controlTelemetry.RepresentativeTemperatureErrorC,
+            controlTelemetry.CriticalRoomBelowMinimum,
+            controlTelemetry.DhwActive,
+            controlTelemetry.DefrostActive,
+            controlTelemetry.FlowLitresPerMinute,
             leaseHeld,
             p1p2Healthy,
-            state.ManualOverrideUntilUtc > DateTimeOffset.UtcNow,
+            state.ManualOverrideUntilUtc > now,
             state.CurrentDeviationC,
             state.LastDeviationWriteUtc,
             state.PiIntegral,
-            site?.ActiveDeviationLimitC ?? 1));
+            site?.ActiveDeviationLimitC ?? 1,
+            invalidPlanReason ?? controlTelemetry.InvalidReason);
+        var decision = _regulator.Evaluate(input);
+        if (decision.ShouldWrite && !decision.IsFallback && validatedPlan is not null)
+        {
+            try
+            {
+                await ThermalPlanConsumption.EnsureStillCurrentAsync(
+                    db, userId, validatedPlan, DateTimeOffset.UtcNow, cancellationToken);
+            }
+            catch (ThermalPlanningEvidenceException)
+            {
+                decision = _regulator.Evaluate(input with
+                {
+                    PlanCreatedUtc = null,
+                    SafetyInvalidReason = "Planens verifierade underlag ändrades före skrivning; LWT återgår säkert till noll."
+                });
+                _logger.LogWarning("LWT plan evidence changed before writing for account {UserId}.", userId);
+            }
+        }
         state.PiIntegral = decision.NewIntegral;
 
         if (decision.ShouldWrite && leaseHeld)
@@ -177,29 +206,6 @@ public sealed class LwtControlWorker : BackgroundService
         }
 
         await db.SaveChangesAsync(cancellationToken);
-    }
-
-    private static (double Error, bool CriticalBelow) RoomComfort(
-        string? roomsJson,
-        IReadOnlyCollection<ThermalRoomConfig> rooms,
-        ThermalSiteConfig? site)
-    {
-        if (string.IsNullOrWhiteSpace(roomsJson) || rooms.Count == 0) return (0, false);
-        try
-        {
-            var values = JsonSerializer.Deserialize<Dictionary<string, double>>(roomsJson) ?? [];
-            var included = rooms.Where(x => x.Weight > 0 && values.ContainsKey(x.EntityId)).ToArray();
-            if (included.Length == 0) return (0, false);
-            var baseTarget = site?.BaseRoomTargetC ?? 21.5;
-            var error = included.Sum(x => (values[x.EntityId] - (baseTarget + x.TargetOffsetC)) * x.Weight) / included.Sum(x => x.Weight);
-            var lowerBand = site?.LowerComfortBandC ?? 0.5;
-            var critical = included.Any(x => x.IsCritical && values[x.EntityId] < baseTarget + x.TargetOffsetC - lowerBand);
-            return (error, critical);
-        }
-        catch (JsonException)
-        {
-            return (0, false);
-        }
     }
 
     private static ThermalEvent Event(string userId, string severity, string category, string message, double? deviation, string? detail = null) => new()

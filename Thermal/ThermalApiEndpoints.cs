@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Prisstyrning.Data;
+using Prisstyrning.Data.Entities;
 using Prisstyrning.Thermal.Control;
 using Prisstyrning.Thermal.Data;
 using Prisstyrning.Thermal.Domain;
@@ -321,16 +322,32 @@ public static class ThermalApiEndpoints
             .Where(x => x.UserId == userId && x.Enabled).ToListAsync(cancellationToken);
         var entities = await db.ThermalEntityConfigs.AsNoTracking()
             .Where(x => x.UserId == userId && x.Enabled).ToListAsync(cancellationToken);
-        var plan = await db.ThermalPlans.AsNoTracking().Where(x => x.UserId == userId)
-            .OrderByDescending(x => x.CreatedAtUtc).FirstOrDefaultAsync(cancellationToken);
         var now = DateTimeOffset.UtcNow;
+        ThermalPlan? plan;
+        var mode = ThermalEnumParser.ControlModeOrLegacy(site?.ControlMode);
+        if (mode is ControlMode.LwtActive or ControlMode.FullActive)
+        {
+            try
+            {
+                plan = (await ThermalPlanConsumption.ReadCurrentAsync(db, userId, now, cancellationToken))?.Plan;
+            }
+            catch (ThermalPlanningEvidenceException)
+            {
+                plan = null;
+            }
+        }
+        else
+        {
+            plan = await db.ThermalPlans.AsNoTracking().Where(x => x.UserId == userId)
+                .OrderByDescending(x => x.CreatedAtUtc).FirstOrDefaultAsync(cancellationToken);
+        }
         var quality = ThermalStatusQuality.Assess(latestTelemetry, rooms, entities, now, site?.UpdatedAtUtc);
         var next = plan is null ? null : await db.ThermalPlanSteps.AsNoTracking()
             .Where(x => x.ThermalPlanId == plan.Id && x.StartUtc > now && (x.DhwReserved || Math.Abs(x.DesiredLwtDeviationC - (state == null ? 0 : state.CurrentDeviationC)) >= 0.5))
             .OrderBy(x => x.StartUtc).Select(x => (DateTimeOffset?)x.StartUtc).FirstOrDefaultAsync(cancellationToken);
 
         return Results.Ok(new ThermalStatusDto(
-            ThermalEnumParser.ControlModeOrLegacy(site?.ControlMode),
+            mode,
             ThermalEnumParser.DhwWriterOrLegacy(site?.DhwWriter),
             latestTelemetry?.TimestampUtc,
             quality.Quality,

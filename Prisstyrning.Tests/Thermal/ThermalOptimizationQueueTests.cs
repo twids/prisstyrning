@@ -102,6 +102,20 @@ public sealed class ThermalOptimizationQueueTests
     }
 
     [Fact]
+    public async Task EvidenceFailure_IsReportedAsTypedSafeReasonToCoordinator()
+    {
+        await using var services = Services();
+        var queue = Queue(services);
+        var waiting = queue.EnqueueAndWaitAsync("account-a", "JointPlan", Request(.5m));
+        var claimed = await ClaimEventuallyAsync(queue, "worker-a");
+
+        await queue.FailAsync(claimed, "Solverresultatet täcker inte hela planeringshorisonten.", CancellationToken.None, evidenceFailure: true);
+
+        var exception = await Assert.ThrowsAsync<ThermalPlanningEvidenceException>(() => waiting);
+        Assert.Equal("Solverresultatet täcker inte hela planeringshorisonten.", exception.Message);
+    }
+
+    [Fact]
     public async Task ReplacedRequest_NeverReturnsAnotherCalculationsResultToOldCaller()
     {
         await using var services = Services();

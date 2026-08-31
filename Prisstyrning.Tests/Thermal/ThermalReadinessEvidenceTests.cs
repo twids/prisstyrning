@@ -78,6 +78,22 @@ public sealed class ThermalReadinessEvidenceTests
         await fixture.AssertLegacyAsync();
     }
 
+    [Fact]
+    public async Task Readiness_OnlyActiveLwtModesRequireVerifiedControlSafetyInputs()
+    {
+        await using var fixture = new Fixture();
+        await fixture.Db.SaveChangesAsync();
+
+        var shadow = await fixture.EvaluateAsync(ControlMode.Shadow);
+        var active = await fixture.EvaluateAsync(ControlMode.LwtActive);
+
+        Assert.DoesNotContain(shadow, x => x.Key == "lwt-safety-inputs");
+        var check = active.Single(x => x.Key == "lwt-safety-inputs");
+        Assert.False(check.Passed);
+        Assert.Contains("DHW-status", check.Requirement);
+        await fixture.AssertLegacyAsync();
+    }
+
     [Theory]
     [InlineData("isolated")]
     [InlineData("imported")]

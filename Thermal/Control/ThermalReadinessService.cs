@@ -62,6 +62,12 @@ public sealed class ThermalReadinessService
 
         if (targetMode is ControlMode.LwtActive or ControlMode.FullActive)
         {
+            var controlTelemetry = ThermalControlTelemetry.Assess(latest, rooms, entities, site, now);
+            checks.Add(Check(
+                "lwt-safety-inputs",
+                "Rumskomfort, flöde, DHW-status och avfrostning är verifierade för säker LWT-styrning",
+                currentSnapshot && cache.Connected && controlTelemetry.SafeToControl,
+                "Mappa flöde, DHW-status och avfrostning och invänta en giltig liveinsamling. En exkluderad rumsgivare får inte vara enda temperaturunderlag."));
             var anotherActiveInstallation = await _db.ThermalSiteConfigs.AsNoTracking()
                 .AnyAsync(x => x.UserId != userId &&
                                (x.ControlMode == nameof(ControlMode.LwtActive) || x.ControlMode == nameof(ControlMode.FullActive)),

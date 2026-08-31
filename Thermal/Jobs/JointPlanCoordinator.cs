@@ -189,7 +189,11 @@ public sealed class JointPlanCoordinator : BackgroundService
             2500,
             dhw?.Profile.PowerSteps.Max(x => x.ElectricPowerKw) * 1000 ?? 2500,
             site.TariffEnabled,
-            CapacityCost(site.TariffDefinitionJson)) { ModelEvidence = models.Evidence };
+            CapacityCost(site.TariffDefinitionJson))
+        {
+            ModelEvidence = models.Evidence,
+            HorizonStartUtc = horizonStart
+        };
         await ThermalPlanningModels.EnsureCurrentAsync(db, userId, models.Evidence, DateTimeOffset.UtcNow, cancellationToken);
         var optimizer = scope.ServiceProvider.GetRequiredService<IEmhassOptimizationDispatcher>();
         var optimized = await optimizer.EnqueueAndWaitAsync(
@@ -200,32 +204,7 @@ public sealed class JointPlanCoordinator : BackgroundService
         // A rollback, retraining or settings change during the asynchronous solver
         // must not be turned into a newly valid plan or a DHW schedule update.
         await ThermalPlanningModels.EnsureCurrentAsync(db, userId, models.Evidence, DateTimeOffset.UtcNow, cancellationToken);
-        var comfortBreach = optimized.Steps.FirstOrDefault(step =>
-            step.PredictedTemperatureC is { } predicted && predicted < minimum[step.Index] - 0.01);
-        if (comfortBreach is not null)
-        {
-            var recentBreachExists = await db.ThermalEvents.AsNoTracking().AnyAsync(
-                x => x.UserId == userId && x.Category == "SimulatedComfortBreach" &&
-                     x.TimestampUtc >= DateTimeOffset.UtcNow.AddHours(-6),
-                cancellationToken);
-            if (!recentBreachExists)
-            {
-                db.ThermalEvents.Add(new ThermalEvent
-                {
-                    UserId = userId,
-                    TimestampUtc = DateTimeOffset.UtcNow,
-                    Severity = "ActionRequired",
-                    Category = "SimulatedComfortBreach",
-                    Message = "Shadowplanen underskrider komfortgränsen och får inte aktiveras.",
-                    DetailsJson = JsonSerializer.Serialize(new
-                    {
-                        step = comfortBreach.Index,
-                        predictedC = comfortBreach.PredictedTemperatureC,
-                        minimumC = minimum[comfortBreach.Index]
-                    })
-                });
-            }
-        }
+        EmhassOptimizationValidation.ValidateResult(request, optimized, _options.OptimizationTimeStepMinutes);
 
         var plan = new ThermalPlan
         {
@@ -647,13 +626,17 @@ public sealed class JointPlanCoordinator : BackgroundService
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+            var comfortBreach = evidenceFailure && string.Equals(
+                message, EmhassOptimizationValidation.ComfortBreachReason, StringComparison.Ordinal);
             db.ThermalEvents.Add(new ThermalEvent
             {
                 UserId = userId,
                 TimestampUtc = now,
-                Severity = "Warning",
-                Category = "Optimizer",
-                Message = evidenceFailure
+                Severity = comfortBreach ? "ActionRequired" : "Warning",
+                Category = comfortBreach ? "SimulatedComfortBreach" : "Optimizer",
+                Message = comfortBreach
+                    ? "Solverförslaget bröt mot komfortbandet och ingen ny plan skapades. Granska modell och inställningar före aktivering."
+                    : evidenceFailure
                     ? $"Planeringen inväntar verifierat underlag. {message} Ingen ny plan skapades; senaste giltiga plan får användas i högst 60 minuter från att den skapades."
                     : "Ingen ny plan skapades; senaste giltiga plan får användas i högst 60 minuter från att den skapades.",
                 DetailsJson = JsonSerializer.Serialize(new { error = message })

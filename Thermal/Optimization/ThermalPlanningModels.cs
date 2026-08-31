@@ -19,11 +19,17 @@ internal sealed record ThermalPlanningModels(
     internal static async Task<ThermalPlanningModels> ReadAsync(
         PrisstyrningDbContext db, string userId, DateTimeOffset telemetryTimestampUtc,
         DateTimeOffset now, CancellationToken cancellationToken)
+        => await ReadCoreAsync(db, userId, telemetryTimestampUtc, now, requireFreshTelemetry: true, cancellationToken);
+
+    private static async Task<ThermalPlanningModels> ReadCoreAsync(
+        PrisstyrningDbContext db, string userId, DateTimeOffset telemetryTimestampUtc,
+        DateTimeOffset now, bool requireFreshTelemetry, CancellationToken cancellationToken)
     {
         var site = await db.ThermalSiteConfigs.AsNoTracking().SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
         if (site is null || ThermalEnumParser.ControlModeOrLegacy(site.ControlMode) == Domain.ControlMode.Legacy)
             throw new ThermalPlanningEvidenceException("Planering är inte tillåten i Legacy eller utan verifierat driftläge.");
-        if (telemetryTimestampUtc == default || telemetryTimestampUtc > now || now - telemetryTimestampUtc > TimeSpan.FromMinutes(10))
+        if (telemetryTimestampUtc == default || telemetryTimestampUtc > now ||
+            requireFreshTelemetry && now - telemetryTimestampUtc > TimeSpan.FromMinutes(10))
             throw new ThermalPlanningEvidenceException("Beräkningens telemetri är för gammal eller har ogiltig tid. Invänta ny insamling.");
         if (!site.HeatPumpPowerSignVerified)
             throw new ThermalPlanningEvidenceException("Effektmätningens tecken, CT-riktning och fasmappning måste verifieras före kostnadsoptimering.");
@@ -64,6 +70,18 @@ internal sealed record ThermalPlanningModels(
         var current = await ReadAsync(db, userId, evidence.TelemetryTimestampUtc, now, cancellationToken);
         if (current.Evidence != evidence)
             throw new ThermalPlanningEvidenceException("Modell, driftläge eller inställningar ändrades under beräkningen. Resultatet används inte; en ny plan behövs.");
+    }
+
+    internal static async Task<ThermalPlanningModels> EnsureStoredPlanCurrentAsync(
+        PrisstyrningDbContext db, string userId, ThermalPlanningModelEvidence? evidence,
+        DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (evidence is null)
+            throw new ThermalPlanningEvidenceException("Planen saknar verifierbart modellunderlag och får inte styra LWT.");
+        var current = await ReadCoreAsync(db, userId, evidence.TelemetryTimestampUtc, now, requireFreshTelemetry: false, cancellationToken);
+        if (current.Evidence != evidence)
+            throw new ThermalPlanningEvidenceException("Planens modell, driftläge eller inställningar gäller inte längre.");
+        return current;
     }
 
     private static ThermalModelVersion RequireModel(ThermalModelVersion? model, string label, DateTimeOffset now)

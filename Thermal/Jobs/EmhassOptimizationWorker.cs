@@ -53,6 +53,21 @@ public sealed class EmhassOptimizationWorker : BackgroundService
             {
                 return;
             }
+            catch (ThermalPlanningEvidenceException exception)
+            {
+                _logger.LogWarning(
+                    "Queued EMHASS optimization {JobId} is waiting for verified input for account {UserId}.",
+                    claimed.Id,
+                    claimed.UserId);
+                try
+                {
+                    await _queue.FailAsync(claimed, exception.Message, stoppingToken, evidenceFailure: true);
+                }
+                catch (Exception updateException) when (updateException is not OperationCanceledException)
+                {
+                    _logger.LogError(updateException, "Could not persist evidence failure for EMHASS optimization {JobId}.", claimed.Id);
+                }
+            }
             catch (Exception exception)
             {
                 _logger.LogError(
@@ -76,12 +91,14 @@ public sealed class EmhassOptimizationWorker : BackgroundService
     {
         if (!_emhassOptions.Enabled) throw new ThermalPlanningEvidenceException("EMHASS är avstängd.");
         var request = _queue.DeserializeRequest(claimed);
+        EmhassOptimizationValidation.ValidateRequest(request);
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
         await ThermalPlanningModels.EnsureCurrentAsync(db, claimed.UserId, request.ModelEvidence, DateTimeOffset.UtcNow, cancellationToken);
         var client = scope.ServiceProvider.GetRequiredService<IEmhassClient>();
         var result = await client.OptimizeAsync(request, cancellationToken);
         await ThermalPlanningModels.EnsureCurrentAsync(db, claimed.UserId, request.ModelEvidence, DateTimeOffset.UtcNow, cancellationToken);
+        EmhassOptimizationValidation.ValidateResult(request, result, _emhassOptions.OptimizationTimeStepMinutes);
         await _queue.CompleteAsync(claimed, result, cancellationToken);
     }
 }

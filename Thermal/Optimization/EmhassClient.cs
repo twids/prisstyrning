@@ -36,6 +36,7 @@ public sealed record EmhassOptimizationRequest(
     double CapacityCostPerKw = 0)
 {
     public ThermalPlanningModelEvidence? ModelEvidence { get; init; }
+    public DateTimeOffset? HorizonStartUtc { get; init; }
 }
 
 public sealed record EmhassOptimizationStep(
@@ -101,7 +102,7 @@ public sealed class EmhassClient : IEmhassClient
         EmhassOptimizationRequest request,
         CancellationToken cancellationToken = default)
     {
-        Validate(request);
+        EmhassOptimizationValidation.ValidateRequest(request);
         if (!_options.Enabled) throw new InvalidOperationException("EMHASS is disabled.");
         var timeoutSeconds = Math.Clamp(_options.SolverTimeoutSeconds, 1, 45);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -123,13 +124,17 @@ public sealed class EmhassClient : IEmhassClient
                 request.LoadCostForecast,
                 solveStartedUtc,
                 previousResultWriteUtc,
+                request.HorizonStartUtc,
+                _options.OptimizationTimeStepMinutes,
                 timeout.Token);
             stopwatch.Stop();
             var objective = steps.Sum(step =>
                 (decimal)(step.SpaceHeatingPowerW / 1000d * _options.OptimizationTimeStepMinutes / 60d) *
                 request.LoadCostForecast[step.Index]);
+            var result = new EmhassOptimizationResult(steps, (int)stopwatch.ElapsedMilliseconds, decimal.Round(objective, 4));
+            EmhassOptimizationValidation.ValidateResult(request, result, _options.OptimizationTimeStepMinutes);
             _health.Success((int)stopwatch.ElapsedMilliseconds);
-            return new EmhassOptimizationResult(steps, (int)stopwatch.ElapsedMilliseconds, decimal.Round(objective, 4));
+            return result;
         }
         catch (Exception exception) when (exception is HttpRequestException or IOException or UnauthorizedAccessException or FormatException or TaskCanceledException or InvalidOperationException)
         {
@@ -194,6 +199,8 @@ public sealed class EmhassClient : IEmhassClient
         IReadOnlyList<decimal> prices,
         DateTimeOffset solveStartedUtc,
         DateTime? previousResultWriteUtc,
+        DateTimeOffset? expectedStartUtc,
+        int optimizationTimeStepMinutes,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(resultPath)) throw new InvalidOperationException("EMHASS result path is not configured.");
@@ -211,19 +218,27 @@ public sealed class EmhassClient : IEmhassClient
         var temperatureColumn = FindColumn(headers, "predicted_temp_heater0");
         var costColumn = FindColumn(headers, "unit_load_cost", required: false);
 
+        var rows = lines.Skip(1).Where(x => !string.IsNullOrWhiteSpace(x)).ToArray();
+        if (rows.Length != prices.Count)
+            throw new InvalidOperationException($"EMHASS returned {rows.Length} of {prices.Count} requested steps.");
         var result = new List<EmhassOptimizationStep>();
-        foreach (var line in lines.Skip(1).Where(x => !string.IsNullOrWhiteSpace(x)))
+        DateTimeOffset? previousTimestamp = null;
+        foreach (var line in rows)
         {
-            if (result.Count >= prices.Count) break;
             var cells = ParseCsvLine(line);
+            var timestamp = ResultTimestamp(cells);
+            var expected = expectedStartUtc?.ToUniversalTime().AddMinutes(result.Count * optimizationTimeStepMinutes);
+            if (expected is not null && timestamp != expected ||
+                previousTimestamp is { } previousStepTimestamp && timestamp != previousStepTimestamp.AddMinutes(optimizationTimeStepMinutes))
+                throw new InvalidOperationException("EMHASS result has a missing, duplicated or unexpected timestamp.");
             var power = Number(cells, powerColumn, "P_deferrable0");
             var temperature = Number(cells, temperatureColumn, "predicted_temp_heater0");
             var cost = costColumn >= 0 && TryNumber(cells, costColumn, out var parsedCost)
                 ? parsedCost
                 : (double)prices[result.Count];
             result.Add(new EmhassOptimizationStep(result.Count, power, temperature, cost));
+            previousTimestamp = timestamp;
         }
-        if (result.Count != prices.Count) throw new InvalidOperationException($"EMHASS returned {result.Count} of {prices.Count} requested steps.");
         return result;
     }
 
@@ -250,6 +265,19 @@ public sealed class EmhassClient : IEmhassClient
     {
         if (TryNumber(cells, index, out var value)) return value;
         throw new InvalidOperationException($"EMHASS result contains an invalid {name} value.");
+    }
+
+    private static DateTimeOffset ResultTimestamp(IReadOnlyList<string> cells)
+    {
+        if (cells.Count == 0 || string.IsNullOrWhiteSpace(cells[0]))
+            throw new InvalidOperationException("EMHASS result is missing its timestamp.");
+        var value = cells[0].Trim();
+        var hasOffset = value.EndsWith("Z", StringComparison.OrdinalIgnoreCase) ||
+                        value.Length >= 6 && value[^3] == ':' && (value[^6] == '+' || value[^6] == '-');
+        if (!hasOffset || !DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture,
+                DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var timestamp))
+            throw new InvalidOperationException("EMHASS result contains an invalid or unzoned timestamp.");
+        return timestamp;
     }
 
     private static bool TryNumber(IReadOnlyList<string> cells, int index, out double value)
@@ -289,13 +317,4 @@ public sealed class EmhassClient : IEmhassClient
         return result;
     }
 
-    private static void Validate(EmhassOptimizationRequest request)
-    {
-        var count = request.LoadCostForecast.Count;
-        if (count == 0 || request.OutsideTemperatureForecastC.Count != count || request.BaseLoadForecastW.Count != count ||
-            request.Thermal.MinimumTemperaturesC.Count != count || request.Thermal.MaximumTemperaturesC.Count != count)
-            throw new ArgumentException("All EMHASS forecasts must have the same non-zero length.");
-        if (request.DhwStartStep is { } start && (start < 0 || start + request.DhwDurationSteps > count))
-            throw new ArgumentException("DHW reservation is outside the EMHASS horizon.");
-    }
 }

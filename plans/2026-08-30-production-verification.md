@@ -144,6 +144,13 @@ De nio skipparna är befintliga tester som kräver nätverk eller saknar full HT
 - Ingen ny produktionsavläsning, publicering, deploy, kontoförändring, testsändning eller aktivering ingick. Ovanstående 17:35-avläsning är tidigare driftbevis, inte ny verifiering i denna leverans. Alla nya ändringar är lokala och Legacydriften har inte ändrats av arbetet.
 - Historisk träningsproveniens, slutlig plan-/skrivvalidering, PostgreSQL-konkurrensprov och fysisk Shadow/DHW-acceptans återstår; intelligent styrning är inte driftgodkänd.
 
+### Lokal kodverifiering 2026-09-01 – solver, aktiv plan och styrtelemetri
+
+- [Solver-/plan-/kontrollrapporten](2026-09-01-solver-plan-control-verification.md) redovisar fail-closed validering av full EMHASS-horisont och tidsaxel, lagrad aktiv plan, modell-/konfigurationsfingerprint, aktuellt plansteg samt kvalitetsmarkerad rum-, flödes-, DHW- och avfrostningstelemetri.
+- Slutlig lokal verifiering: **1 101 godkända backendtester/6 befintliga undantag, 207 UI-tester och 26 tillämpliga browserflöden/6 projektexkluderingar**. .NET 10 Release och TypeScript/Vite är godkända; `git diff --check` är godkänt.
+- Ingen produktionsavläsning, publicering, deploy, appstart, migration, testsändning, konto-/credentialändring eller aktivering ingick. Senaste produktionsbeviset ovan är tidigare evidens och ska inte beskrivas som en ny kontroll.
+- `Legacy/Legacy` är fortsatt det enda driftgodkända läget. PostgreSQL-/HA-konkurrens, full planeringsdataproveniens och verklig Shadow/DHW/hygienacceptans återstår före LWT eller FullActive.
+
 ## Rollback
 
 Vanlig rollback görs i samma Dockhand-stack utan databasåterläsning. Behåll de additiva tabellerna och krypteringsnyckeln.

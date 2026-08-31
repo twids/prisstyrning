@@ -100,6 +100,35 @@ public sealed class ThermalStatusApiTests
     }
 
     [Fact]
+    public async Task ActiveStatus_DoesNotPresentLatestShadowPlanAsNextControlInput()
+    {
+        await using var host = await AccountApiTestHost.CreateAsync(includeThermalStatus: true);
+        using var browser = host.CreateBrowser();
+        await browser.SignInAsync();
+        await host.WithServicesAsync(async services =>
+        {
+            var db = services.GetRequiredService<PrisstyrningDbContext>();
+            var now = DateTimeOffset.UtcNow;
+            db.ThermalSiteConfigs.Add(new() { UserId = "account-a", ControlMode = "LwtActive", UpdatedAtUtc = now });
+            db.ThermalPlans.Add(new()
+            {
+                UserId = "account-a", CreatedAtUtc = now.AddMinutes(-1), ValidFromUtc = now.AddMinutes(-5),
+                ValidUntilUtc = now.AddHours(1), Status = "Valid", IsShadow = true, SolverDurationMs = 100,
+                ObjectiveCost = 1, Confidence = .8, Summary = "Syntetisk Shadow-plan"
+            });
+            await db.SaveChangesAsync();
+        });
+
+        var status = await browser.Client.GetFromJsonAsync<ThermalStatusDto>("/api/thermal/status");
+
+        Assert.Equal(ControlMode.LwtActive, status!.Mode);
+        Assert.Null(status.PlanCreatedUtc);
+        Assert.Null(status.PlanAgeMinutes);
+        Assert.Null(status.NextControlEventUtc);
+        Assert.Equal(0, host.MutationCount);
+    }
+
+    [Fact]
     public async Task Status_UsesOnlySignedInAccountsSamplesAndEnabledMappings()
     {
         await using var host = await AccountApiTestHost.CreateAsync(includeThermalStatus: true);
