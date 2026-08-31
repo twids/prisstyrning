@@ -183,24 +183,6 @@ public static class ThermalApiEndpoints
             }
             catch (InvalidOperationException exception) { return Results.Conflict(new { error = exception.Message }); }
         });
-        homeAssistant.MapGet("/status", async (
-            HttpContext context,
-            IHomeAssistantStateCache cache,
-            HomeAssistantConnectionService connections,
-            CancellationToken cancellationToken) =>
-        {
-            var userId = UserId(context);
-            var config = await connections.GetAsync(userId, cancellationToken);
-            var lastSnapshot = cache.LastSnapshotUtcFor(userId);
-            return Results.Ok(new
-            {
-                configured = config?.TelemetryEnabled == true && config.TelemetryTokenConfigured,
-                connected = cache.IsConnected(userId),
-                lastSnapshotUtc = lastSnapshot,
-                lastActivityUtc = cache.LastActivityUtcFor(userId),
-                cachedEntities = cache.Snapshot(userId).Count
-            });
-        });
         homeAssistant.MapPost("/test", async (
             HttpContext context,
             IHomeAssistantTelemetryClient client,
@@ -234,11 +216,38 @@ public static class ThermalApiEndpoints
         return app;
     }
 
-    // Isolated HTTP tests host this exact account-scoped read route with no
+    // Isolated HTTP tests host these exact account-scoped read routes with no
     // integration clients, background workers, or control endpoints registered.
     internal static RouteGroupBuilder MapHomeAssistantEntityCatalogApi(this IEndpointRouteBuilder app)
     {
         var homeAssistant = app.MapGroup("/api/home-assistant");
+        homeAssistant.MapGet("/status", async (
+            HttpContext context,
+            IHomeAssistantStateCache cache,
+            HomeAssistantConnectionService connections,
+            CancellationToken cancellationToken) =>
+        {
+            var userId = UserId(context);
+            var config = await connections.GetAsync(userId, cancellationToken);
+            var live = cache.ReadAccount(userId);
+            var configured = config is { TelemetryEnabled: true, TelemetryTokenConfigured: true };
+            var current = configured && live.ConfigurationUpdatedAtUtc == config!.UpdatedAtUtc;
+            var verified = current && live.Connected && live.LastSnapshotUtc >= config!.UpdatedAtUtc;
+            var phase = config is null || !config.TelemetryTokenConfigured ? "NotConfigured"
+                : !config.TelemetryEnabled ? "Disabled"
+                : !current ? "Reloading"
+                : live.Connected && !verified ? "Synchronizing" : live.Phase.ToString();
+            return Results.Ok(new
+            {
+                configured,
+                connected = verified,
+                lastSnapshotUtc = current ? live.LastSnapshotUtc : null,
+                lastActivityUtc = current ? live.LastActivityUtc : null,
+                cachedEntities = current ? live.States.Count : 0,
+                phase,
+                configurationUpdatedAtUtc = config?.UpdatedAtUtc
+            });
+        });
         homeAssistant.MapGet("/entities", async (
             HttpContext context,
             IHomeAssistantStateCache cache,
@@ -251,13 +260,13 @@ public static class ThermalApiEndpoints
                 return Results.Ok(Array.Empty<ThermalEntityStateDto>());
 
             var now = DateTimeOffset.UtcNow;
-            var snapshot = cache.LastSnapshotUtcFor(userId);
-            var connectionIssue = !cache.IsConnected(userId)
+            var live = cache.ReadAccount(userId);
+            var connectionIssue = !live.Connected
                 ? "Liveanslutningen till Home Assistant är bruten. Visade värden är inte verifierade."
-                : snapshot is null || snapshot < config.UpdatedAtUtc
+                : live.ConfigurationUpdatedAtUtc != config.UpdatedAtUtc || live.LastSnapshotUtc is null || live.LastSnapshotUtc < config.UpdatedAtUtc
                     ? "Startbilden saknas eller är äldre än anslutningsinställningarna. Telemetrin behöver läsa in en ny startbild."
                     : null;
-            var result = cache.Snapshot(userId).Select(state => HomeAssistantEntityCatalog.Project(
+            var result = live.States.Select(state => HomeAssistantEntityCatalog.Project(
                 state, now, config.StaleAfterMinutes, connectionIssue)).ToArray();
             return Results.Ok(result);
         });

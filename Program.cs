@@ -145,6 +145,8 @@ builder.Services.Configure<EmhassOptions>(builder.Configuration.GetSection(Emhas
 builder.Services.Configure<ThermalOptimizationQueueOptions>(
     builder.Configuration.GetSection(ThermalOptimizationQueueOptions.SectionName));
 builder.Services.AddSingleton<IHomeAssistantStateCache, HomeAssistantStateCache>();
+builder.Services.AddSingleton<HomeAssistantConnectionChanges>();
+builder.Services.AddSingleton<IHomeAssistantWebSocketFactory, HomeAssistantWebSocketFactory>();
 builder.Services.AddSingleton<SensorQualityTracker>();
 builder.Services.AddSingleton<IHomeAssistantEndpointValidator, HomeAssistantEndpointValidator>();
 builder.Services.AddScoped<HomeAssistantConnectionService>();

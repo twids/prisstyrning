@@ -27,6 +27,8 @@ public interface IHomeAssistantTelemetryClient
     Task<bool> TestConnectionAsync(string userId, CancellationToken cancellationToken = default);
     Task<HomeAssistantState?> GetStateAsync(string userId, string entityId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<HomeAssistantState>> GetStatesAsync(string userId, CancellationToken cancellationToken = default);
+    // A live subscription and its REST snapshot must use the same resolved revision.
+    Task<IReadOnlyList<HomeAssistantState>> GetStatesAsync(ResolvedHomeAssistantConnection connection, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<HomeAssistantState>> GetHistoryAsync(
         string userId,
         string entityId,
@@ -42,6 +44,14 @@ public interface IHomeAssistantControlClient
 
 public interface IHomeAssistantStateCache
 {
+    HomeAssistantCacheSnapshot ReadAccount(string userId);
+    void Invalidate(string userId, DateTimeOffset configurationUpdatedAtUtc, bool telemetryEnabled);
+    void RetireRevision(string userId, DateTimeOffset configurationUpdatedAtUtc);
+    HomeAssistantCacheSession? BeginSession(string userId, DateTimeOffset configurationUpdatedAtUtc);
+    bool BeginSnapshot(HomeAssistantCacheSession session);
+    bool PublishSnapshot(HomeAssistantCacheSession session, IEnumerable<HomeAssistantState> states);
+    bool ApplyEvent(HomeAssistantCacheSession session, HomeAssistantStateChange change);
+    void EndSession(HomeAssistantCacheSession session);
     DateTimeOffset? LastSnapshotUtc { get; }
     DateTimeOffset? LastActivityUtc { get; }
     bool Connected { get; }
@@ -60,4 +70,24 @@ public interface IHomeAssistantStateCache
     void MarkDisconnected(string userId);
     bool TryGet(string userId, string entityId, out HomeAssistantState? state);
     IReadOnlyList<HomeAssistantState> Snapshot(string userId);
+}
+
+public enum HomeAssistantLivePhase
+{
+    Disconnected, Disabled, Reloading, Connecting, Synchronizing, Connected, Reconnecting
+}
+
+// No endpoint, credential or credential-derived identifier is stored in a cache lease.
+public sealed record HomeAssistantCacheSession(string UserId, long Generation, DateTimeOffset ConfigurationUpdatedAtUtc);
+
+public sealed record HomeAssistantStateChange(string EntityId, HomeAssistantState? State, DateTimeOffset? OccurredAtUtc);
+
+public sealed record HomeAssistantCacheSnapshot(
+    HomeAssistantLivePhase Phase,
+    DateTimeOffset? ConfigurationUpdatedAtUtc,
+    DateTimeOffset? LastSnapshotUtc,
+    DateTimeOffset? LastActivityUtc,
+    IReadOnlyList<HomeAssistantState> States)
+{
+    public bool Connected => Phase == HomeAssistantLivePhase.Connected;
 }

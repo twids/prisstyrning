@@ -80,6 +80,8 @@ public sealed class HomeAssistantHistoryImportTests
             Task.FromResult(_history.TryGetValue(entityId, out var states) ? states.LastOrDefault() : null);
         public Task<IReadOnlyList<HomeAssistantState>> GetStatesAsync(string userId, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<HomeAssistantState>>(_history.Values.SelectMany(x => x).ToArray());
+        public Task<IReadOnlyList<HomeAssistantState>> GetStatesAsync(ResolvedHomeAssistantConnection connection, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("History import must not start a live subscription.");
         public Task<IReadOnlyList<HomeAssistantState>> GetHistoryAsync(string userId, string entityId, DateTimeOffset fromUtc, DateTimeOffset toUtc, CancellationToken cancellationToken = default) =>
             Task.FromResult(_history.TryGetValue(entityId, out var states) ? states : (IReadOnlyList<HomeAssistantState>)[]);
     }

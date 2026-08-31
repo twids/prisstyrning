@@ -35,22 +35,31 @@ public sealed record ResolvedHomeAssistantConnection(
     bool TelemetryEnabled,
     bool ControlEnabled,
     string HeatingDeviationEntityId,
-    int StaleAfterMinutes);
+    int StaleAfterMinutes,
+    DateTimeOffset UpdatedAtUtc = default);
 
 public sealed class HomeAssistantConnectionService
 {
     private readonly PrisstyrningDbContext _db;
     private readonly IAccountSecretProtector _protector;
     private readonly IHomeAssistantEndpointValidator _endpointValidator;
+    private readonly IHomeAssistantStateCache _cache;
+    private readonly HomeAssistantConnectionChanges _changes;
+    private static readonly object RevisionGate = new();
+    private static long _lastRevisionTicks;
 
     public HomeAssistantConnectionService(
         PrisstyrningDbContext db,
         IAccountSecretProtector protector,
-        IHomeAssistantEndpointValidator endpointValidator)
+        IHomeAssistantEndpointValidator endpointValidator,
+        IHomeAssistantStateCache cache,
+        HomeAssistantConnectionChanges changes)
     {
         _db = db;
         _protector = protector;
         _endpointValidator = endpointValidator;
+        _cache = cache;
+        _changes = changes;
     }
 
     public async Task<HomeAssistantConnectionDto?> GetAsync(string userId, CancellationToken cancellationToken = default)
@@ -80,7 +89,8 @@ public sealed class HomeAssistantConnectionService
             entity.TelemetryEnabled,
             entity.ControlEnabled,
             entity.HeatingDeviationEntityId,
-            Math.Clamp(entity.StaleAfterMinutes, 1, 60));
+            Math.Clamp(entity.StaleAfterMinutes, 1, 60),
+            entity.UpdatedAtUtc);
     }
 
     public async Task<HomeAssistantConnectionDto> SaveAsync(
@@ -90,6 +100,9 @@ public sealed class HomeAssistantConnectionService
     {
         EnsureUser(userId);
         if (!_protector.IsConfigured) throw new InvalidOperationException("Credential encryption is not configured.");
+        // Serialize account settings on this single application host so commit and
+        // cache invalidation order cannot be reversed by two browser tabs.
+        using var settingsLease = await _changes.LockSettingsAsync(userId, cancellationToken);
         var baseUri = await _endpointValidator.ValidateAsync(request.BaseUrl, cancellationToken);
         if (request.StaleAfterMinutes is < 1 or > 60) throw new ArgumentException("Stale-gränsen måste vara 1–60 minuter.");
         if (!string.IsNullOrWhiteSpace(request.HeatingDeviationEntityId) &&
@@ -98,7 +111,6 @@ public sealed class HomeAssistantConnectionService
         if (request.ControlEnabled && (string.IsNullOrWhiteSpace(request.HeatingDeviationEntityId)))
             throw new ArgumentException("Styrning kräver ett tillåtet P1P2 entity-ID.");
 
-        var now = DateTimeOffset.UtcNow;
         var entity = await _db.HomeAssistantConnections.SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
         var existingControlConfigured = !string.IsNullOrWhiteSpace(entity?.ControlTokenCiphertext);
         var resultingTelemetryConfigured = !string.IsNullOrWhiteSpace(request.TelemetryToken) || !string.IsNullOrWhiteSpace(entity?.TelemetryTokenCiphertext);
@@ -110,6 +122,7 @@ public sealed class HomeAssistantConnectionService
         if (entity is not null && await IsActiveAsync(userId, cancellationToken) && ControlBoundaryChanged(entity, request, baseUri))
             throw new InvalidOperationException("Byt till Legacy eller Shadow och nollställ LWT-avvikelsen innan HA:s styranslutning ändras.");
 
+        var now = NextRevision(entity?.UpdatedAtUtc);
         if (entity is null)
         {
             entity = new HomeAssistantConnection { UserId = userId, CreatedAtUtc = now };
@@ -128,18 +141,36 @@ public sealed class HomeAssistantConnectionService
         else if (!string.IsNullOrWhiteSpace(request.ControlToken))
             entity.ControlTokenCiphertext = _protector.Protect(request.ControlToken.Trim(), userId, "ha-control");
         await _db.SaveChangesAsync(cancellationToken);
+        _cache.Invalidate(userId, entity.UpdatedAtUtc, entity.TelemetryEnabled);
+        _changes.Notify();
         return ToDto(entity);
     }
 
     public async Task DeleteAsync(string userId, CancellationToken cancellationToken = default)
     {
         EnsureUser(userId);
+        using var settingsLease = await _changes.LockSettingsAsync(userId, cancellationToken);
         if (await IsActiveAsync(userId, cancellationToken))
             throw new InvalidOperationException("HA-anslutningen kan bara tas bort i Legacy eller Shadow.");
         var entity = await _db.HomeAssistantConnections.SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
         if (entity is null) return;
         _db.HomeAssistantConnections.Remove(entity);
         await _db.SaveChangesAsync(cancellationToken);
+        // Retire the removed revision, but never a concurrently recreated newer one.
+        _cache.Invalidate(userId, entity.UpdatedAtUtc, telemetryEnabled: false);
+        _changes.Notify();
+    }
+
+    internal static DateTimeOffset NextRevision(DateTimeOffset? previous)
+    {
+        // PostgreSQL stores microseconds. Use the same precision in the response,
+        // cache and subsequent database reads, and stay monotonic within this host.
+        lock (RevisionGate)
+        {
+            var ticks = DateTimeOffset.UtcNow.UtcTicks / 10 * 10;
+            _lastRevisionTicks = Math.Max(ticks, Math.Max(_lastRevisionTicks, previous?.UtcTicks ?? 0) / 10 * 10 + 10);
+            return new DateTimeOffset(_lastRevisionTicks, TimeSpan.Zero);
+        }
     }
 
     private async Task<bool> IsActiveAsync(string userId, CancellationToken cancellationToken)

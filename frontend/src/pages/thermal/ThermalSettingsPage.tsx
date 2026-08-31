@@ -11,6 +11,8 @@ import CableOutlinedIcon from '@mui/icons-material/CableOutlined';
 import { useHomeAssistant, useSaveThermalConfig, useThermalConfig } from '../../hooks/thermal/useThermal';
 import { PageHeader, formatRelative } from '../../components/thermal/thermalUi';
 import HomeAssistantEntityPicker, { type EntityCatalogView } from '../../components/thermal/HomeAssistantEntityPicker';
+import HomeAssistantLiveStatus from '../../components/thermal/HomeAssistantLiveStatus';
+import { assessHomeAssistantLive } from '../../components/thermal/homeAssistantConnectionStatus';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import type { HomeAssistantConnection, HomeAssistantEntity, ThermalConfig, ThermalEntityConfig, ThermalRoomConfig, UpdateHomeAssistantConnection } from '../../types/api';
 
@@ -55,13 +57,11 @@ export default function ThermalSettingsPage() {
   }, [config.data, draft]);
   const dirty = draft != null && JSON.stringify(draft) !== savedSnapshot;
   const errors = useMemo(() => validate(draft), [draft]);
+  const live = assessHomeAssistantLive(ha.config.data, ha.status.data, ha.status.dataUpdatedAt, Math.max(nowUtc, Date.now()),
+    ha.config.isLoading || ha.status.isLoading, ha.config.isError || ha.status.isError);
   const catalogIssue = ha.config.isError || ha.status.isError || ha.entities.isError
     ? 'Sensorlistan kunde inte uppdateras. Sparade mappningar är kvar; gamla värden visas inte som verifierade.'
-    : ha.status.data?.configured === false
-      ? 'Aktiv HA-telemetri saknas på ditt konto. Konfigurera anslutningen under Home Assistant.'
-      : ha.status.data?.connected === false
-        ? 'Liveanslutningen till Home Assistant är bruten. Sparade mappningar är kvar.'
-        : undefined;
+    : !live.verified ? `${live.label}. ${live.detail} Sparade mappningar är kvar.` : undefined;
   const catalog: EntityCatalogView = {
     entities: catalogIssue ? [] : ha.entities.data ?? [],
     issue: catalogIssue,
@@ -152,8 +152,8 @@ export function HomeAssistantConnectionPanel({ ha, connection }: { ha: ReturnTyp
   });
   return <Stack spacing={3}>
     <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={2}>
-      <Box><Typography variant="h5">Ditt kontos Home Assistant</Typography><Typography color="text.secondary">Anslutningen följer det verifierade Daikin-kontot. Telemetritoken bör vara läsande; styrtoken används bara för exakt tillåten P1P2-entity i aktiva lägen.</Typography></Box>
-      <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap"><Chip label={ha.status.data?.configured ? 'Konfigurerad' : 'Ej konfigurerad'} color={ha.status.data?.configured ? 'success' : 'default'} /><Button variant="outlined" startIcon={<CableOutlinedIcon />} onClick={() => ha.test.mutate()} disabled={!connection || connectionDirty || ha.test.isPending}>{ha.test.isPending ? 'Testar…' : 'Testa sparad anslutning'}</Button></Stack>
+      <Box><Typography component="h2" variant="h5">Ditt kontos Home Assistant</Typography><Typography color="text.secondary">Anslutningen följer det verifierade Daikin-kontot. Telemetritoken bör vara läsande; styrtoken används bara för exakt tillåten P1P2-entity i aktiva lägen.</Typography></Box>
+      <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap"><Chip label={connection ? 'Anslutning sparad' : 'Ej konfigurerad'} variant="outlined" /><Button variant="outlined" startIcon={<CableOutlinedIcon />} onClick={() => ha.test.mutate()} disabled={!connection?.telemetryEnabled || connectionDirty || ha.test.isPending}>{ha.test.isPending ? 'Testar…' : 'Testa sparad anslutning'}</Button></Stack>
     </Stack>
     <Alert severity="info">Tokenvärden skickas över den inloggade HTTPS-sessionen, krypteras med installationens credential-nyckel och returneras aldrig av API:t. Tomma tokenfält behåller redan sparade tokens.</Alert>
     <Paper variant="outlined" sx={{ p: 2.5 }}>
@@ -179,24 +179,26 @@ export function HomeAssistantConnectionPanel({ ha, connection }: { ha: ReturnTyp
           </Paper>
         </Box>
         {connectionErrors.map((error) => <Alert key={error} severity="error">{error}</Alert>)}
-        {ha.save.isSuccess && <Alert severity="success">Anslutningen är sparad för ditt Daikin-konto. Inget driftläge aktiverades.</Alert>}
+        {ha.save.isSuccess && <Alert severity="info">Anslutningen är sparad för ditt Daikin-konto. Liveanslutningen kontrolleras separat nedan. Inget driftläge aktiverades.</Alert>}
         {ha.save.isError && <Alert severity="error">{ha.save.error.message}</Alert>}
-        {connectionDirty && <Alert severity="warning">Förhandsvisning: anslutning eller tokeninställningar ändras. Telemetri startar först från den sparade anslutningen; LWT-kommandon är fortfarande blockerade i Legacy och Shadow.</Alert>}
+        {connectionDirty && <Alert severity="warning">Förhandsvisning: när du sparar avslutas den gamla telemetrianslutningen och dess cache töms. {connectionDraft.telemetryEnabled ? 'En ny anslutning och startbild hämtas automatiskt.' : 'Telemetriinsamlingen stoppas.'} Sparade sensormappningar och legacy-DHW ändras inte. LWT-kommandon är fortfarande blockerade i Legacy och Shadow.</Alert>}
         <Stack direction={{ xs: 'column-reverse', sm: 'row' }} justifyContent="space-between" gap={1}>
           <Button color="error" onClick={() => setRemoveOpen(true)} disabled={!connection || ha.remove.isPending}>Ta bort anslutning</Button>
           <Button variant="contained" startIcon={<SaveOutlinedIcon />} onClick={saveConnection} disabled={!connectionDirty || connectionErrors.length > 0 || ha.save.isPending}>{ha.save.isPending ? 'Sparar…' : 'Spara HA-anslutning'}</Button>
         </Stack>
       </Stack>
     </Paper>
-    {ha.test.isSuccess && <Alert severity="success">Telemetriidentiteten når Home Assistant.</Alert>}
+    {ha.test.isSuccess && <Alert severity="info">REST-testet lyckades med den sparade telemetritoken. Det bekräftar inte WebSocket eller aktuell sensordata; se Liveanslutning.</Alert>}
     {ha.test.isError && <Alert severity="error">{ha.test.error.message}</Alert>}
     <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>
-      <Paper variant="outlined" sx={{ p: 2.5 }}><Typography fontWeight={750}>Liveanslutning</Typography><Stack direction="row" justifyContent="space-between"><Typography>WebSocket/startbild</Typography><Typography fontWeight={700}>{ha.status.data?.connected ? 'Ansluten' : 'Frånkopplad'}</Typography></Stack><Stack direction="row" justifyContent="space-between"><Typography>Cache</Typography><Typography fontWeight={700}>{ha.status.data?.cachedEntities ?? 0} entities</Typography></Stack><Stack direction="row" justifyContent="space-between"><Typography>Senaste startbild</Typography><Typography fontWeight={700}>{formatRelative(ha.status.data?.lastSnapshotUtc)}</Typography></Stack><Stack direction="row" justifyContent="space-between"><Typography>Senaste aktivitet</Typography><Typography fontWeight={700}>{formatRelative(ha.status.data?.lastActivityUtc)}</Typography></Stack></Paper>
+      <HomeAssistantLiveStatus connection={connection} status={ha.status.data} checkedAt={ha.status.dataUpdatedAt}
+        loading={ha.status.isLoading} error={ha.status.isError} refreshing={ha.status.isFetching}
+        refresh={() => { void ha.status.refetch(); }} />
       <Paper variant="outlined" sx={{ p: 2.5 }}><Typography fontWeight={750}>Sparat för kontot</Typography><Stack direction="row" justifyContent="space-between"><Typography>Telemetritoken</Typography><Typography fontWeight={700}>{connection?.telemetryTokenConfigured ? 'Sparad' : 'Saknas'}</Typography></Stack><Stack direction="row" justifyContent="space-between"><Typography>Styrtoken</Typography><Typography fontWeight={700}>{connection?.controlTokenConfigured ? 'Sparad' : 'Saknas'}</Typography></Stack><Stack direction="row" justifyContent="space-between"><Typography>Senast ändrad</Typography><Typography fontWeight={700}>{formatRelative(connection?.updatedAtUtc)}</Typography></Stack></Paper>
     </Box>
     <Paper variant="outlined" sx={{ p: 2.5 }}>
       <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={2} alignItems={{ md: 'flex-end' }}>
-        <Box sx={{ flex: 1 }}><Typography variant="h6">Historik för modellträning</Typography><Typography variant="body2" color="text.secondary">Hämta förändringshistorik från HA och återsampla den till fem minuter. Intervallet får vara högst 90 dagar och befintliga snapshots skrivs aldrig över.</Typography></Box>
+        <Box sx={{ flex: 1 }}><Typography component="h3" variant="h6">Historik för modellträning</Typography><Typography variant="body2" color="text.secondary">Hämta förändringshistorik från HA och återsampla den till fem minuter. Intervallet får vara högst 90 dagar och befintliga snapshots skrivs aldrig över.</Typography></Box>
         <Stack direction={{ xs: 'column', sm: 'row' }} gap={1.5}>
           <TextField type="datetime-local" label="Från" value={historyFrom} onChange={(event) => setHistoryFrom(event.target.value)} InputLabelProps={{ shrink: true }} />
           <TextField type="datetime-local" label="Till" value={historyTo} onChange={(event) => setHistoryTo(event.target.value)} InputLabelProps={{ shrink: true }} />

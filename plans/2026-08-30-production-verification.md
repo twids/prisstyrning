@@ -100,6 +100,15 @@ De nio skipparna är befintliga tester som kräver nätverk eller saknar full HT
 - [Separat lokal kodrapport](2026-08-31-ha-catalog-verification.md) redovisar korrigerad preliminär HA-katalogkvalitet, gemensam säker sensorväljare och 753/6 backendtester, 138 UI-tester samt 18 tillämpliga browserflöden. Fixarna är **inte driftsatta** och ändrar inte legacy, regulator eller sensorernas exkluderingsräknare.
 - Inga konton, credentials, behörigheter, containerinställningar eller aktiveringsspärrar ändrades. Revisionsstyrd omladdning av HA-anslutningen och fortsatt insamlingsvalidering är dokumenterade som nästa kodarbete.
 
+### Read-only-uppföljning 2026-08-31 omkring 07:19 CEST / 05:19 UTC
+
+- Oförändrade image-referenser för app och EMHASS; app, PostgreSQL och EMHASS körde med noll omstarter.
+- Hälsa och anonym session svarade 200, sessionen var oautentiserad med booleskt verifierad CSRF-utgivning. Anonym thermal-status, HA-status och HA-katalog gav samtliga 401. Inga sessions-/cookievärden visades.
+- Explicit read-only databastransaktion bekräftade en thermal-konfiguration i `Legacy/Legacy` och noll termiska styrkommandon.
+- Inga nya `apply OK`/`Applied`/`Apply failed`-poster mellan 04:00:00 och 05:19:28 UTC. Ingen extra schemakörning, testsändning eller deploy gjordes.
+- [Separat lokal kodrapport](2026-08-31-ha-reload-verification.md) redovisar revisionsbunden HA-återanslutning, cache-/konkurrensskydd, säker loggning, live-status-UX och 804/6 backendtester, 162 UI-tester samt 20 tillämpliga browserflöden. Ändringarna är **inte driftsatta**; regulator, legacy och aktiveringsspärrar är oförändrade.
+- Ingen produktionskonfiguration, behörighet, credential eller kontoägare ändrades. Nästa kodavgränsning gäller insamlingskedjans sensor-/tidsvalidering, inte ny deploy eller aktivering.
+
 ## Rollback
 
 Vanlig rollback görs i samma Dockhand-stack utan databasåterläsning. Behåll de additiva tabellerna och krypteringsnyckeln.

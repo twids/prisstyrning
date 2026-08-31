@@ -98,7 +98,8 @@ export function useHomeAssistant() {
   const entities = useQuery({
     queryKey: ['home-assistant', 'entities'],
     queryFn: () => apiClient.getHomeAssistantEntities(),
-    enabled: status.data?.configured === true && !status.isError && !config.isError,
+    enabled: status.data?.configured === true && status.data.connected &&
+      status.data.configurationUpdatedAtUtc === config.data?.updatedAtUtc && !status.isError && !config.isError,
     refetchInterval: 60_000,
   });
   const test = useMutation({
@@ -107,16 +108,31 @@ export function useHomeAssistant() {
   });
   const save = useMutation({
     mutationFn: (request: UpdateHomeAssistantConnection) => apiClient.saveHomeAssistantConfig(request),
-    onSuccess: (connection) => {
+    onSuccess: async (connection) => {
+      await queryClient.cancelQueries({ queryKey: ['home-assistant'] });
+      test.reset();
       queryClient.setQueryData(['home-assistant', 'config'], connection);
+      queryClient.setQueryData(['home-assistant', 'status'], {
+        configured: connection.telemetryEnabled && connection.telemetryTokenConfigured,
+        connected: false, phase: connection.telemetryEnabled ? 'Reloading' : 'Disabled',
+        configurationUpdatedAtUtc: connection.updatedAtUtc, lastSnapshotUtc: null, lastActivityUtc: null, cachedEntities: 0,
+      });
+      queryClient.setQueryData(['home-assistant', 'entities'], []);
       void queryClient.invalidateQueries({ queryKey: ['home-assistant'] });
       void queryClient.invalidateQueries({ queryKey: ['thermal', 'readiness'] });
     },
   });
   const remove = useMutation({
     mutationFn: () => apiClient.deleteHomeAssistantConfig(),
-    onSuccess: () => {
+    onSuccess: async () => {
+      await queryClient.cancelQueries({ queryKey: ['home-assistant'] });
+      test.reset();
       queryClient.setQueryData(['home-assistant', 'config'], null);
+      queryClient.setQueryData(['home-assistant', 'status'], {
+        configured: false, connected: false, phase: 'NotConfigured', configurationUpdatedAtUtc: null,
+        lastSnapshotUtc: null, lastActivityUtc: null, cachedEntities: 0,
+      });
+      queryClient.setQueryData(['home-assistant', 'entities'], []);
       void queryClient.invalidateQueries({ queryKey: ['home-assistant'] });
       void queryClient.invalidateQueries({ queryKey: ['thermal', 'readiness'] });
     },

@@ -290,7 +290,7 @@ public class HomeAssistantTelemetryTests
     }
 
     private static HomeAssistantConnectionService CreateConnectionService(PrisstyrningDbContext db) =>
-        new(db, TestSecretProtector.Instance, new AcceptingEndpointValidator());
+        new(db, TestSecretProtector.Instance, new AcceptingEndpointValidator(), new HomeAssistantStateCache(), new HomeAssistantConnectionChanges());
 
     private sealed class AcceptingEndpointValidator : IHomeAssistantEndpointValidator
     {

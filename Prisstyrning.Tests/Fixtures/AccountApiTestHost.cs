@@ -83,6 +83,7 @@ internal sealed class AccountApiTestHost : IAsyncDisposable
                         if (includeHomeAssistantEntities)
                         {
                             services.AddSingleton<IHomeAssistantStateCache, HomeAssistantStateCache>();
+                            services.AddSingleton<HomeAssistantConnectionChanges>();
                             services.AddScoped<HomeAssistantConnectionService>();
                             services.AddSingleton<IHomeAssistantEndpointValidator, NoNetworkEndpointValidator>();
                         }

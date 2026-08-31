@@ -139,8 +139,13 @@ public sealed class HomeAssistantEntityCatalogApiTests
         Assert.NotNull(before.QualityReason);
         Assert.Empty(before.CompatibleUnits!);
 
-        cache.Replace("account-a", [State("sensor.room", "21.5")]);
-        cache.MarkConnected("account-a");
+        await host.WithServicesAsync(async services =>
+        {
+            var revision = (await services.GetRequiredService<PrisstyrningDbContext>().HomeAssistantConnections.SingleAsync()).UpdatedAtUtc;
+            var session = cache.BeginSession("account-a", revision)!;
+            cache.BeginSnapshot(session);
+            cache.PublishSnapshot(session, [State("sensor.room", "21.5")]);
+        });
         var after = Assert.Single((await browser.Client.GetFromJsonAsync<ThermalEntityStateDto[]>("/api/home-assistant/entities"))!);
         Assert.Equal(DataQuality.Valid, after.Quality);
         Assert.Equal(["°C"], after.CompatibleUnits);
@@ -183,6 +188,7 @@ public sealed class HomeAssistantEntityCatalogApiTests
 
     private static async Task SeedAsync(AccountApiTestHost host, string userId, string state, int staleAfterMinutes = 10, bool takeSnapshot = true)
     {
+        var revision = DateTimeOffset.UtcNow.AddHours(-1);
         await host.WithServicesAsync(async services =>
         {
             var db = services.GetRequiredService<PrisstyrningDbContext>();
@@ -191,12 +197,13 @@ public sealed class HomeAssistantEntityCatalogApiTests
                 UserId = userId, BaseUrl = "https://ha.example.test", TelemetryEnabled = true,
                 TelemetryTokenCiphertext = "ciphertext-must-not-be-returned",
                 ControlTokenCiphertext = "control-ciphertext-must-not-be-returned", ControlEnabled = false,
-                StaleAfterMinutes = staleAfterMinutes, UpdatedAtUtc = DateTimeOffset.UtcNow.AddHours(-1)
+                StaleAfterMinutes = staleAfterMinutes, UpdatedAtUtc = revision
             });
             db.ThermalSiteConfigs.Add(new ThermalSiteConfig { UserId = userId, ControlMode = "Legacy", DhwWriter = "Legacy" });
             await db.SaveChangesAsync();
         });
         var cache = host.Services.GetRequiredService<IHomeAssistantStateCache>();
+        cache.BeginSession(userId, revision);
         if (takeSnapshot) cache.Replace(userId, [State("sensor.room", state)]);
         else cache.Upsert(userId, State("sensor.room", state));
         cache.MarkConnected(userId);

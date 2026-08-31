@@ -389,6 +389,9 @@ export interface HomeAssistantStatus {
   lastSnapshotUtc: string | null;
   lastActivityUtc: string | null;
   cachedEntities: number;
+  // Additive; older responses are displayed as unverified, never assumed live.
+  phase?: 'NotConfigured' | 'Disabled' | 'Reloading' | 'Connecting' | 'Synchronizing' | 'Connected' | 'Reconnecting' | 'Disconnected';
+  configurationUpdatedAtUtc?: string | null;
 }
 
 export interface HomeAssistantConnection {
