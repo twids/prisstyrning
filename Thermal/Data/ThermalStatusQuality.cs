@@ -17,7 +17,8 @@ internal static class ThermalStatusQuality
         IEnumerable<ThermalRoomConfig> rooms,
         IEnumerable<ThermalEntityConfig> entities,
         DateTimeOffset now,
-        DateTimeOffset? configurationUpdatedUtc = null)
+        DateTimeOffset? configurationUpdatedUtc = null,
+        bool allowHistoryImport = false)
     {
         var enabledRooms = rooms.Where(x => x.Enabled).ToArray();
         var enabledEntities = entities.Where(x => x.Enabled).ToArray();
@@ -39,9 +40,10 @@ internal static class ThermalStatusQuality
         {
             var imported = source.ValueKind == JsonValueKind.String &&
                            string.Equals(source.GetString(), "HomeAssistantHistoryImport", StringComparison.OrdinalIgnoreCase);
-            return new(DataQuality.Unavailable, imported
-                ? "Importerad historik bekräftar inte givarnas aktuella status. Vänta på en ny liveinsamling."
-                : "Insamlingens källa kan inte bekräftas som liveinsamling.");
+            if (!imported || !allowHistoryImport)
+                return new(DataQuality.Unavailable, imported
+                    ? "Importerad historik bekräftar inte givarnas aktuella status. Vänta på en ny liveinsamling."
+                    : "Insamlingens källa kan inte bekräftas som liveinsamling.");
         }
         if (now - sample.TimestampUtc > TimeSpan.FromMinutes(10))
             return new(DataQuality.Stale, "Senaste sparade insamlingen är äldre än tio minuter. Aktuell datakvalitet kan inte bekräftas.");

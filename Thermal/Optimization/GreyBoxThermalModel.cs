@@ -36,7 +36,10 @@ public sealed record ThermalModelMetrics(
     double TwoHourMaeC,
     double DayMaeC,
     int TrainingSamples,
-    int ValidationSamples);
+    int ValidationSamples,
+    int TwoHourValidationWindows = 0,
+    int DayValidationWindows = 0,
+    int ValidationVersion = 0);
 
 public sealed record ThermalTrainingResult(GreyBoxParameters Parameters, ThermalModelMetrics Metrics);
 
@@ -66,31 +69,42 @@ public sealed class GreyBoxThermalModel
     public ThermalTrainingResult Train(IReadOnlyList<ThermalObservation> observations)
     {
         if (observations.Count < 288) throw new ArgumentException("At least one day of five-minute observations is required.");
+        if (observations.Any(x => !IsUsableObservation(x)))
+            throw new ArgumentException("Thermal observations must have finite values and valid timestamps.", nameof(observations));
         var ordered = observations.OrderBy(x => x.TimestampUtc).ToArray();
+        if (ordered.Select(x => x.TimestampUtc).Distinct().Count() != ordered.Length)
+            throw new ArgumentException("Duplicate thermal observation timestamps are not valid training data.", nameof(observations));
         var split = Math.Clamp((int)(ordered.Length * 0.8), 200, ordered.Length - 50);
         var training = ordered[..split];
-        var validation = ordered[(split - 1)..];
-        var baseline = Optimize(new GreyBoxParameters(2, 35, 0.35, 0.8, 0.95, 35, -0.45), training, includeWeather: false);
-        var parameters = baseline;
+        // The last 20% is held out from fitting AND weather-feature selection.
+        var validation = ordered[split..];
         var weatherCoverage = training.Count(x => x.WindSpeedMps is not null && x.SolarIrradianceWm2 is not null) /
                               (double)training.Length;
-        if (weatherCoverage >= 0.8)
+        var tuningSplit = Math.Max(200, (int)(training.Length * .8));
+        var useTuning = weatherCoverage >= .8 && training.Length - tuningSplit >= 25;
+        var fitting = useTuning ? training[..tuningSplit] : training;
+        var baseline = Optimize(new GreyBoxParameters(2, 35, 0.35, 0.8, 0.95, 35, -0.45), fitting, includeWeather: false);
+        var parameters = baseline;
+        if (useTuning)
         {
-            var weatherCandidate = Optimize(baseline, training, includeWeather: true);
-            if (HorizonMae(validation, weatherCandidate, 24) + 0.01 < HorizonMae(validation, baseline, 24))
+            var tuning = training[tuningSplit..];
+            var weatherCandidate = Optimize(baseline, fitting, includeWeather: true);
+            var candidateScore = HorizonMae(tuning, weatherCandidate, 24);
+            var baselineScore = HorizonMae(tuning, baseline, 24);
+            if (candidateScore.Windows > 0 && baselineScore.Windows > 0 && candidateScore.Mae + .01 < baselineScore.Mae)
                 parameters = weatherCandidate;
         }
 
         parameters = parameters with
         {
-            BaseCurveInterceptC = FitBaseCurve(training).Intercept,
-            BaseCurveSlope = FitBaseCurve(training).Slope
+            BaseCurveInterceptC = FitBaseCurve(fitting).Intercept,
+            BaseCurveSlope = FitBaseCurve(fitting).Slope
         };
+        var twoHour = HorizonMae(validation, parameters, 24);
+        var day = HorizonMae(validation, parameters, 288);
         var metrics = new ThermalModelMetrics(
-            HorizonMae(validation, parameters, 24),
-            HorizonMae(validation, parameters, 288),
-            training.Length,
-            validation.Length);
+            twoHour.Mae, day.Mae, fitting.Length, validation.Length,
+            twoHour.Windows, day.Windows, ValidationVersion: 1);
         return new ThermalTrainingResult(parameters, metrics);
     }
 
@@ -147,19 +161,22 @@ public sealed class GreyBoxThermalModel
             count++;
             mass = predicted.MassTemperatureC;
         }
-        return count == 0 ? double.MaxValue : total / count;
+        return count == 0 || !double.IsFinite(total) ? double.MaxValue : total / count;
     }
 
-    private double HorizonMae(IReadOnlyList<ThermalObservation> observations, GreyBoxParameters parameters, int horizonSteps)
+    private (double Mae, int Windows) HorizonMae(IReadOnlyList<ThermalObservation> observations, GreyBoxParameters parameters, int horizonSteps)
     {
         var total = 0d;
         var count = 0;
-        var actualHorizon = Math.Min(horizonSteps, observations.Count - 1);
-        var stride = Math.Max(1, actualHorizon / 8);
-        for (var start = 0; start + actualHorizon < observations.Count; start += stride)
+        // Never shorten a named horizon or integrate across unobserved gaps.
+        var stride = Math.Max(1, horizonSteps / 8);
+        for (var start = 0; start + horizonSteps < observations.Count; start += stride)
         {
+            if (Enumerable.Range(start, horizonSteps).Any(index =>
+                    observations[index + 1].TimestampUtc - observations[index].TimestampUtc != TimeSpan.FromMinutes(5)))
+                continue;
             var state = new ThermalState(observations[start].AirTemperatureC, observations[start].AirTemperatureC);
-            for (var offset = 0; offset < actualHorizon; offset++)
+            for (var offset = 0; offset < horizonSteps; offset++)
             {
                 var current = observations[start + offset];
                 var next = observations[start + offset + 1];
@@ -172,11 +189,21 @@ public sealed class GreyBoxThermalModel
                     current.WindSpeedMps ?? 0,
                     current.SolarIrradianceWm2 ?? 0);
             }
-            total += Math.Abs(state.AirTemperatureC - observations[start + actualHorizon].AirTemperatureC);
+            if (!double.IsFinite(state.AirTemperatureC) || !double.IsFinite(state.MassTemperatureC))
+                return (double.MaxValue, 0);
+            total += Math.Abs(state.AirTemperatureC - observations[start + horizonSteps].AirTemperatureC);
             count++;
         }
-        return count == 0 ? double.MaxValue : total / count;
+        return count == 0 || !double.IsFinite(total) ? (double.MaxValue, 0) : (total / count, count);
     }
+
+    internal static bool IsUsableObservation(ThermalObservation value) =>
+        value.TimestampUtc != default && double.IsFinite(value.AirTemperatureC) &&
+        double.IsFinite(value.OutsideTemperatureC) && double.IsFinite(value.HeatOutputKw) && value.HeatOutputKw >= 0 &&
+        FiniteOptional(value.LeavingWaterTemperatureC) && FiniteOptional(value.BrineTemperatureC) &&
+        FiniteOptional(value.Cop) && FiniteOptional(value.WindSpeedMps) && FiniteOptional(value.SolarIrradianceWm2);
+
+    private static bool FiniteOptional(double? value) => value is null || double.IsFinite(value.Value);
 
     private static (double Intercept, double Slope) FitBaseCurve(IEnumerable<ThermalObservation> observations)
     {

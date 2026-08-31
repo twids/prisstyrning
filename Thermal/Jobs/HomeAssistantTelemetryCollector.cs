@@ -183,6 +183,7 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
         {
             connectionRevisionUtc = connection.UpdatedAtUtc,
             collectedAtUtc = now,
+            heatingDeviationC = Numeric(values, ThermalEntityRoles.HeatingDeviation),
             entities = values.ToDictionary(x => x.Key, x => new { x.Value.Quality, x.Value.Reason, x.Value.Excluded }),
             rooms = roomAssessments.ToDictionary(x => x.Key, x => new { x.Value.Quality, x.Value.Reason, x.Value.Excluded }),
             forecast = new { weatherForecast.Quality, weatherForecast.Reason, points = weatherForecast.Points.Count }

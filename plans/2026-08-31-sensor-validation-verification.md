@@ -71,7 +71,7 @@ Kontrollerat **2026-08-31 omkring 10:07 CEST / 08:07 UTC**:
 ## Nästa avgränsning och kvarvarande acceptans
 
 1. Granska den samlade lokala serien och kör tillämplig CI inför eventuell motiverad felrättningsrelease genom **samma** Dockhand-stack med befintlig rollbackväg. Den tidigare adminraderingsspärren är ännu inte driftsatt; använd inte den gamla raderingsfunktionen. Gör inte en deploy bara för att en automation körs.
-2. Fortsätt datavalideringen vid modellträning och övriga beredskapsgrindar, särskilt redan sparade äldre värden, modellmåttens format/ändlighet, prognosluckor samt hur verkliga uppvärmningsdygn skiljs från importerade/felaktiga rader. Här stärktes livekraven och 21-dagarstelemetritäckningen, inte hela acceptansmodellen.
+2. Den avgränsade uppföljningen av sparade träningsvärden, modellmått, kompletta valideringsfönster, prognosluckor och uppvärmningsdygn är nu lokalt genomförd i [modellunderlagsrapporten](2026-08-31-model-evidence-verification.md), inklusive modell-UX. Återstående modellkonsumenter, revisionsbunden proveniens och verklighetsacceptans är fortfarande öppna; detta är inte ett godkännande av hela styrkedjan.
 3. Granska revisionsbindning för en hel fler-entity-historikimport, samtidiga imports/liveinsamling och kontinuitet över omstarter. Processlokal sensorhälsa och inställningslås är inte en flerinstanslösning. Rådata med saknad `last_updated` avvisas avsiktligt; verklig HA-/Recorder-kompatibilitet måste verifieras innan modellträningens täckning bedöms.
 4. Verklig kontoägd HA-konfiguration, inloggad UI-acceptans, PostgreSQL-/nätverksprov och husets Shadow-, modell-, grundkurve-, DHW- och hygienkrav återstår. Kodtesterna bevisar inte en fysisk DHW-cykel eller att aktiv styrning kan godkännas.
 

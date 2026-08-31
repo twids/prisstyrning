@@ -78,7 +78,7 @@ export function MetricCard({ label, value, detail, icon, accent = '#69d4c0', loa
       <Stack direction="row" justifyContent="space-between" alignItems="flex-start" gap={2}>
         <Box>
           <Typography variant="body2" color="text.secondary" fontWeight={650}>{label}</Typography>
-          {loading ? <Skeleton width={100} height={44} /> : <Typography variant="h4" sx={{ mt: .5, letterSpacing: '-0.03em' }}>{value}</Typography>}
+          {loading ? <Skeleton width={100} height={44} /> : <Typography variant="h4" component="p" sx={{ mt: .5, letterSpacing: '-0.03em' }}>{value}</Typography>}
           {detail && <Typography variant="body2" color="text.secondary" sx={{ mt: .7 }}>{detail}</Typography>}
         </Box>
         {icon && <Box sx={{ color: accent, opacity: .9 }}>{icon}</Box>}

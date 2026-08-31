@@ -30,40 +30,40 @@ public sealed class CopModelTrainingJob
 
     internal async Task TrainUserAsync(string userId, CancellationToken cancellationToken)
     {
-        var from = DateTimeOffset.UtcNow.AddDays(-60);
-        var observations = await _db.ThermalTelemetrySamples.AsNoTracking()
-            .Where(x => x.UserId == userId && x.TimestampUtc >= from && x.BackupHeaterActive != true &&
+        if (!await _db.ThermalSiteConfigs.AsNoTracking().AnyAsync(x => x.UserId == userId && x.HeatPumpPowerSignVerified, cancellationToken)) return;
+        var now = DateTimeOffset.UtcNow;
+        var from = now.AddDays(-60);
+        var entities = await _db.ThermalEntityConfigs.AsNoTracking().Where(x => x.UserId == userId && x.Enabled).ToListAsync(cancellationToken);
+        var samples = await _db.ThermalTelemetrySamples.AsNoTracking()
+            .Where(x => x.UserId == userId && x.TimestampUtc >= from && x.TimestampUtc <= now && x.BackupHeaterActive == false && x.DefrostActive == false &&
                         x.BrineInC != null && x.LeavingWaterTemperatureC != null &&
                         x.HeatOutputKw != null && x.Cop != null && x.Cop >= 1.2 && x.Cop <= 8 &&
                         x.HeatOutputKw > 0.5)
             .OrderBy(x => x.TimestampUtc)
-            .Select(x => new CopObservation(
-                x.TimestampUtc,
-                x.BrineInC!.Value,
-                x.LeavingWaterTemperatureC!.Value,
-                x.HeatOutputKw!.Value,
-                x.Cop!.Value))
             .ToListAsync(cancellationToken);
-        if (observations.Count < 500) return;
+        var observations = samples.GroupBy(x => x.TimestampUtc).Where(x => x.Count() == 1)
+            .Select(x => ThermalModelTrainingData.Cop(x.Single(), entities, now)).Where(x => x is not null).Cast<CopObservation>().ToArray();
+        if (observations.Length < 500) return;
 
         var result = _model.Train(observations);
-        var accepted = result.Metrics.Mae <= 0.5;
         var previous = await _db.ThermalModelVersions
             .Where(x => x.UserId == userId && x.ModelType == "COP" && x.IsActive)
             .OrderByDescending(x => x.CreatedAtUtc)
             .FirstOrDefaultAsync(cancellationToken);
-        if (accepted && previous is not null) previous.IsActive = false;
-        _db.ThermalModelVersions.Add(new ThermalModelVersion
+        var version = new ThermalModelVersion
         {
             UserId = userId,
             ModelType = "COP",
             CreatedAtUtc = DateTimeOffset.UtcNow,
             TrainingFromUtc = observations[0].TimestampUtc,
             TrainingToUtc = observations[^1].TimestampUtc,
-            IsActive = accepted,
             ParametersJson = JsonSerializer.Serialize(result.Parameters, CamelCase),
             MetricsJson = JsonSerializer.Serialize(result.Metrics, CamelCase)
-        });
+        };
+        var accepted = ThermalModelEvidence.Assess(version, DateTimeOffset.UtcNow).Passed;
+        version.IsActive = accepted;
+        if (accepted && previous is not null) previous.IsActive = false;
+        _db.ThermalModelVersions.Add(version);
 
         if (accepted && previous is not null && MateriallyChanged(previous.ParametersJson, result.Parameters))
         {

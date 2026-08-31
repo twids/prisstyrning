@@ -381,6 +381,19 @@ export interface ThermalModelVersion {
   isActive: boolean;
   parametersJson: string;
   metricsJson: string;
+  validation?: ThermalModelValidation;
+}
+
+export interface ThermalModelValidation {
+  passed: boolean;
+  status: 'Missing' | 'Invalid' | 'Unproven' | 'Insufficient' | 'Validated' | 'ThresholdExceeded';
+  reason: string;
+  checkedAtUtc: string;
+  twoHourMaeC: number | null;
+  dayMaeC: number | null;
+  copMae: number | null;
+  twoHourValidationWindows: number | null;
+  dayValidationWindows: number | null;
 }
 
 export interface HomeAssistantStatus {

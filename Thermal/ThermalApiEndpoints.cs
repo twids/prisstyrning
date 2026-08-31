@@ -103,16 +103,6 @@ public static class ThermalApiEndpoints
             return Results.Ok(cycles);
         });
 
-        thermal.MapGet("/models", async (HttpContext context, PrisstyrningDbContext db, CancellationToken cancellationToken) =>
-        {
-            var models = await db.ThermalModelVersions.AsNoTracking()
-                .Where(x => x.UserId == UserId(context))
-                .OrderByDescending(x => x.CreatedAtUtc)
-                .Take(100)
-                .ToListAsync(cancellationToken);
-            return Results.Ok(models);
-        });
-
         thermal.MapPost("/mode", async (
             HttpContext context,
             ThermalModeRequest request,
@@ -294,7 +284,25 @@ public static class ThermalApiEndpoints
             }
         });
         thermal.MapGet("/status", GetStatusAsync);
+        thermal.MapGet("/models", GetModelsAsync);
         return thermal;
+    }
+
+    private static async Task<IResult> GetModelsAsync(
+        HttpContext context, PrisstyrningDbContext db, CancellationToken cancellationToken)
+    {
+        var models = await db.ThermalModelVersions.AsNoTracking()
+            .Where(x => x.UserId == UserId(context)).OrderByDescending(x => x.CreatedAtUtc)
+            .Take(100).ToListAsync(cancellationToken);
+        var now = DateTimeOffset.UtcNow;
+        // Existing fields keep their meaning; this read-only assessment neither
+        // edits the stored active marker nor approves a mode transition.
+        return Results.Ok(models.Select(model => new
+        {
+            model.Id, model.ModelType, model.CreatedAtUtc, model.TrainingFromUtc, model.TrainingToUtc,
+            model.IsActive, model.ParametersJson, model.MetricsJson,
+            validation = ThermalModelEvidence.Assess(model, now)
+        }));
     }
 
     private static async Task<IResult> GetStatusAsync(

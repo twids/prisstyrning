@@ -135,6 +135,30 @@ public sealed class HomeAssistantCollectorValidationTests
     }
 
     [Theory]
+    [InlineData("0", 0d)]
+    [InlineData("0.5", .5)]
+    [InlineData("unknown", null)]
+    public async Task Collect_RecordsMeasuredDeviationForCurveEvidenceWithoutIssuingWrites(string raw, double? expected)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+            db.ThermalEntityConfigs.Add(new ThermalEntityConfig { UserId = "account-a", Role = ThermalEntityRoles.HeatingDeviation, EntityId = "number.heating_deviation", ExpectedUnit = "°C" });
+            await db.SaveChangesAsync();
+        }
+        var deviation = new HomeAssistantState("number.heating_deviation", raw,
+            new JsonObject { ["unit_of_measurement"] = "°C" }, fixture.Now, fixture.Now, fixture.Now);
+        Assert.True(fixture.Cache.ApplyEvent(fixture.Session, new(deviation.EntityId, deviation, fixture.Now)));
+
+        await fixture.CollectAsync(0);
+        var quality = JsonNode.Parse((await fixture.LatestAsync()).QualityJson)!;
+
+        Assert.Equal(expected, quality["heatingDeviationC"]?.GetValue<double>());
+        await fixture.AssertLegacyAsync();
+    }
+
+    [Theory]
     [InlineData("future-sample", "telemetry-fresh")]
     [InlineData("imported-sample", "telemetry-quality")]
     [InlineData("new-configuration", "ha-snapshot")]

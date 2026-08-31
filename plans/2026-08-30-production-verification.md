@@ -10,6 +10,8 @@ Verklig ONECTA-skrivning lyckades kl. 19:52:54 UTC / 21:52:54 CEST. Loggen inneh
 
 Även ordinarie automatisk körning är nu verifierad: samma record gav `apply OK` och `Applied` 2026-08-31 kl. 01:35:03 CEST. Ingen ny engångstriggning gjordes; ett separat fel för samma äldre record finns fortfarande kvar.
 
+Senare read-only-kontroll omkring 17:35 CEST bekräftade oförändrad drift. Ordinarie 13:35-jobb slutfördes, men recordet med tidigare lyckad skrivning hade ingen schemaläggbar åtgärd och gjorde ingen ny skrivning. Det äldre separata recordets `Apply failed` kvarstod. Se den tidsstämplade uppföljningen nedan; detta ersätter inte den tidigare accepterade skrivningens evidens.
+
 ## Hotfixar och kontroller
 
 - Första .NET 10-imagen startade inte eftersom statiska `RecurringJob.AddOrUpdate` användes innan Hangfires storage initierats. Känd legacy-compose/image återställdes via Dockhand. PR #119 bytte till DI-upplöst `IRecurringJobManager`; jobb-ID:n, cron, tidszoner och handlers behölls.
@@ -117,6 +119,23 @@ De nio skipparna är befintliga tester som kräver nätverk eller saknar full HT
 - Inga nya `apply OK`/`Applied`/`Apply failed`-markörer från 05:19:28 till 08:07:44 UTC. Ingen testsändning, schematrigger eller deploy gjordes.
 - Den föregående HA-omladdningen sparades som lokal commit `c67f1d1`. [Sensorvalideringsrapporten](2026-08-31-sensor-validation-verification.md) beskriver nästa lokala kodleverans: säker sensor-/tidsvalidering, komplett historikanrop, striktare telemetrikrav, lägesguidens felåterhämtning/mobilvy och 871/6 backendtester, 171 UI-tester samt 22 tillämpliga browserflöden. Inget av detta är driftsatt.
 - Inga kontoinställningar, kontoägare, credentials, rättigheter eller aktiveringsspärrar ändrades. Fortsatt arbete och kvarvarande modell-/verklighetsacceptans är separata från den friska Legacy-driften.
+
+### Read-only-uppföljning 2026-08-31 omkring 11:13–11:17 CEST / 09:13–09:17 UTC
+
+- App, PostgreSQL och EMHASS körde med noll omstarter och oförändrade image-referenser.
+- Hälsa och anonym session gav 200 med oautentiserad session och booleskt verifierad CSRF-utgivning. Anonym thermal-status, HA-status och HA-katalog gav 401.
+- Explicit read-only databastransaktion bekräftade en konfiguration i `Legacy/Legacy` och noll termiska styrkommandon.
+- Inga nya `apply OK`/`Applied`/`Apply failed`-markörer från 08:07:44 till 09:15:15 UTC. Inget extra jobb eller någon deploy gjordes.
+
+### Ordinarie 13:35-jobb och read-only-uppföljning 2026-08-31 omkring 17:35 CEST / 15:35 UTC
+
+- App, PostgreSQL och EMHASS körde med samma image-referenser och noll omstarter. Hälsa och anonym session gav 200, sessionen var oautentiserad med verifierad CSRF-utgivning. Anonym thermal-status, HA-status och HA-katalog gav 401.
+- Explicit read-only databastransaktion bekräftade en konfiguration i `Legacy/Legacy` och noll termiska styrkommandon.
+- 13:35-jobbet startade 11:35:02.493 UTC och slutfördes 11:35:02.893 UTC: två behandlade record, noll fångade jobbundantag. Recordet med tidigare lyckad skrivning hade `generated=False` och ingen schemaläggbar åtgärd. Detta är **inte en ny accepterad skrivning**.
+- `Apply failed` 11:35:02.791 UTC matchade samma äldre misslyckade record som vid 01:35. Jämförelsen redovisade endast boolesk matchning, inga konto-ID:n. Noll jobbundantag betyder inte noll misslyckade skrivförsök. Inga konto-/credentialändringar gjordes för att dölja felet.
+- Inga `apply OK`/`Applied`-markörer från 09:15:15 till 15:36:19 UTC. Ingen testsändning, schematrigger, omstart, deploy eller aktivering gjordes. Den tidigare accepterade 01:35-skrivningen är fortsatt tidigare evidens, inte verifiering av en fysisk DHW-cykel.
+- [Separat lokal modellrapport](2026-08-31-model-evidence-verification.md) redovisar kompletta valideringsfönster, striktare tränings-/uppvärmningsdygnsevidens, säker modell-UX och **980/6 backendtester, 200 UI-tester och 24 tillämpliga browserflöden**. Inget av detta är publicerat eller driftsatt. Modellkonsumenter, revisionsbunden proveniens och verklighetsacceptans återstår.
+- Endast sanerade statusar/resultat visades, inga hemligheter eller råloggar. Ett citeringsfel i första skrivskyddade Docker-inspektionens utdataformat rättades före lyckad avläsning; inga containrar ändrades.
 
 ## Rollback
 

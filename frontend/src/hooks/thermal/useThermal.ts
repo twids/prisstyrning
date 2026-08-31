@@ -83,6 +83,7 @@ export function useThermalModels() {
   return useQuery({
     queryKey: ['thermal', 'models'],
     queryFn: () => apiClient.getThermalModels(),
+    refetchInterval: 60_000,
   });
 }
 
