@@ -48,6 +48,37 @@ public sealed class ThermalReadinessEvidenceTests
     }
 
     [Theory]
+    [InlineData(ControlMode.LwtActive, false)]
+    [InlineData(ControlMode.FullActive, false)]
+    [InlineData(ControlMode.LwtActive, true)]
+    [InlineData(ControlMode.FullActive, true)]
+    public async Task Readiness_AllActiveModesRequireValidatedCopAndVerifiedPower(ControlMode target, bool verified)
+    {
+        await using var fixture = new Fixture();
+        fixture.Db.ThermalSiteConfigs.Local.Single().HeatPumpPowerSignVerified = verified;
+        if (verified) fixture.Db.ThermalModelVersions.Add(ThermalModelEvidenceTests.ValidModel("COP", fixture.Now));
+        await fixture.Db.SaveChangesAsync();
+
+        var checks = await fixture.EvaluateAsync(target);
+
+        Assert.Equal(verified, checks.Single(x => x.Key == "power-sign").Passed);
+        Assert.Equal(verified, checks.Single(x => x.Key == "cop-model").Passed);
+        await fixture.AssertLegacyAsync();
+    }
+
+    [Fact]
+    public async Task Readiness_ShadowCanCollectTrainingDataBeforeCopOrPowerSignIsProven()
+    {
+        await using var fixture = new Fixture();
+        await fixture.Db.SaveChangesAsync();
+
+        var checks = await fixture.EvaluateAsync(ControlMode.Shadow);
+
+        Assert.DoesNotContain(checks, x => x.Key is "cop-model" or "power-sign");
+        await fixture.AssertLegacyAsync();
+    }
+
+    [Theory]
     [InlineData("isolated")]
     [InlineData("imported")]
     [InlineData("future")]

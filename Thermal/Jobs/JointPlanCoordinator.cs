@@ -53,6 +53,11 @@ public sealed class JointPlanCoordinator : BackgroundService
                     {
                         return;
                     }
+                    catch (ThermalPlanningEvidenceException exception)
+                    {
+                        _logger.LogWarning("Joint thermal planning is waiting for verified input for account {UserId}.", userId);
+                        await RecordPlanningFailureAsync(userId, exception.Message, stoppingToken, evidenceFailure: true);
+                    }
                     catch (Exception exception)
                     {
                         _logger.LogError(exception, "Joint thermal planning failed for user {UserId}.", userId);
@@ -97,6 +102,7 @@ public sealed class JointPlanCoordinator : BackgroundService
 
     internal async Task ReplanAsync(string userId, CancellationToken cancellationToken)
     {
+        if (!_options.Enabled) return;
         var memory = _memory.GetOrAdd(userId, static _ => new CoordinatorMemory());
         memory.LastAttemptUtc = DateTimeOffset.UtcNow;
         using var scope = _scopeFactory.CreateScope();
@@ -107,28 +113,18 @@ public sealed class JointPlanCoordinator : BackgroundService
         var telemetry = await db.ThermalTelemetrySamples.AsNoTracking().Where(x => x.UserId == userId)
             .OrderByDescending(x => x.TimestampUtc).FirstOrDefaultAsync(cancellationToken)
             ?? throw new InvalidOperationException("No thermal telemetry is available.");
-        if (DateTimeOffset.UtcNow - telemetry.TimestampUtc > TimeSpan.FromMinutes(10))
-            throw new InvalidOperationException("Thermal telemetry is stale.");
-
+        var models = await ThermalPlanningModels.ReadAsync(db, userId, telemetry.TimestampUtc, DateTimeOffset.UtcNow, cancellationToken);
+        site = models.Site;
+        mode = ThermalEnumParser.ControlModeOrLegacy(site.ControlMode);
         var horizonStart = FloorToQuarter(DateTimeOffset.UtcNow);
         var horizonSteps = _options.HorizonHours * 60 / _options.OptimizationTimeStepMinutes;
         var prices = await LoadPriceForecastAsync(db, userId, horizonStart, horizonSteps, site, cancellationToken);
-        var modelVersion = await db.ThermalModelVersions.AsNoTracking()
-            .Where(x => x.UserId == userId && x.ModelType == "2R2C" && x.IsActive)
-            .OrderByDescending(x => x.CreatedAtUtc).FirstOrDefaultAsync(cancellationToken);
-        var copModelVersion = await db.ThermalModelVersions.AsNoTracking()
-            .Where(x => x.UserId == userId && x.ModelType == "COP" && x.IsActive)
-            .OrderByDescending(x => x.CreatedAtUtc).FirstOrDefaultAsync(cancellationToken);
-        var parameters = DeserializeParameters(modelVersion?.ParametersJson);
-        var copParameters = DeserializeCopParameters(copModelVersion?.ParametersJson);
+        var parameters = models.Thermal;
         var copModel = scope.ServiceProvider.GetRequiredService<CopModel>();
-        var estimatedCop = copParameters is not null
-            ? copModel.Predict(
-                copParameters,
-                telemetry.BrineInC ?? 0,
-                telemetry.LeavingWaterTemperatureC ?? parameters.BaseCurveInterceptC,
-                telemetry.HeatOutputKw ?? 4)
-            : Math.Clamp(telemetry.Cop ?? 3, 1.2, 8);
+        var estimatedCop = copModel.Predict(models.Cop,
+            RequireFiniteInput(telemetry.BrineInC, "Köldbärartemperatur"),
+            RequireFiniteInput(telemetry.LeavingWaterTemperatureC, "Framledningstemperatur"),
+            RequireFiniteInput(telemetry.HeatOutputKw, "Avgiven värmeeffekt"));
         var roomTemperature = AverageRoomTemperature(telemetry.RoomTemperaturesJson) ?? site.BaseRoomTargetC;
         var outside = telemetry.OutsideTemperatureC ?? 0;
         var weather = BuildWeatherForecast(
@@ -193,13 +189,17 @@ public sealed class JointPlanCoordinator : BackgroundService
             2500,
             dhw?.Profile.PowerSteps.Max(x => x.ElectricPowerKw) * 1000 ?? 2500,
             site.TariffEnabled,
-            CapacityCost(site.TariffDefinitionJson));
+            CapacityCost(site.TariffDefinitionJson)) { ModelEvidence = models.Evidence };
+        await ThermalPlanningModels.EnsureCurrentAsync(db, userId, models.Evidence, DateTimeOffset.UtcNow, cancellationToken);
         var optimizer = scope.ServiceProvider.GetRequiredService<IEmhassOptimizationDispatcher>();
         var optimized = await optimizer.EnqueueAndWaitAsync(
             userId,
             "JointPlan",
             request,
             cancellationToken: cancellationToken);
+        // A rollback, retraining or settings change during the asynchronous solver
+        // must not be turned into a newly valid plan or a DHW schedule update.
+        await ThermalPlanningModels.EnsureCurrentAsync(db, userId, models.Evidence, DateTimeOffset.UtcNow, cancellationToken);
         var comfortBreach = optimized.Steps.FirstOrDefault(step =>
             step.PredictedTemperatureC is { } predicted && predicted < minimum[step.Index] - 0.01);
         if (comfortBreach is not null)
@@ -237,13 +237,14 @@ public sealed class JointPlanCoordinator : BackgroundService
             IsShadow = mode == ControlMode.Shadow,
             SolverDurationMs = optimized.SolverDurationMs,
             ObjectiveCost = optimized.ObjectiveCost + (dhw?.Selected?.TotalCostSek ?? 0),
-            Confidence = modelVersion is null ? 0.25 : copModelVersion is null ? 0.6 : 0.85,
+            Confidence = 0.85,
             Summary = dhw?.Result.Reason.MainReason ?? "Husvärme optimerad utan DHW-reservation.",
             InputSnapshotJson = JsonSerializer.Serialize(new
             {
                 telemetry.TimestampUtc,
-                modelVersionId = modelVersion?.Id,
-                copModelVersionId = copModelVersion?.Id,
+                modelVersionId = models.Evidence.ThermalModelVersionId,
+                copModelVersionId = models.Evidence.CopModelVersionId,
+                modelEvidence = models.Evidence,
                 estimatedCop,
                 dhw = dhw?.Selected,
                 priceForecast = prices.ActualCoverage,
@@ -543,26 +544,11 @@ public sealed class JointPlanCoordinator : BackgroundService
     private static DateTimeOffset? NextStart(IReadOnlyList<PricePoint> points, DateTimeOffset current) =>
         points.FirstOrDefault(x => x.StartUtc > current)?.StartUtc;
 
-    private static GreyBoxParameters DeserializeParameters(string? json)
+    private static double RequireFiniteInput(double? value, string label)
     {
-        try { return JsonSerializer.Deserialize<GreyBoxParameters>(json ?? "") ?? new(2, 35, 0.35, 0.8, 0.95, 35, -0.45); }
-        catch (JsonException) { return new(2, 35, 0.35, 0.8, 0.95, 35, -0.45); }
-    }
-
-    private static CopParameters? DeserializeCopParameters(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json)) return null;
-        try
-        {
-            return JsonSerializer.Deserialize<CopParameters>(json, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
+        if (value is null || !double.IsFinite(value.Value))
+            throw new ThermalPlanningEvidenceException($"{label} saknas eller är ogiltig. Invänta giltiga mätvärden innan kostnadsoptimering.");
+        return value.Value;
     }
 
     private static double? AverageRoomTemperature(string json)
@@ -651,7 +637,7 @@ public sealed class JointPlanCoordinator : BackgroundService
         };
     }
 
-    private async Task RecordPlanningFailureAsync(string userId, string message, CancellationToken cancellationToken)
+    internal async Task RecordPlanningFailureAsync(string userId, string message, CancellationToken cancellationToken, bool evidenceFailure = false)
     {
         var memory = _memory.GetOrAdd(userId, static _ => new CoordinatorMemory());
         var now = DateTimeOffset.UtcNow;
@@ -667,7 +653,9 @@ public sealed class JointPlanCoordinator : BackgroundService
                 TimestampUtc = now,
                 Severity = "Warning",
                 Category = "Optimizer",
-                Message = "Ingen ny plan skapades; senaste giltiga plan får användas i högst 60 minuter.",
+                Message = evidenceFailure
+                    ? $"Planeringen inväntar verifierat underlag. {message} Ingen ny plan skapades; senaste giltiga plan får användas i högst 60 minuter från att den skapades."
+                    : "Ingen ny plan skapades; senaste giltiga plan får användas i högst 60 minuter från att den skapades.",
                 DetailsJson = JsonSerializer.Serialize(new { error = message })
             });
             await db.SaveChangesAsync(cancellationToken);

@@ -33,7 +33,10 @@ public sealed record EmhassOptimizationRequest(
     double HeatPumpElectricPowerW,
     double DhwElectricPowerW,
     bool TariffEnabled = false,
-    double CapacityCostPerKw = 0);
+    double CapacityCostPerKw = 0)
+{
+    public ThermalPlanningModelEvidence? ModelEvidence { get; init; }
+}
 
 public sealed record EmhassOptimizationStep(
     int Index,

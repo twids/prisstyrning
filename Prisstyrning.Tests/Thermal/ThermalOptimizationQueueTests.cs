@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -97,6 +99,88 @@ public sealed class ThermalOptimizationQueueTests
         Assert.Equal(0, snapshot.Pending);
         Assert.Equal(0, snapshot.Running);
         Assert.NotNull(snapshot.LastFailedUtc);
+    }
+
+    [Fact]
+    public async Task ReplacedRequest_NeverReturnsAnotherCalculationsResultToOldCaller()
+    {
+        await using var services = Services();
+        var queue = Queue(services);
+        var waiting = queue.EnqueueAndWaitAsync("account-a", "JointPlan", Request(.5m));
+        await queue.EnqueueOrCoalesceAsync("account-a", "Prices", Request(1.25m), 0, CancellationToken.None);
+        var claimed = await ClaimEventuallyAsync(queue, "worker-a");
+        await queue.CompleteAsync(claimed, new([new(0, 1200, 21, 1.25)], 100, .3m), CancellationToken.None);
+
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => waiting);
+    }
+
+    [Fact]
+    public async Task JsonbFormatting_DoesNotChangeTheCalculationAwaitedByCoordinator()
+    {
+        await using var services = Services();
+        var queue = Queue(services);
+        var waiting = queue.EnqueueAndWaitAsync("account-a", "JointPlan", Request(.5m));
+        await using (var scope = services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+            var job = await db.ThermalOptimizationJobs.SingleAsync();
+            var original = JsonNode.Parse(job.RequestJson)!.AsObject();
+            var reordered = new JsonObject(original.Reverse().Select(x => KeyValuePair.Create(x.Key, x.Value?.DeepClone())));
+            job.RequestJson = reordered.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+            await db.SaveChangesAsync();
+        }
+        var claimed = await ClaimEventuallyAsync(queue, "worker-a");
+        await queue.CompleteAsync(claimed, new([new(0, 1200, 21, .5)], 100, .3m), CancellationToken.None);
+
+        Assert.Equal(.3m, (await waiting).ObjectiveCost);
+    }
+
+    [Fact]
+    public async Task ReplacedRequest_LatestCallerStillReceivesItsOwnResult()
+    {
+        await using var services = Services();
+        var queue = Queue(services);
+        var old = queue.EnqueueAndWaitAsync("account-a", "JointPlan", Request(.5m));
+        var latest = queue.EnqueueAndWaitAsync("account-a", "Prices", Request(1.25m));
+        var claimed = await ClaimEventuallyAsync(queue, "worker-a");
+        await queue.CompleteAsync(claimed, new([new(0, 1200, 21, 1.25)], 100, .3m), CancellationToken.None);
+
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => old);
+        Assert.Equal(1.25, Assert.Single((await latest).Steps).UnitCost);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task ExpiredAttempt_CannotCompleteOrFailEvenIfSameWorkerReclaimsLease(bool reclaim, bool fail)
+    {
+        await using var services = Services();
+        var queue = Queue(services);
+        await queue.EnqueueOrCoalesceAsync("account-a", "JointPlan", Request(.5m), 0, CancellationToken.None);
+        var old = await ClaimEventuallyAsync(queue, "worker-a");
+        await using (var scope = services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+            (await db.ThermalOptimizationJobs.SingleAsync()).LeaseExpiresAtUtc = DateTimeOffset.UtcNow.AddSeconds(-1);
+            await db.SaveChangesAsync();
+        }
+        var current = reclaim ? await ClaimEventuallyAsync(queue, "worker-a") : null;
+        if (reclaim) Assert.Equal(2, current!.AttemptCount);
+
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => fail
+            ? queue.FailAsync(old, "expired solver", CancellationToken.None)
+            : queue.CompleteAsync(old, new([], 100, 0), CancellationToken.None));
+
+        await using var checkScope = services.CreateAsyncScope();
+        Assert.Equal(ThermalOptimizationJobStatuses.Running,
+            (await checkScope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>().ThermalOptimizationJobs.SingleAsync()).Status);
+        if (current is not null)
+        {
+            await queue.CompleteAsync(current, new([], 100, 0), CancellationToken.None);
+            Assert.NotNull((await queue.GetSnapshotAsync("account-a", CancellationToken.None)).LastCompletedUtc);
+        }
     }
 
     private static async Task<ClaimedThermalOptimizationJob> ClaimEventuallyAsync(

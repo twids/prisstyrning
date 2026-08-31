@@ -77,7 +77,7 @@ Förnyad kontroll **17:35–17:38 CEST / 15:35–15:38 UTC**:
 
 ## Nästa avgränsning och kvarvarande acceptans
 
-1. Använd samma modellbedömning även vid de återstående konsumentgränserna i optimerare/koordinator. De läser ännu aktiva modeller separat. Ett modell-API och en grön syntetisk svit är inte verifiering av hela den aktiva styrkedjan.
+1. Modellbedömningen vid optimerare/koordinator är nu införd och lokalt testad i [efterföljande konsumentrapport](2026-08-31-planning-model-consumption-verification.md), fortfarande utan driftsättning. Slutlig solver-/planvalidering, konsumtion av redan sparade planer och revisioner vid fysisk skrivning återstår. Ett modell-API och en grön syntetisk svit är inte verifiering av hela den aktiva styrkedjan.
 2. Bind sparade modeller och telemetri till verifierad konfigurations-/entity-revision. Dagens kvalitetsmetadata kan inte återskapa all råproveniens för äldre rader. En hel fler-entity-import, samtidiga imports/liveinsamling och omstartskontinuitet behöver egen granskning. Processlokala lås och sensorhälsa är inte en flerinstanslösning.
 3. Utvärdera representativ träningsdata och driftfaser i verklig anläggning. Avfrostningsluckor får fortfarande inte beskrivas som kompletta dygn; installationer med sådana faser kan behöva vidare modellarbete. Nuvarande uppvärmningsdygnskrav bevisar observation och husvärme, inte att väderförhållandena varit representativa. Återstående DHW-/hygiengrindar är inte slutgranskade här.
 4. Kontoägd HA-konfiguration, inloggad produktions-UX, PostgreSQL-/nätverksprov, verkliga Shadow-dygn, grundkurveprov, DHW-/hygiencykler och normaliserad besparingsjämförelse återstår. LWT/FullActive får inte aktiveras utifrån denna leverans.

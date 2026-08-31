@@ -137,6 +137,13 @@ De nio skipparna är befintliga tester som kräver nätverk eller saknar full HT
 - [Separat lokal modellrapport](2026-08-31-model-evidence-verification.md) redovisar kompletta valideringsfönster, striktare tränings-/uppvärmningsdygnsevidens, säker modell-UX och **980/6 backendtester, 200 UI-tester och 24 tillämpliga browserflöden**. Inget av detta är publicerat eller driftsatt. Modellkonsumenter, revisionsbunden proveniens och verklighetsacceptans återstår.
 - Endast sanerade statusar/resultat visades, inga hemligheter eller råloggar. Ett citeringsfel i första skrivskyddade Docker-inspektionens utdataformat rättades före lyckad avläsning; inga containrar ändrades.
 
+### Lokal kodverifiering 2026-08-31 – ingen ny driftåtgärd
+
+- [Modellkonsument- och körapporten](2026-08-31-planning-model-consumption-verification.md) redovisar gemensam modellbedömning före/efter optimering, revisionssnapshot för beräkningsunderlag, säker request-/lease-hantering och tydligare händelsehistorik på svenska.
+- Slutlig lokal verifiering: **1 029 godkända backendtester/6 befintliga undantag, 207 UI-tester och 26 tillämpliga browserflöden/6 projektexkluderingar**. .NET 10 Release och TypeScript/Vite är godkända. Inga fel i slutkörningarna.
+- Ingen ny produktionsavläsning, publicering, deploy, kontoförändring, testsändning eller aktivering ingick. Ovanstående 17:35-avläsning är tidigare driftbevis, inte ny verifiering i denna leverans. Alla nya ändringar är lokala och Legacydriften har inte ändrats av arbetet.
+- Historisk träningsproveniens, slutlig plan-/skrivvalidering, PostgreSQL-konkurrensprov och fysisk Shadow/DHW-acceptans återstår; intelligent styrning är inte driftgodkänd.
+
 ## Rollback
 
 Vanlig rollback görs i samma Dockhand-stack utan databasåterläsning. Behåll de additiva tabellerna och krypteringsnyckeln.
@@ -158,10 +165,10 @@ Vanlig rollback görs i samma Dockhand-stack utan databasåterläsning. Behåll 
 - Säkerhetsuppföljning: en tidigare rå verktygsvy från Compose-redigeraren återgav credentialvärden i uppgiftsloggen. Värdena finns inte i denna dokumentation eller i hotfix-committen. Rotera berörda HA-/Daikin OAuth-credentials via respektive tjänsts normala flöde och uppdatera skyddad driftkonfiguration under kontrollerade former. Ingen rotation eller återkallelse har genomförts här.
 - Full intelligent styrning är inte driftgodkänd: verkliga Shadow-dagar, värmekurvetest, komfort-/modellmått och DHW-cykelverifiering enligt planen återstår före aktiv styrning.
 
-## Dokumentationsspärr och timvis fortsättning
+## Dokumentationsspärr och fortsättning varannan timme
 
 Windows Kontrollerad mappåtkomst blockerade ändring av det gemensamma projektets `README.md`/`INFRASTRUCTURE.md` under Dokument, även vid godkänd eskalering. Defender-händelse 1123 verifierade att `codex.exe` blockerades; skyddet har inte ändrats eller kringgåtts.
 
 Rapporten sparades därför i kodrepositoryts `plans`-katalog. Den färdiga patchen `2026-08-30-shared-infrastructure-update.patch` ligger bredvid för senare godkänd uppdatering av det gemensamma projektet. De gemensamma dokumenten är ännu inte uppdaterade.
 
-Den befintliga timvisa fortsättningen är aktiv och har uppdaterats till återstående implementation/verifiering och read-only-produktionsuppföljning. Den ska inte upprepa deploy eller testsändning varje timme. `Legacy/Legacy` och aktiveringsspärrarna ligger kvar.
+Efter användarens senaste schemabegäran verifierades den befintliga fortsättningen som aktiv **varannan timme** i samma tråd. Den var redan rätt inställd; ingen dubblett eller onödig schemaändring gjordes. Prompten gäller återstående implementation/verifiering med bevarad Legacy och kräver uttryckligt godkännande före driftsättning eller aktivering. Upprepa inte deploy eller testsändning bara för att automationen körs. Produktionsuppföljning ska vara read-only; `Legacy/Legacy` och aktiveringsspärrarna ska bevaras.

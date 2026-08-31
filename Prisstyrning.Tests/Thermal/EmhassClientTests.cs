@@ -94,6 +94,21 @@ public class EmhassClientTests
     }
 
     [Fact]
+    public void RuntimePayload_KeepsAccountModelEvidenceInsideOrchestrator()
+    {
+        using var resultFile = new TemporaryResultFile();
+        var client = CreateClient(new StubHandler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK))), resultFile.Path);
+        var request = Request();
+        var withEvidence = request with { ModelEvidence = new(10, 11, "Shadow", DateTimeOffset.UtcNow, "local-fingerprint") };
+
+        var original = System.Text.Json.JsonSerializer.Serialize(client.BuildRuntimePayload(request));
+        var actual = System.Text.Json.JsonSerializer.Serialize(client.BuildRuntimePayload(withEvidence));
+
+        Assert.Equal(original, actual);
+        Assert.DoesNotContain("local-fingerprint", actual);
+    }
+
+    [Fact]
     public void RuntimePayload_PreservesComfortBoundsAndKeepsTariffOptional()
     {
         using var resultFile = new TemporaryResultFile();

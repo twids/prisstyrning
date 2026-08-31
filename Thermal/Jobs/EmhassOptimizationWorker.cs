@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using Prisstyrning.Data;
 using Prisstyrning.Thermal.Optimization;
 
 namespace Prisstyrning.Thermal.Jobs;
@@ -46,11 +47,7 @@ public sealed class EmhassOptimizationWorker : BackgroundService
 
             try
             {
-                var request = _queue.DeserializeRequest(claimed);
-                await using var scope = _scopeFactory.CreateAsyncScope();
-                var client = scope.ServiceProvider.GetRequiredService<IEmhassClient>();
-                var result = await client.OptimizeAsync(request, stoppingToken);
-                await _queue.CompleteAsync(claimed, result, stoppingToken);
+                await ProcessClaimAsync(claimed, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -73,5 +70,18 @@ public sealed class EmhassOptimizationWorker : BackgroundService
                 }
             }
         }
+    }
+
+    internal async Task ProcessClaimAsync(ClaimedThermalOptimizationJob claimed, CancellationToken cancellationToken)
+    {
+        if (!_emhassOptions.Enabled) throw new ThermalPlanningEvidenceException("EMHASS är avstängd.");
+        var request = _queue.DeserializeRequest(claimed);
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+        await ThermalPlanningModels.EnsureCurrentAsync(db, claimed.UserId, request.ModelEvidence, DateTimeOffset.UtcNow, cancellationToken);
+        var client = scope.ServiceProvider.GetRequiredService<IEmhassClient>();
+        var result = await client.OptimizeAsync(request, cancellationToken);
+        await ThermalPlanningModels.EnsureCurrentAsync(db, claimed.UserId, request.ModelEvidence, DateTimeOffset.UtcNow, cancellationToken);
+        await _queue.CompleteAsync(claimed, result, cancellationToken);
     }
 }

@@ -98,7 +98,7 @@ public sealed class ThermalReadinessService
                 .AnyAsync(x => x.UserId == userId && x.Category == "SimulatedComfortBreach" && x.TimestampUtc >= shadowWindowStart, cancellationToken);
             var activeModel = await _db.ThermalModelVersions.AsNoTracking()
                 .Where(x => x.UserId == userId && x.ModelType == "2R2C" && x.IsActive)
-                .OrderByDescending(x => x.CreatedAtUtc)
+                .OrderByDescending(x => x.CreatedAtUtc).ThenByDescending(x => x.Id)
                 .FirstOrDefaultAsync(cancellationToken);
             checks.Add(Check("shadow-duration", "Shadow har körts i minst 21 dagar", shadowStartedUtc is { } shadowStart && now - shadowStart >= TimeSpan.FromDays(21), "Låt Shadow fortsätta tills 21 hela dygn har samlats."));
             checks.Add(Check("single-active-installation", "Ingen annan installation äger aktiv LWT-styrning", !anotherActiveInstallation, "Återställ den andra installationen till Legacy eller Shadow innan LWT aktiveras."));
@@ -111,6 +111,13 @@ public sealed class ThermalReadinessService
             checks.Add(Check("weather-curve", "Grundkurvan är verifierad med uppmätt avvikelse noll", site?.WeatherCurveVerified == true && heating.ZeroDeviationDays >= 7, $"{heating.ZeroDeviationDays}/7 verifierade uppvärmningsdygn med giltig nollavvikelse och bibehållen kritisk rumskomfort. Mappa avvikelsens återkoppling, samla data och bekräfta grundkurvan manuellt."));
             var modelEvidence = ThermalModelEvidence.Assess(activeModel, now);
             checks.Add(Check("model", "En validerad 2R2C-modell är aktiv", modelEvidence.Passed, modelEvidence.Reason));
+            var activeCopModel = await _db.ThermalModelVersions.AsNoTracking()
+                .Where(x => x.UserId == userId && x.ModelType == "COP" && x.IsActive)
+                .OrderByDescending(x => x.CreatedAtUtc).ThenByDescending(x => x.Id)
+                .FirstOrDefaultAsync(cancellationToken);
+            var copEvidence = ThermalModelEvidence.Assess(activeCopModel, now);
+            checks.Add(Check("power-sign", "Shelly-tecken, CT-riktning och fasmappning är verifierade", site?.HeatPumpPowerSignVerified == true, "Verifiera mätningen under känd kompressordrift före kostnadsoptimering."));
+            checks.Add(Check("cop-model", "En separat validerad COP-modell är aktiv", copEvidence.Passed, copEvidence.Reason));
             checks.Add(Check(
                 "p1p2-control",
                 "P1P2-avvikelsen har en separat styranslutning och exakt tillåten number-entity",
@@ -136,17 +143,10 @@ public sealed class ThermalReadinessService
 
         if (targetMode == ControlMode.FullActive)
         {
-            var activeCopModel = await _db.ThermalModelVersions.AsNoTracking()
-                .Where(x => x.UserId == userId && x.ModelType == "COP" && x.IsActive)
-                .OrderByDescending(x => x.CreatedAtUtc)
-                .FirstOrDefaultAsync(cancellationToken);
             var normalCycles = await _db.DhwCycles.AsNoTracking()
                 .CountAsync(x => x.UserId == userId && x.Kind == "Eco" && x.TargetReachedUtc != null, cancellationToken);
             var hygieneCycle = await _db.DhwCycles.AsNoTracking()
                 .AnyAsync(x => x.UserId == userId && x.Kind == "Comfort" && x.TargetReachedUtc != null && x.TargetTemperatureC >= 60, cancellationToken);
-            checks.Add(Check("power-sign", "Shelly-tecken, CT-riktning och fasmappning är verifierade", site?.HeatPumpPowerSignVerified == true, "Verifiera mätningen under känd kompressordrift."));
-            var copEvidence = ThermalModelEvidence.Assess(activeCopModel, now);
-            checks.Add(Check("cop-model", "En separat validerad COP-modell är aktiv", copEvidence.Passed, copEvidence.Reason));
             checks.Add(Check("dhw-shadow", "Minst tio normala DHW-cykler är verifierade", normalCycles >= 10, $"Verifiera {Math.Max(0, 10 - normalCycles)} ytterligare normala cykler."));
             checks.Add(Check("hygiene-shadow", "En 60-graderscykel har verifierats med två mätningar", hygieneCycle, "Genomför och verifiera en comfort-cykel på 60 °C."));
             checks.Add(Check("comfort-setting", "Daikins comfort-läge är manuellt bekräftat till 60 °C", site?.ComfortSetpointConfirmed == true && site.ComfortSetpointC >= 60, "Kontrollera inställningen i Daikin och bekräfta den här."));
