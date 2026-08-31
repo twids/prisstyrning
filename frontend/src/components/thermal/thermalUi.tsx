@@ -15,6 +15,7 @@ export const modeLabel = {
 export function formatRelative(value: string | null | undefined): string {
   if (!value) return 'aldrig';
   const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1000);
+  if (!Number.isFinite(seconds)) return 'okänd tid';
   const formatter = new Intl.RelativeTimeFormat('sv-SE', { numeric: 'auto' });
   if (Math.abs(seconds) < 90) return formatter.format(seconds, 'second');
   const minutes = Math.round(seconds / 60);

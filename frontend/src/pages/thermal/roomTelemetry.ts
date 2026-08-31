@@ -42,8 +42,12 @@ export function describeRoomReading(
   const kind = value === null ? 'none' : measured ? 'measurement' : room.isCritical ? 'fallback' : 'none';
   const saved = { value: kind === 'none' ? null : value, kind, current: false } as const;
 
-  if (property(metadata, 'source') === 'HomeAssistantHistoryImport') {
-    return { ...saved, status: 'Imported', detail: 'Importerad historik bekräftar inte rummets aktuella temperatur eller komfort.' };
+  const source = property(metadata, 'source');
+  if (source !== undefined) {
+    if (typeof source === 'string' && source.toLowerCase() === 'homeassistanthistoryimport') {
+      return { ...saved, status: 'Imported', detail: 'Importerad historik bekräftar inte rummets aktuella temperatur eller komfort.' };
+    }
+    return { ...saved, status: 'Unknown', detail: 'Insamlingens källa kan inte bekräftas som liveinsamling.' };
   }
   if (age > maximumAgeMs) {
     return { ...saved, status: 'Stale', detail: 'Insamlade uppgifter är äldre än tio minuter. Aktuell sensorkvalitet och komfort är okända.' };

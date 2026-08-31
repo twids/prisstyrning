@@ -14,6 +14,9 @@ using Microsoft.Extensions.Logging;
 using Prisstyrning.Data;
 using Prisstyrning.Data.Repositories;
 using Prisstyrning.Security;
+using Prisstyrning.Thermal;
+using Prisstyrning.Thermal.Data;
+using Prisstyrning.Thermal.Optimization;
 
 namespace Prisstyrning.Tests.Fixtures;
 
@@ -38,7 +41,9 @@ internal sealed class AccountApiTestHost : IAsyncDisposable
         Configuration = _files.GetTestConfig(configuration);
     }
 
-    public static async Task<AccountApiTestHost> CreateAsync(Dictionary<string, string?>? configuration = null)
+    public static async Task<AccountApiTestHost> CreateAsync(
+        Dictionary<string, string?>? configuration = null,
+        bool includeThermalStatus = false)
     {
         var fixture = new AccountApiTestHost(configuration);
         try
@@ -67,6 +72,11 @@ internal sealed class AccountApiTestHost : IAsyncDisposable
                         services.AddAccountSessions();
                         services.AddAccountAntiforgery();
                         services.AddAdminLoginRateLimiting();
+                        if (includeThermalStatus)
+                        {
+                            services.AddScoped<ThermalInstallationRegistry>();
+                            services.AddSingleton<EmhassHealthState>();
+                        }
                     })
                     .Configure(app =>
                     {
@@ -80,6 +90,7 @@ internal sealed class AccountApiTestHost : IAsyncDisposable
                         {
                             endpoints.MapAccountSessionEndpoints();
                             endpoints.MapAdminEndpoints();
+                            if (includeThermalStatus) endpoints.MapThermalStatusApi();
 
                             // Synthetic identity entry exists ONLY in the test assembly.
                             // No production login/OAuth endpoint is bypassed or replaced.

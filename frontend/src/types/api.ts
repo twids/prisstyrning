@@ -252,6 +252,7 @@ export interface ThermalStatus {
   dhwWriter: DhwWriter;
   lastTelemetryUtc: string | null;
   overallDataQuality: DataQuality;
+  dataQualityReason?: string | null;
   emhassAvailable: boolean;
   planCreatedUtc: string | null;
   planAgeMinutes: number | null;

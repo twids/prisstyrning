@@ -55,6 +55,13 @@ describe('describeRoomReading', () => {
     expect(describeRoomReading(room, imported, now)).toMatchObject({ status: 'Imported', current: false, kind: 'measurement' });
   });
 
+  it.each([
+    ['homeassistanthistoryimport', 'Imported'], ['unknown-source', 'Unknown'], [null, 'Unknown'],
+  ])('räknar inte en angiven historik- eller okänd källa som en aktuell mätning: %s', (source, status) => {
+    const history = { ...sample, qualityJson: JSON.stringify({ source, rooms: { [room.entityId]: { Quality: 0, Excluded: false } } }) };
+    expect(describeRoomReading(room, history, now)).toMatchObject({ status, current: false });
+  });
+
   it.each(['{', 'null', '[]', '42', '{}', '{"rooms":{"sensor.room":{"Quality":0}}}', qualityJson('future-quality'), qualityJson(0, 'false')])('behandlar okänd eller felaktig kvalitetsmetadata säkert: %s', json => {
     expect(describeRoomReading(room, { ...sample, qualityJson: json }, now))
       .toMatchObject({ status: 'Unknown', current: false, value: null });

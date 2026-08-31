@@ -14,22 +14,7 @@ public static class ThermalApiEndpoints
 {
     public static IEndpointRouteBuilder MapThermalApi(this IEndpointRouteBuilder app)
     {
-        var thermal = app.MapGroup("/api/thermal");
-        thermal.AddEndpointFilter(async (invocation, next) =>
-        {
-            try
-            {
-                var registry = invocation.HttpContext.RequestServices.GetRequiredService<ThermalInstallationRegistry>();
-                invocation.HttpContext.Items[InstallationUserItem] = await registry.ResolveUserAsync(
-                    SessionUserId(invocation.HttpContext),
-                    invocation.HttpContext.RequestAborted);
-                return await next(invocation);
-            }
-            catch (InvalidOperationException exception)
-            {
-                return Results.Conflict(new { error = exception.Message });
-            }
-        });
+        var thermal = app.MapThermalStatusApi();
 
         thermal.MapGet("/config", async (
             HttpContext context,
@@ -54,8 +39,6 @@ public static class ThermalApiEndpoints
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["config"] = [exception.Message] });
             }
         });
-
-        thermal.MapGet("/status", GetStatusAsync);
 
         thermal.MapGet("/readiness", async (
             HttpContext context,
@@ -273,6 +256,30 @@ public static class ThermalApiEndpoints
         return app;
     }
 
+    // The same read-only route and account boundary can be hosted in HTTP tests
+    // without registering workers or any heat-pump/integration write clients.
+    internal static RouteGroupBuilder MapThermalStatusApi(this IEndpointRouteBuilder app)
+    {
+        var thermal = app.MapGroup("/api/thermal");
+        thermal.AddEndpointFilter(async (invocation, next) =>
+        {
+            try
+            {
+                var registry = invocation.HttpContext.RequestServices.GetRequiredService<ThermalInstallationRegistry>();
+                invocation.HttpContext.Items[InstallationUserItem] = await registry.ResolveUserAsync(
+                    SessionUserId(invocation.HttpContext),
+                    invocation.HttpContext.RequestAborted);
+                return await next(invocation);
+            }
+            catch (InvalidOperationException exception)
+            {
+                return Results.Conflict(new { error = exception.Message });
+            }
+        });
+        thermal.MapGet("/status", GetStatusAsync);
+        return thermal;
+    }
+
     private static async Task<IResult> GetStatusAsync(
         HttpContext context,
         PrisstyrningDbContext db,
@@ -283,12 +290,16 @@ public static class ThermalApiEndpoints
         var site = await db.ThermalSiteConfigs.AsNoTracking().SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
         var state = await db.ThermalControlStates.AsNoTracking().SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
         var latestTelemetry = await db.ThermalTelemetrySamples.AsNoTracking()
-            .Where(x => x.UserId == userId).OrderByDescending(x => x.TimestampUtc).Select(x => (DateTimeOffset?)x.TimestampUtc)
+            .Where(x => x.UserId == userId).OrderByDescending(x => x.TimestampUtc)
             .FirstOrDefaultAsync(cancellationToken);
+        var rooms = await db.ThermalRoomConfigs.AsNoTracking()
+            .Where(x => x.UserId == userId && x.Enabled).ToListAsync(cancellationToken);
+        var entities = await db.ThermalEntityConfigs.AsNoTracking()
+            .Where(x => x.UserId == userId && x.Enabled).ToListAsync(cancellationToken);
         var plan = await db.ThermalPlans.AsNoTracking().Where(x => x.UserId == userId)
             .OrderByDescending(x => x.CreatedAtUtc).FirstOrDefaultAsync(cancellationToken);
         var now = DateTimeOffset.UtcNow;
-        var quality = latestTelemetry is null ? DataQuality.Unavailable : now - latestTelemetry > TimeSpan.FromMinutes(10) ? DataQuality.Stale : DataQuality.Valid;
+        var quality = ThermalStatusQuality.Assess(latestTelemetry, rooms, entities, now, site?.UpdatedAtUtc);
         var next = plan is null ? null : await db.ThermalPlanSteps.AsNoTracking()
             .Where(x => x.ThermalPlanId == plan.Id && x.StartUtc > now && (x.DhwReserved || Math.Abs(x.DesiredLwtDeviationC - (state == null ? 0 : state.CurrentDeviationC)) >= 0.5))
             .OrderBy(x => x.StartUtc).Select(x => (DateTimeOffset?)x.StartUtc).FirstOrDefaultAsync(cancellationToken);
@@ -296,15 +307,16 @@ public static class ThermalApiEndpoints
         return Results.Ok(new ThermalStatusDto(
             ThermalEnumParser.ControlModeOrLegacy(site?.ControlMode),
             ThermalEnumParser.DhwWriterOrLegacy(site?.DhwWriter),
-            latestTelemetry,
-            quality,
+            latestTelemetry?.TimestampUtc,
+            quality.Quality,
             emhass.Available,
             plan?.CreatedAtUtc,
             plan is null ? null : (int)(now - plan.CreatedAtUtc).TotalMinutes,
             state?.CurrentDeviationC ?? 0,
             string.IsNullOrWhiteSpace(state?.FallbackReason) ? null : state.FallbackReason,
             next,
-            state?.ManualOverrideUntilUtc > now));
+            state?.ManualOverrideUntilUtc > now,
+            quality.Reason));
     }
 
     private static string UserId(HttpContext context)

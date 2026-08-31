@@ -47,7 +47,8 @@ public sealed record ThermalStatusDto(
     double CurrentLwtDeviationC,
     string? FallbackReason,
     DateTimeOffset? NextControlEventUtc,
-    bool ManualOverride);
+    bool ManualOverride,
+    string? DataQualityReason = null);
 
 public sealed record ReadinessCheck(
     string Key,

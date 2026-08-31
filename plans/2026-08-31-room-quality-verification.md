@@ -51,11 +51,11 @@ Kontrollen genomfördes omkring **00:43–00:45 UTC / 02:43–02:45 CEST** den 3
 
 Ett tidigare kontrollförsök stoppades av godkännandestegets tillfälliga användningsgräns innan SSH exekverades. Efter att den angivna spärrtiden passerat godkändes den nya read-only-kontrollen. Ett citeringsfel i första godkända statuskommandot rättades; inga alternativa skyddsvägar eller driftmutationer användes.
 
-## Nästa avgränsade uppföljning
+## Statusradsbristen – följd upp lokalt
 
-**Statusradens samlade datakvalitet återstår att rätta.** Vid bildgranskningen syntes ett grönt sammanfattningsvärde samtidigt som ett rum korrekt visades som exkluderat. Källkodskontrollen bekräftade att `ThermalApiEndpoints.GetStatusAsync` beräknar `overallDataQuality` enbart från senaste telemetrins tidsstämpel, utan att läsa dess kvalitetsmetadata. Den nya rumsvyn rättar alltså inte denna separata API-/statusradsbrist.
+Vid detta rumspass syntes ett grönt sammanfattningsvärde samtidigt som ett rum korrekt visades som exkluderat. Källkodskontrollen bekräftade att `ThermalApiEndpoints.GetStatusAsync` då beräknade `overallDataQuality` enbart från senaste telemetrins tidsstämpel, utan att läsa dess kvalitetsmetadata.
 
-Nästa arbete bör testa och rätta den samlade bedömningen utifrån aktiverade givare, kvalitetsflaggor, exkludering, importkälla och giltig tidsstämpel. Lägg till ett API-regressionsfall där en färsk snapshot med exkluderad kritisk givare inte får ge `Valid`. Bevara oförändrade regulatorer, driftlägen och legacy-DHW. Granska sedan statusrad och rumsvy tillsammans, inklusive felåterhämtning.
+**Denna brist är nu rättad lokalt** i [statuskvalitetsuppföljningen](2026-08-31-status-quality-verification.md), med konfigurationsmedveten API-bedömning, ett verkligt HTTP-regressionsprov och samordnade status-/rumstester. Där rättas också det upptäckta numeriska enumformatet i klientgränsen. Regulatorer, driftlägen och legacy-DHW är fortfarande oförändrade; ingen av de lokala uppföljningarna är driftsatt. Testresultaten ovan avser det tidigare rumspasset, medan den nya rapporten innehåller senaste fulla resultat.
 
 Dessutom återstår den tidigare dokumenterade adminraderingens livscykel, sex backendundantag, CI för de lokala revisionerna, verkligt autentiserat kontoflöde/HA-konfiguration och husets Shadow-/komfort-/modell-/DHW-verifiering. Ordinarie legacykörning är nu observerad; upprepa inte den engångsvisa testsändningen. Äldre kontoinställningar lämnas orörda utan verifierat kontoansvar och mandat.
 

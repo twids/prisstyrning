@@ -73,6 +73,15 @@ De nio skipparna är befintliga tester som kräver nätverk eller saknar full HT
 - En jämförelse mot loggfönstret för föregående engångsverifiering bekräftade att både det lyckade och det misslyckade recordet är samma som tidigare. Inga kontoinställningar, credentials eller scheman ändrades och inget jobb utlöstes.
 - Lokala rumsvy-/kvalitetsrättningar och separata testresultat redovisas i [uppföljningen 2026-08-31](2026-08-31-room-quality-verification.md). Dessa är inte publicerade eller driftsatta. En kvarvarande brist i statusradens samlade datakvalitet är dokumenterad där för nästa koduppföljning.
 
+### Read-only-uppföljning 2026-08-31 omkring 03:49 CEST / 01:49 UTC
+
+- App, PostgreSQL och EMHASS körde fortsatt med noll omstarter och oförändrade digests.
+- Hälsokontroller och anonym session gav 200, sessionen var oautentiserad och skyddad thermal-status gav 401. Endast HTTP-status och boolesk sessionsinformation visades, inga token- eller cookievärden.
+- En uttryckligt read-only databastransaktion bekräftade en thermal-konfiguration i `Legacy/Legacy` och noll thermal-styrkommandon.
+- Inga nya `apply OK`/`Applied`/`Apply failed`-poster observerades från 00:43:15 UTC till kontrollen. Den ordinarie 01:35 CEST-körningen ovan är tidigare verifierad evidens; inget nytt jobb utlöstes.
+- Den tidigare statusradsbristen är rättad i lokal källkod tillsammans med klientens översättning av verkliga numeriska API-enumvärden. [Separat verifieringsrapport](2026-08-31-status-quality-verification.md) redovisar 671 godkända backendtester (6 befintliga undantag), 98 UI-tester och 14 tillämpliga browserflöden. Dessa revisioner är inte publicerade eller driftsatta och ändrar ingen aktiv regulator eller legacyalgoritm.
+- Inga kontoinställningar, credentials, scheman, containrar eller aktiveringsspärrar ändrades.
+
 ## Rollback
 
 Vanlig rollback görs i samma Dockhand-stack utan databasåterläsning. Behåll de additiva tabellerna och krypteringsnyckeln.

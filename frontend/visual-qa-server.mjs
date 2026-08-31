@@ -38,9 +38,9 @@ const rooms = [
   { id: 2, userId: 'default', name: 'Sovrum', entityId: roomEntities[1], targetOffsetC: -.3, weight: 1, isCritical: false, enabled: true, minimumValidC: 5, maximumValidC: 35, maximumRateCPerHour: 3 },
   { id: 3, userId: 'default', name: 'Kontor', entityId: roomEntities[2], targetOffsetC: .1, weight: 1, isCritical: true, enabled: true, minimumValidC: 5, maximumValidC: 35, maximumRateCPerHour: 3 },
 ];
-const haEntities = [...roomEntities.map((entityId, index) => ({ entityId, friendlyName: rooms[index].name, state: String(21.2 + index * .1), unit: '°C', lastUpdatedUtc: iso(-2), receivedAtUtc: iso(0), quality: 'Valid', qualityReason: null })),
-  { entityId: 'sensor.altherma_lwt', friendlyName: 'Altherma framledning', state: '34.2', unit: '°C', lastUpdatedUtc: iso(-1), receivedAtUtc: iso(0), quality: 'Valid', qualityReason: null },
-  { entityId: 'number.altherma_deviation_heating', friendlyName: 'Deviation Heating', state: '0', unit: '°C', lastUpdatedUtc: iso(-1), receivedAtUtc: iso(0), quality: 'Valid', qualityReason: null }];
+const haEntities = [...roomEntities.map((entityId, index) => ({ entityId, friendlyName: rooms[index].name, state: String(21.2 + index * .1), unit: '°C', lastUpdatedUtc: iso(-2), receivedAtUtc: iso(0), quality: 0, qualityReason: null })),
+  { entityId: 'sensor.altherma_lwt', friendlyName: 'Altherma framledning', state: '34.2', unit: '°C', lastUpdatedUtc: iso(-1), receivedAtUtc: iso(0), quality: 0, qualityReason: null },
+  { entityId: 'number.altherma_deviation_heating', friendlyName: 'Deviation Heating', state: '0', unit: '°C', lastUpdatedUtc: iso(-1), receivedAtUtc: iso(0), quality: 0, qualityReason: null }];
 const events = [
   { id: 3, userId: 'default', timestampUtc: iso(-8), severity: 'Information', category: 'Optimizer', message: 'Start 12:20 eftersom hela cykeln beräknas kosta 1,84 kr.', detailsJson: '{}' },
   { id: 2, userId: 'default', timestampUtc: iso(-55), severity: 'Warning', category: 'ModelDrift', message: 'Grundkurvetestet behöver ytterligare tre uppvärmningsdygn.', detailsJson: '{}' },
@@ -57,9 +57,10 @@ const checks = [
 function fixture(pathname) {
   if (pathname === '/api/session') return { authenticated: true, userId: 'default', isAdmin: true, csrfToken: 'visual-qa-csrf-token' };
   if (pathname === '/api/admin/status') return { isAdmin: true, userId: 'default' };
-  if (pathname === '/api/thermal/status') return { mode: 'Shadow', dhwWriter: 'Legacy', lastTelemetryUtc: iso(-2), overallDataQuality: 'Valid', emhassAvailable: true, planCreatedUtc: iso(-7), planAgeMinutes: 7, currentLwtDeviationC: 0, fallbackReason: null, nextControlEventUtc: iso(42), manualOverride: false };
+  // Use ASP.NET's actual numeric wire enums, not the UI's translated names.
+  if (pathname === '/api/thermal/status') return { mode: 1, dhwWriter: 0, lastTelemetryUtc: iso(-2), overallDataQuality: 0, dataQualityReason: 'Alla 3 aktiverade datakällor är giltiga i senaste insamlingen.', emhassAvailable: true, planCreatedUtc: iso(-7), planAgeMinutes: 7, currentLwtDeviationC: 0, fallbackReason: null, nextControlEventUtc: iso(42), manualOverride: false };
   if (pathname === '/api/thermal/config') return { site, rooms, entities: [] };
-  if (pathname === '/api/thermal/readiness') return { targetMode: 'LwtActive', ready: false, checks };
+  if (pathname === '/api/thermal/readiness') return { targetMode: 2, ready: false, checks };
   if (pathname === '/api/thermal/plan') return { id: 'fixture-plan', userId: 'default', createdAtUtc: iso(-7), validFromUtc: planSteps[0].startUtc, validUntilUtc: planSteps[planSteps.length - 1].endUtc, status: 'Valid', isShadow: true, solverDurationMs: 1830, objectiveCost: 32.47, confidence: .84, summary: 'Start 12:20 eftersom hela cykeln beräknas kosta 1,84 kr.', inputSnapshotJson: '{}', steps: planSteps };
   if (pathname === '/api/thermal/history') return history;
   if (pathname === '/api/thermal/events') return events;
