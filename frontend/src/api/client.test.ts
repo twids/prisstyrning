@@ -116,6 +116,21 @@ describe('ApiClient säkerhetskontrakt', () => {
       { entityId: 'sensor.test', quality: 'Stale' }, { entityId: 'sensor.missing', quality: 'Unavailable' },
     ]);
   });
+
+  it('bevarar katalogens additiva enhetskontroll och giltighetstid vid enumöversättning', async () => {
+    const entity = {
+      entityId: 'sensor.power', friendlyName: 'Värmepump', state: '1500', unit: 'W',
+      lastUpdatedUtc: '2026-08-31T04:00:00Z', receivedAtUtc: '2026-08-31T04:00:01Z',
+      quality: 0, qualityReason: null, compatibleUnits: ['kW'],
+      checkedAtUtc: '2026-08-31T04:00:02Z', validUntilUtc: '2026-08-31T04:10:00Z',
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([entity]));
+    vi.stubGlobal('fetch', fetchMock);
+    const { apiClient } = await import('./client');
+    expect(await apiClient.getHomeAssistantEntities()).toEqual([{ ...entity, quality: 'Valid' }]);
+    // Fetch defaults to GET; preserve the client's existing same-origin request.
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith('/api/home-assistant/entities', { credentials: 'same-origin' });
+  });
 });
 
 function jsonResponse(value: unknown): Response {

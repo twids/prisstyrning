@@ -16,14 +16,16 @@ using Prisstyrning.Data.Repositories;
 using Prisstyrning.Security;
 using Prisstyrning.Thermal;
 using Prisstyrning.Thermal.Data;
+using Prisstyrning.Thermal.HomeAssistant;
 using Prisstyrning.Thermal.Optimization;
 
 namespace Prisstyrning.Tests.Fixtures;
 
 /// <summary>
 /// HTTP transport, cookies, account validation, API/CSRF guards and admin handlers
-/// are real. Storage and keys are isolated. Program, migrations, Hangfire, HA,
-/// EMHASS and Daikin clients are never registered or started.
+/// are real. Storage and keys are isolated. Selected read-only thermal/HA catalog
+/// routes can be mapped explicitly. Program, migrations, Hangfire, HA/EMHASS/
+/// Daikin integration clients and their workers are never registered or started.
 /// </summary>
 internal sealed class AccountApiTestHost : IAsyncDisposable
 {
@@ -43,7 +45,8 @@ internal sealed class AccountApiTestHost : IAsyncDisposable
 
     public static async Task<AccountApiTestHost> CreateAsync(
         Dictionary<string, string?>? configuration = null,
-        bool includeThermalStatus = false)
+        bool includeThermalStatus = false,
+        bool includeHomeAssistantEntities = false)
     {
         var fixture = new AccountApiTestHost(configuration);
         try
@@ -77,6 +80,12 @@ internal sealed class AccountApiTestHost : IAsyncDisposable
                             services.AddScoped<ThermalInstallationRegistry>();
                             services.AddSingleton<EmhassHealthState>();
                         }
+                        if (includeHomeAssistantEntities)
+                        {
+                            services.AddSingleton<IHomeAssistantStateCache, HomeAssistantStateCache>();
+                            services.AddScoped<HomeAssistantConnectionService>();
+                            services.AddSingleton<IHomeAssistantEndpointValidator, NoNetworkEndpointValidator>();
+                        }
                     })
                     .Configure(app =>
                     {
@@ -91,6 +100,7 @@ internal sealed class AccountApiTestHost : IAsyncDisposable
                             endpoints.MapAccountSessionEndpoints();
                             endpoints.MapAdminEndpoints();
                             if (includeThermalStatus) endpoints.MapThermalStatusApi();
+                            if (includeHomeAssistantEntities) endpoints.MapHomeAssistantEntityCatalogApi();
 
                             // Synthetic identity entry exists ONLY in the test assembly.
                             // No production login/OAuth endpoint is bypassed or replaced.
@@ -143,6 +153,12 @@ internal sealed class AccountApiTestHost : IAsyncDisposable
             _host.Dispose();
         }
         _files.Dispose();
+    }
+
+    private sealed class NoNetworkEndpointValidator : IHomeAssistantEndpointValidator
+    {
+        public Task<Uri> ValidateAsync(string value, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("Read-only catalog tests must not resolve an external connection.");
     }
 }
 

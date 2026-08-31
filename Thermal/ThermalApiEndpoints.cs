@@ -149,7 +149,7 @@ public static class ThermalApiEndpoints
             return Results.NoContent();
         });
 
-        var homeAssistant = app.MapGroup("/api/home-assistant");
+        var homeAssistant = app.MapHomeAssistantEntityCatalogApi();
         homeAssistant.MapGet("/config", async (
             HttpContext context,
             HomeAssistantConnectionService connections,
@@ -231,6 +231,14 @@ public static class ThermalApiEndpoints
                 return Results.BadRequest(new { error = "Home Assistant-historiken kunde inte hämtas." });
             }
         });
+        return app;
+    }
+
+    // Isolated HTTP tests host this exact account-scoped read route with no
+    // integration clients, background workers, or control endpoints registered.
+    internal static RouteGroupBuilder MapHomeAssistantEntityCatalogApi(this IEndpointRouteBuilder app)
+    {
+        var homeAssistant = app.MapGroup("/api/home-assistant");
         homeAssistant.MapGet("/entities", async (
             HttpContext context,
             IHomeAssistantStateCache cache,
@@ -239,21 +247,21 @@ public static class ThermalApiEndpoints
         {
             var userId = UserId(context);
             var config = await connections.GetAsync(userId, cancellationToken);
-            var staleAfter = TimeSpan.FromMinutes(config?.StaleAfterMinutes ?? 10);
+            if (config is not { TelemetryEnabled: true, TelemetryTokenConfigured: true })
+                return Results.Ok(Array.Empty<ThermalEntityStateDto>());
+
             var now = DateTimeOffset.UtcNow;
-            var result = cache.Snapshot(userId).Select(state => new ThermalEntityStateDto(
-                state.EntityId,
-                state.FriendlyName,
-                state.State,
-                state.Unit,
-                state.LastUpdatedUtc,
-                state.ReceivedAtUtc,
-                state.LastUpdatedUtc is { } updated && now - updated <= staleAfter ? DataQuality.Valid : DataQuality.Stale,
-                state.LastUpdatedUtc is { } last && now - last > staleAfter ? "Värdet är äldre än tio minuter." : null));
+            var snapshot = cache.LastSnapshotUtcFor(userId);
+            var connectionIssue = !cache.IsConnected(userId)
+                ? "Liveanslutningen till Home Assistant är bruten. Visade värden är inte verifierade."
+                : snapshot is null || snapshot < config.UpdatedAtUtc
+                    ? "Startbilden saknas eller är äldre än anslutningsinställningarna. Telemetrin behöver läsa in en ny startbild."
+                    : null;
+            var result = cache.Snapshot(userId).Select(state => HomeAssistantEntityCatalog.Project(
+                state, now, config.StaleAfterMinutes, connectionIssue)).ToArray();
             return Results.Ok(result);
         });
-
-        return app;
+        return homeAssistant;
     }
 
     // The same read-only route and account boundary can be hosted in HTTP tests

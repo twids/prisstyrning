@@ -45,7 +45,7 @@ test('entity-val ger dirty state och konsekvens innan sparande', async ({ page }
   test.skip(testInfo.project.name === 'mobile', 'Samma formulärflöde täcks i desktopprojektet.');
   await page.goto('/settings');
   await page.getByRole('tab', { name: 'Entities' }).click();
-  const outside = page.getByLabel('Välj utetemperatur');
+  const outside = page.getByRole('combobox', { name: 'Välj utetemperatur', exact: true });
   await outside.click();
   await page.getByRole('option', { name: /Vardagsrum.*sensor\.vardagsrum_temperature/i }).click();
   await expect(page.getByText('Osparade ändringar')).toBeVisible();

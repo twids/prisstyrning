@@ -83,7 +83,10 @@ public sealed record ThermalEntityStateDto(
     DateTimeOffset? LastUpdatedUtc,
     DateTimeOffset ReceivedAtUtc,
     DataQuality Quality,
-    string? QualityReason);
+    string? QualityReason,
+    IReadOnlyList<string>? CompatibleUnits = null,
+    DateTimeOffset? CheckedAtUtc = null,
+    DateTimeOffset? ValidUntilUtc = null);
 
 public static class ThermalEnumParser
 {

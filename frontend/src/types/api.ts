@@ -422,6 +422,10 @@ export interface HomeAssistantEntity {
   receivedAtUtc: string;
   quality: DataQuality;
   qualityReason: string | null;
+  /** Preliminary value/unit checks only, not sensor-health or readiness approval. */
+  compatibleUnits?: string[];
+  checkedAtUtc?: string | null;
+  validUntilUtc?: string | null;
 }
 
 export interface HomeAssistantHistoryImportResult {

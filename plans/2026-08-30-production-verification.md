@@ -91,6 +91,15 @@ De nio skipparna är befintliga tester som kräver nätverk eller saknar full HT
 - Den gamla adminraderingen reproducerades med isolerade testkonton och spärrades i **lokal källkod**. Den gav felaktigt `deleted=true` trots kvarvarande sessioner, HA-koppling och auto-apply. [Separat rapport](2026-08-31-admin-account-safety-verification.md) redovisar säkerhetsavgränsning, admin-UX och 688/6 backendtester, 108 UI-tester samt 16 tillämpliga browserflöden. Spärren är inte driftsatt; använd inte den gamla kontoraderingen i produktion.
 - Ingen produktionstoken, kontoinställning, behörighet, historik, container eller aktiveringsspärr ändrades. Ingen koppling mellan kodfelet och det äldre tokenlösa produktionsrecordet har verifierats.
 
+### Read-only-uppföljning 2026-08-31 omkring 06:00 CEST / 04:00 UTC
+
+- App, PostgreSQL och EMHASS körde fortsatt med noll omstarter och oförändrade image-referenser.
+- Hälsa och anonym session gav 200; sessionen var oautentiserad. Anonym thermal-status och `/api/home-assistant/entities` gav båda 401. Endast statuskoder och boolesk sessionsinformation visades.
+- En explicit read-only databastransaktion bekräftade en thermal-konfiguration i `Legacy/Legacy` och noll termiska styrkommandon.
+- Inga nya `apply OK`/`Applied`/`Apply failed`-poster observerades från 02:53:04 UTC till 04:00:00 UTC. Ingen extra schemakörning, testsändning eller deploy gjordes.
+- [Separat lokal kodrapport](2026-08-31-ha-catalog-verification.md) redovisar korrigerad preliminär HA-katalogkvalitet, gemensam säker sensorväljare och 753/6 backendtester, 138 UI-tester samt 18 tillämpliga browserflöden. Fixarna är **inte driftsatta** och ändrar inte legacy, regulator eller sensorernas exkluderingsräknare.
+- Inga konton, credentials, behörigheter, containerinställningar eller aktiveringsspärrar ändrades. Revisionsstyrd omladdning av HA-anslutningen och fortsatt insamlingsvalidering är dokumenterade som nästa kodarbete.
+
 ## Rollback
 
 Vanlig rollback görs i samma Dockhand-stack utan databasåterläsning. Behåll de additiva tabellerna och krypteringsnyckeln.

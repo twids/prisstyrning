@@ -98,7 +98,7 @@ export function useHomeAssistant() {
   const entities = useQuery({
     queryKey: ['home-assistant', 'entities'],
     queryFn: () => apiClient.getHomeAssistantEntities(),
-    enabled: status.data?.configured === true,
+    enabled: status.data?.configured === true && !status.isError && !config.isError,
     refetchInterval: 60_000,
   });
   const test = useMutation({

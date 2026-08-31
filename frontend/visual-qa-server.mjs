@@ -68,7 +68,10 @@ function fixture(pathname) {
   if (pathname === '/api/thermal/models') return [{ id: 4, modelType: '2R2C', createdAtUtc: iso(-600), trainingFromUtc: iso(-60 * 24 * 30), trainingToUtc: iso(-600), isActive: true, parametersJson: JSON.stringify({ envelopeConductanceKwPerC: .34, massCapacityKwhPerC: 38.2, massCouplingKwPerC: .81, baseCurveSlope: -.46 }), metricsJson: JSON.stringify({ twoHourMaeC: .21, dayMaeC: .47 }) }];
   if (pathname === '/api/home-assistant/status') return { configured: true, connected: true, lastSnapshotUtc: iso(-2), lastActivityUtc: iso(-1), cachedEntities: haEntities.length };
   if (pathname === '/api/home-assistant/config') return { baseUrl: 'https://ha.example.se', telemetryEnabled: true, controlEnabled: false, heatingDeviationEntityId: 'number.altherma_deviation_heating', staleAfterMinutes: 10, telemetryTokenConfigured: true, controlTokenConfigured: false, updatedAtUtc: iso(-60) };
-  if (pathname === '/api/home-assistant/entities') return haEntities;
+  if (pathname === '/api/home-assistant/entities') return haEntities.map(entity => ({
+    ...entity, compatibleUnits: ['°C'], checkedAtUtc: new Date().toISOString(),
+    validUntilUtc: new Date(Date.parse(entity.lastUpdatedUtc) + 10 * 60_000).toISOString(),
+  }));
   if (pathname === '/api/home-assistant/import-history') return { importedSamples: 8460, existingSamplesPreserved: 180, requestedEntities: 12, entitiesWithoutHistory: [] };
   return null;
 }

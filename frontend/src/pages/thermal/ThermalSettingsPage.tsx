@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Accordion, AccordionDetails, AccordionSummary, Alert, Autocomplete, Box, Button, Chip,
+  Accordion, AccordionDetails, AccordionSummary, Alert, Box, Button, Chip,
   CircularProgress, FormControlLabel, IconButton, Paper, Stack, Switch, Tab, Tabs, TextField, Typography,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -9,7 +9,8 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import SaveOutlinedIcon from '@mui/icons-material/SaveOutlined';
 import CableOutlinedIcon from '@mui/icons-material/CableOutlined';
 import { useHomeAssistant, useSaveThermalConfig, useThermalConfig } from '../../hooks/thermal/useThermal';
-import { PageHeader, QualityChip, formatRelative } from '../../components/thermal/thermalUi';
+import { PageHeader, formatRelative } from '../../components/thermal/thermalUi';
+import HomeAssistantEntityPicker, { type EntityCatalogView } from '../../components/thermal/HomeAssistantEntityPicker';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import type { HomeAssistantConnection, HomeAssistantEntity, ThermalConfig, ThermalEntityConfig, ThermalRoomConfig, UpdateHomeAssistantConnection } from '../../types/api';
 
@@ -40,6 +41,11 @@ export default function ThermalSettingsPage() {
   const [tab, setTab] = useState(0);
   const [draft, setDraft] = useState<ThermalConfig | null>(null);
   const [savedSnapshot, setSavedSnapshot] = useState('');
+  const [nowUtc, setNowUtc] = useState(Date.now);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowUtc(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
   useEffect(() => {
     if (config.data && !draft) {
       const copy = structuredClone(config.data);
@@ -49,6 +55,23 @@ export default function ThermalSettingsPage() {
   }, [config.data, draft]);
   const dirty = draft != null && JSON.stringify(draft) !== savedSnapshot;
   const errors = useMemo(() => validate(draft), [draft]);
+  const catalogIssue = ha.config.isError || ha.status.isError || ha.entities.isError
+    ? 'Sensorlistan kunde inte uppdateras. Sparade mappningar är kvar; gamla värden visas inte som verifierade.'
+    : ha.status.data?.configured === false
+      ? 'Aktiv HA-telemetri saknas på ditt konto. Konfigurera anslutningen under Home Assistant.'
+      : ha.status.data?.connected === false
+        ? 'Liveanslutningen till Home Assistant är bruten. Sparade mappningar är kvar.'
+        : undefined;
+  const catalog: EntityCatalogView = {
+    entities: catalogIssue ? [] : ha.entities.data ?? [],
+    issue: catalogIssue,
+    loading: ha.status.isLoading || ha.entities.isLoading,
+    nowUtc,
+  };
+  const refreshCatalog = async () => {
+    const [connection, status] = await Promise.all([ha.config.refetch(), ha.status.refetch()]);
+    if (!connection.isError && !status.isError && status.data?.configured) await ha.entities.refetch();
+  };
 
   const persist = async () => {
     if (!draft || errors.length) return;
@@ -64,7 +87,7 @@ export default function ThermalSettingsPage() {
       <PageHeader
         eyebrow="Konfiguration med skyddsräcken"
         title="Inställningar"
-        description="Friendly names för vardagen, exakta entity-ID:n för spårbarhet. Hemligheter lagras krypterat per konto och visas aldrig igen eller skrivs i loggar."
+        description="Anslutningar och sensorer gäller ditt Daikin-konto. Hemligheter sparas krypterat och visas inte igen."
         action={<Stack direction="row" gap={1} alignItems="center">{dirty && <Chip color="warning" label="Osparade ändringar" />}<Button variant="contained" startIcon={<SaveOutlinedIcon />} onClick={persist} disabled={!dirty || errors.length > 0 || save.isPending}>{save.isPending ? 'Sparar…' : 'Spara'}</Button></Stack>}
       />
       {save.isSuccess && <Alert severity="success">Inställningarna är sparade. Driftläge och DHW-writer ändrades inte.</Alert>}
@@ -76,8 +99,8 @@ export default function ThermalSettingsPage() {
         </Tabs>
         <Box sx={{ p: { xs: 2, md: 3 } }}>
           {tab === 0 && <HomeAssistantTab ha={ha} />}
-          {tab === 1 && <EntitiesTab draft={draft} setDraft={setDraft} entities={ha.entities.data ?? []} />}
-          {tab === 2 && <RoomsTab draft={draft} setDraft={setDraft} entities={ha.entities.data ?? []} />}
+          {tab === 1 && <Stack spacing={2}><EntityCatalogNotice catalog={catalog} refresh={() => void refreshCatalog()} /><EntitiesTab draft={draft} setDraft={setDraft} catalog={catalog} /></Stack>}
+          {tab === 2 && <Stack spacing={2}><EntityCatalogNotice catalog={catalog} refresh={() => void refreshCatalog()} /><RoomsTab draft={draft} setDraft={setDraft} catalog={catalog} /></Stack>}
           {tab === 3 && <CostsTab draft={draft} setDraft={setDraft} />}
           {tab === 4 && <SafetyTab draft={draft} setDraft={setDraft} />}
         </Box>
@@ -203,32 +226,50 @@ export function validateHomeAssistantConnection(draft: UpdateHomeAssistantConnec
   return [...new Set(errors)];
 }
 
-function EntitiesTab({ draft, setDraft, entities }: { draft: ThermalConfig; setDraft: (value: ThermalConfig) => void; entities: HomeAssistantEntity[] }) {
+function EntityCatalogNotice({ catalog, refresh }: { catalog: EntityCatalogView; refresh: () => void }) {
+  return <Stack spacing={1}>
+    <Typography color="text.secondary">Ögonblickskontroll av värde, enhet och ålder – inte ett godkännande för aktiv styrning.</Typography>
+    {catalog.issue && <Alert severity="warning">{catalog.issue}</Alert>}
+    {catalog.loading && <Typography role="status">Hämtar sensorlistan…</Typography>}
+    <Box><Button onClick={refresh} disabled={catalog.loading}>Uppdatera sensorlistan</Button></Box>
+  </Stack>;
+}
+
+function EntitiesTab({ draft, setDraft, catalog }: { draft: ThermalConfig; setDraft: (value: ThermalConfig) => void; catalog: EntityCatalogView }) {
   const updateRole = (role: string, selected: HomeAssistantEntity | null, unit: string) => {
     const rest = draft.entities.filter((entity) => entity.role !== role);
     const next: ThermalEntityConfig[] = selected ? [...rest, { id: 0, userId: draft.site.userId, role, entityId: selected.entityId, expectedUnit: unit, enabled: true, minimumValid: null, maximumValid: null, maximumRatePerHour: null }] : rest;
     setDraft({ ...draft, entities: next });
   };
   return <Stack spacing={2}>
-    <Box><Typography variant="h5">Entity-mappning</Typography><Typography color="text.secondary">Listan visar livevärde, enhet, ålder och kvalitetsresultat. Obligatoriska entities markeras i readiness.</Typography></Box>
+    <Box><Typography variant="h5">Entity-mappning</Typography><Typography color="text.secondary">Välj datakälla för varje roll. Senast mottaget värde och preliminär kontroll visas även efter valet.</Typography></Box>
     {roles.map(([role, label, unit]) => {
       const mapping = draft.entities.find((entity) => entity.role === role);
-      const value = entities.find((entity) => entity.entityId === mapping?.entityId) ?? null;
-      return <Box key={role} sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'minmax(180px,.45fr) minmax(320px,1fr)' }, gap: 2, alignItems: 'center', py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
+      return <Box key={role} sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0,1fr)', md: 'minmax(180px,.45fr) minmax(0,1fr)' }, gap: 2, alignItems: 'start', py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
         <Box><Typography fontWeight={700}>{label}</Typography><Typography variant="caption" color="text.secondary">Förväntad enhet {unit}</Typography></Box>
-        <Autocomplete options={entities} value={value} onChange={(_, selected) => updateRole(role, selected, unit)} getOptionLabel={(option) => `${option.friendlyName} · ${option.entityId}`} isOptionEqualToValue={(option, selected) => option.entityId === selected.entityId} renderOption={(props, option) => <Box component="li" {...props} key={option.entityId}><Box sx={{ flex: 1 }}><Typography>{option.friendlyName}</Typography><Typography variant="caption" color="text.secondary">{option.entityId} · {option.state} {option.unit ?? ''} · {formatRelative(option.lastUpdatedUtc)}</Typography></Box><QualityChip quality={option.quality} /></Box>} renderInput={(params) => <TextField {...params} label={`Välj ${label.toLowerCase()}`} helperText={mapping?.entityId ?? 'Inte mappad'} />} />
+        <HomeAssistantEntityPicker catalog={catalog} entityId={mapping?.entityId ?? ''} expectedUnit={unit} label={`Välj ${label.toLowerCase()}`} onChange={(selected) => updateRole(role, selected, unit)} />
       </Box>;
     })}
   </Stack>;
 }
 
-function RoomsTab({ draft, setDraft, entities }: { draft: ThermalConfig; setDraft: (value: ThermalConfig) => void; entities: HomeAssistantEntity[] }) {
-  const temperatureEntities = entities.filter((entity) => entity.unit === '°C' || entity.unit === 'C');
+function RoomsTab({ draft, setDraft, catalog }: { draft: ThermalConfig; setDraft: (value: ThermalConfig) => void; catalog: EntityCatalogView }) {
   const update = (index: number, changes: Partial<ThermalRoomConfig>) => setDraft({ ...draft, rooms: draft.rooms.map((room, roomIndex) => roomIndex === index ? { ...room, ...changes } : room) });
   const add = () => setDraft({ ...draft, rooms: [...draft.rooms, { id: 0, userId: draft.site.userId, name: `Rum ${draft.rooms.length + 1}`, entityId: '', targetOffsetC: 0, weight: 1, isCritical: false, enabled: true, minimumValidC: 5, maximumValidC: 35, maximumRateCPerHour: 3 }] });
   return <Stack spacing={2}>
-    <Stack direction="row" justifyContent="space-between"><Box><Typography variant="h5">Rum och komfort</Typography><Typography color="text.secondary">Offset flyttar rummets mål; vikt styr husets representativa temperatur.</Typography></Box><Button startIcon={<AddIcon />} onClick={add}>Lägg till rum</Button></Stack>
-    {draft.rooms.map((room, index) => <Paper key={`${room.id}-${index}`} variant="outlined" sx={{ p: 2 }}><Stack direction={{ xs: 'column', md: 'row' }} gap={2} alignItems={{ md: 'flex-start' }}><TextField label="Namn" value={room.name} onChange={(event) => update(index, { name: event.target.value })} required /><Autocomplete sx={{ flex: 1, minWidth: 260 }} options={temperatureEntities} value={temperatureEntities.find((entity) => entity.entityId === room.entityId) ?? null} onChange={(_, entity) => update(index, { entityId: entity?.entityId ?? '' })} getOptionLabel={(entity) => `${entity.friendlyName} · ${entity.entityId}`} renderInput={(params) => <TextField {...params} label="Temperaturentity" required error={!room.entityId} helperText={room.entityId || 'Välj en entity'} />} /><TextField type="number" label="Offset °C" value={room.targetOffsetC} onChange={(event) => update(index, { targetOffsetC: Number(event.target.value) })} inputProps={{ step: .1, min: -5, max: 5 }} sx={{ width: 120 }} /><TextField type="number" label="Vikt" value={room.weight} onChange={(event) => update(index, { weight: Number(event.target.value) })} inputProps={{ step: .1, min: 0, max: 100 }} sx={{ width: 110 }} /><FormControlLabel control={<Switch checked={room.isCritical} onChange={(event) => update(index, { isCritical: event.target.checked })} />} label="Kritiskt" /><IconButton aria-label={`Ta bort ${room.name}`} onClick={() => setDraft({ ...draft, rooms: draft.rooms.filter((_, roomIndex) => roomIndex !== index) })}><DeleteOutlineIcon /></IconButton></Stack></Paper>)}
+    <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" gap={1}><Box><Typography variant="h5">Rum och komfort</Typography><Typography color="text.secondary">Offset flyttar rummets mål; vikt styr husets representativa temperatur.</Typography></Box><Button startIcon={<AddIcon />} onClick={add}>Lägg till rum</Button></Stack>
+    {draft.rooms.map((room, index) => <Paper key={`${room.id}-${index}`} variant="outlined" sx={{ p: 2, minWidth: 0 }}>
+      <Stack spacing={2}>
+        <TextField label="Namn" value={room.name} onChange={(event) => update(index, { name: event.target.value })} required />
+        <HomeAssistantEntityPicker catalog={catalog} entityId={room.entityId} expectedUnit="°C" label={`Temperaturentity för ${room.name}`} required onChange={(entity) => update(index, { entityId: entity?.entityId ?? '' })} />
+        <Stack direction="row" gap={2} flexWrap="wrap" alignItems="center">
+          <TextField type="number" label="Offset °C" value={room.targetOffsetC} onChange={(event) => update(index, { targetOffsetC: Number(event.target.value) })} inputProps={{ step: .1, min: -5, max: 5 }} sx={{ width: 110 }} />
+          <TextField type="number" label="Vikt" value={room.weight} onChange={(event) => update(index, { weight: Number(event.target.value) })} inputProps={{ step: .1, min: 0, max: 100 }} sx={{ width: 100 }} />
+          <FormControlLabel control={<Switch checked={room.isCritical} onChange={(event) => update(index, { isCritical: event.target.checked })} />} label={`Kritiskt rum: ${room.name}`} />
+          <IconButton aria-label={`Ta bort ${room.name}`} onClick={() => setDraft({ ...draft, rooms: draft.rooms.filter((_, roomIndex) => roomIndex !== index) })}><DeleteOutlineIcon /></IconButton>
+        </Stack>
+      </Stack>
+    </Paper>)}
   </Stack>;
 }
 
