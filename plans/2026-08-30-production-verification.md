@@ -82,6 +82,15 @@ De nio skipparna är befintliga tester som kräver nätverk eller saknar full HT
 - Den tidigare statusradsbristen är rättad i lokal källkod tillsammans med klientens översättning av verkliga numeriska API-enumvärden. [Separat verifieringsrapport](2026-08-31-status-quality-verification.md) redovisar 671 godkända backendtester (6 befintliga undantag), 98 UI-tester och 14 tillämpliga browserflöden. Dessa revisioner är inte publicerade eller driftsatta och ändrar ingen aktiv regulator eller legacyalgoritm.
 - Inga kontoinställningar, credentials, scheman, containrar eller aktiveringsspärrar ändrades.
 
+### Read-only-uppföljning 2026-08-31 omkring 04:53 CEST / 02:53 UTC
+
+- Oförändrade image-referenser; app, PostgreSQL och EMHASS körde fortsatt med noll omstarter.
+- Hälsa och anonym session svarade 200, sessionen var oautentiserad och skyddad thermal-status gav 401. Endast statuskoder och boolesk sessionsinformation visades.
+- En uttrycklig read-only databastransaktion bekräftade `Legacy/Legacy` för en thermal-konfiguration och noll thermal-styrkommandon.
+- Inga nya `apply OK`/`Applied`/`Apply failed`-poster fanns från 01:49:10 UTC till 02:53:04 UTC. Inget extra jobb eller testsändning utlöstes.
+- Den gamla adminraderingen reproducerades med isolerade testkonton och spärrades i **lokal källkod**. Den gav felaktigt `deleted=true` trots kvarvarande sessioner, HA-koppling och auto-apply. [Separat rapport](2026-08-31-admin-account-safety-verification.md) redovisar säkerhetsavgränsning, admin-UX och 688/6 backendtester, 108 UI-tester samt 16 tillämpliga browserflöden. Spärren är inte driftsatt; använd inte den gamla kontoraderingen i produktion.
+- Ingen produktionstoken, kontoinställning, behörighet, historik, container eller aktiveringsspärr ändrades. Ingen koppling mellan kodfelet och det äldre tokenlösa produktionsrecordet har verifierats.
+
 ## Rollback
 
 Vanlig rollback görs i samma Dockhand-stack utan databasåterläsning. Behåll de additiva tabellerna och krypteringsnyckeln.

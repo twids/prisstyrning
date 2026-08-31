@@ -150,7 +150,7 @@ public static class AdminEndpoints
             return Results.Json(new { revoked = true, userId });
         });
 
-        adminGroup.MapDelete("/users/{userId}", async (IConfiguration cfg, HttpContext c, string userId, DaikinTokenRepository tokenRepo, ScheduleHistoryRepository historyRepo) =>
+        adminGroup.MapDelete("/users/{userId}", (IConfiguration cfg, HttpContext c, string userId) =>
         {
             if (!IsAdminRequest(c, cfg))
                 return Results.Json(new { error = "Unauthorized" }, statusCode: 401);
@@ -162,49 +162,18 @@ public static class AdminEndpoints
             if (userId == currentUserId)
                 return Results.Json(new { error = "Cannot delete your own user" }, statusCode: 400);
 
-            var deleted = false;
-            var warnings = new List<string>();
-
-            // Delete tokens from database
-            try
+            // Fail closed before resolving any deletion repository. The old handler
+            // removed only ONECTA credentials/roles but left sessions, HA access,
+            // auto-apply settings and thermal writers alive while claiming success.
+            // A real lifecycle must first quiesce writers, revoke access atomically
+            // and define audit retention. Do not offer a configuration bypass.
+            return Results.Json(new
             {
-                await tokenRepo.DeleteAsync(userId);
-                deleted = true;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Admin] Failed to delete tokens for user {userId}: {ex.Message}");
-                warnings.Add("Failed to delete tokens");
-            }
-
-            // Delete schedule history from database
-            try
-            {
-                var historyDeleted = await historyRepo.DeleteAllOlderThanAsync(DateTimeOffset.MinValue);
-                deleted = true;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Admin] Failed to delete schedule history for user {userId}: {ex.Message}");
-                warnings.Add("Failed to delete schedule history");
-            }
-
-            // Remove from admin.json if present
-            try
-            {
-                await AdminService.RevokeAdmin(cfg, userId);
-                await AdminService.RevokeHangfireAccess(cfg, userId);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Admin] Failed to update admin.json for user {userId}: {ex.Message}");
-                warnings.Add("Failed to update admin configuration");
-            }
-
-            if (!deleted)
-                return Results.Json(new { error = "User not found" }, statusCode: 404);
-
-            return Results.Json(new { deleted = true, userId, warnings });
+                code = "account_deletion_unavailable",
+                deleted = false,
+                error = "Kontoradering är tillfälligt spärrad. Kontot har inte raderats eller ändrats. " +
+                    "Säker hantering av pågående styrning, inloggningar, integrationer och historik måste vara klar först."
+            }, statusCode: StatusCodes.Status409Conflict);
         });
         return adminGroup;
     }

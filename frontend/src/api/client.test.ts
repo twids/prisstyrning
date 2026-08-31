@@ -8,6 +8,23 @@ describe('ApiClient säkerhetskontrakt', () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
+  it('behandlar spärrad kontoradering som fel, inte som en lyckad radering', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ authenticated: true, userId: 'admin', csrfToken: 'test-csrf' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 'account_deletion_unavailable', deleted: false,
+        error: 'Kontoradering är tillfälligt spärrad. Kontot har inte raderats eller ändrats.',
+      }), { status: 409 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { apiClient } = await import('./client');
+
+    await expect(apiClient.deleteUser('target-account')).rejects.toThrow('Kontoradering är tillfälligt spärrad');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/admin/users/target-account', expect.objectContaining({
+      method: 'DELETE', credentials: 'same-origin', headers: expect.objectContaining({ 'X-CSRF-TOKEN': 'test-csrf' }),
+    }));
+  });
+
   it('hämtar sessionens CSRF-token och skickar den på kontobundna mutationer', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ authenticated: true, userId: 'account-a', isAdmin: false, csrfToken: 'csrf-value' }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
