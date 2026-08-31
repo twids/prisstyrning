@@ -28,7 +28,8 @@ const history = Array.from({ length: 288 }, (_, index) => {
     leavingWaterTemperatureC: 34.2, returnWaterTemperatureC: 29.8, flowLitresPerMinute: 13.4, brineInC: 3.1, brineOutC: .7,
     tankTemperatureC: 47.8, heatPumpPowerKw: 1.42, propertyPowerKw: 2.1, spotPriceSekPerKwh: .72, heatOutputKw: 4.1, cop: 3.34,
     dhwActive: false, defrostActive: false, backupHeaterActive: false,
-    roomTemperaturesJson: JSON.stringify({ [roomEntities[0]]: room, [roomEntities[1]]: room - .25, [roomEntities[2]]: room + .12 }), qualityJson: '{}',
+    roomTemperaturesJson: JSON.stringify({ [roomEntities[0]]: room, [roomEntities[1]]: room - .25, [roomEntities[2]]: room + .12 }),
+    qualityJson: JSON.stringify({ rooms: Object.fromEntries(roomEntities.map(entityId => [entityId, { Quality: 0, Excluded: false, Reason: null }])) }),
   };
 });
 const site = { userId: 'default', controlMode: 'Shadow', dhwWriter: 'Legacy', baseRoomTargetC: 21.5, lowerComfortBandC: .5, upperComfortBandC: .7, activeDeviationLimitC: 1, tariffEnabled: false, heatPumpPowerSignVerified: true, weatherCurveVerified: false, comfortSetpointConfirmed: true, comfortSetpointC: 60, comfortIntervalDays: 21, comfortFlexibilityDays: 7, timeZone: 'Europe/Stockholm', variableCostComponentsJson: '{"energiskatt":0.55,"rörligt_nät":0.12}', tariffDefinitionJson: '{}', createdAtUtc: iso(-40_000), updatedAtUtc: iso(-30) };

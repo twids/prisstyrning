@@ -8,6 +8,8 @@ Appimage: `ghcr.io/twids/prisstyrning@sha256:9e0fe803de6cda3e7154459eb0afc0a3743
 
 Verklig ONECTA-skrivning lyckades kl. 19:52:54 UTC / 21:52:54 CEST. Loggen innehöll både `apply OK` från legacy-skrivvägen och `Applied` från `ScheduleUpdateHangfireJob`. Detta bevisar accepterad API-skrivning, inte en fysisk uppvärmningscykel.
 
+Även ordinarie automatisk körning är nu verifierad: samma record gav `apply OK` och `Applied` 2026-08-31 kl. 01:35:03 CEST. Ingen ny engångstriggning gjordes; ett separat fel för samma äldre record finns fortfarande kvar.
+
 ## Hotfixar och kontroller
 
 - Första .NET 10-imagen startade inte eftersom statiska `RecurringJob.AddOrUpdate` användes innan Hangfires storage initierats. Känd legacy-compose/image återställdes via Dockhand. PR #119 bytte till DI-upplöst `IRecurringJobManager`; jobb-ID:n, cron, tidszoner och handlers behölls.
@@ -62,6 +64,15 @@ De nio skipparna är befintliga tester som kräver nätverk eller saknar full HT
 - Ingen senare `ScheduleUpdate`-/`apply OK`-post fanns i de kontrollerade loggarna sedan 20:42 UTC. Ordinarie 01:35-körning var fortfarande framtida; ingen extra testsändning gjordes.
 - Fortsatt lokal implementation gäller HTTP-säkerhet, adminlistning, utloggningsåterkoppling och navigation. Den separata [kodverifieringen 2026-08-31](2026-08-31-account-http-verification.md) redovisar 566 godkända backendtester, 6 kvarvarande undantag, 17 UI-tester och 10 tillämpliga E2E-flöden. Dessa ändringar är inte driftsatta och resultaten ska inte sammanblandas med produktionens verifiering ovan.
 
+### Ordinarie legacykörning – verifierad 2026-08-31 02:43–02:45 CEST
+
+- Oförändrade app-/EMHASS-digests; app, PostgreSQL och EMHASS körde med noll omstarter.
+- Hälsa och anonym session gav 200, `authenticated=false` och skyddad thermal-status gav 401. Inga hemliga svarsfält skrevs ut.
+- En uttryckligt read-only databastransaktion bekräftade `Legacy/Legacy` och noll thermal-styrkommandon.
+- Den ordinarie 01:35-körningen gav `apply OK` 01:35:03.631 CEST och `Applied` 01:35:03.645 CEST. Ett separat `Apply failed` fanns 01:35:01 CEST.
+- En jämförelse mot loggfönstret för föregående engångsverifiering bekräftade att både det lyckade och det misslyckade recordet är samma som tidigare. Inga kontoinställningar, credentials eller scheman ändrades och inget jobb utlöstes.
+- Lokala rumsvy-/kvalitetsrättningar och separata testresultat redovisas i [uppföljningen 2026-08-31](2026-08-31-room-quality-verification.md). Dessa är inte publicerade eller driftsatta. En kvarvarande brist i statusradens samlade datakvalitet är dokumenterad där för nästa koduppföljning.
+
 ## Rollback
 
 Vanlig rollback görs i samma Dockhand-stack utan databasåterläsning. Behåll de additiva tabellerna och krypteringsnyckeln.
@@ -77,7 +88,7 @@ Vanlig rollback görs i samma Dockhand-stack utan databasåterläsning. Behåll 
 
 - Användaren behöver logga in med samma Daikin/ONECTA-konto och prova kontosidorna. Den nya signerade sessionen återanvänder inte gamla osignerade cookies.
 - Spara/testa kontobunden HA-anslutning och entity-mappning innan telemetri/modellverifiering kan börja. Ingen HA-token har tilldelats ett gissat konto.
-- Följ nästa ordinarie legacykörning read-only. Den lyckade engångskörningen ersätter inte observation av framtida automatiska körningar.
+- Ordinarie legacykörning 2026-08-31 01:35 CEST är verifierad read-only med accepterad API-skrivning. Fortsätt följa kommande ordinarie körningar när de finns; en fysisk DHW-cykel är ännu inte verifierad här.
 - Utred det äldre auto-apply-recordet utan token först när kontoansvar är verifierat; ändra inte användarinställningar implicit.
 - Uppstarten skriver en icke-fatal varning om saknad `libgssapi_krb5.so.2`; migration, databas-readiness och legacy-skrivning fungerar. Hantera separat, inte som ett aktuellt driftstopp.
 - Säkerhetsuppföljning: en tidigare rå verktygsvy från Compose-redigeraren återgav credentialvärden i uppgiftsloggen. Värdena finns inte i denna dokumentation eller i hotfix-committen. Rotera berörda HA-/Daikin OAuth-credentials via respektive tjänsts normala flöde och uppdatera skyddad driftkonfiguration under kontrollerade former. Ingen rotation eller återkallelse har genomförts här.
