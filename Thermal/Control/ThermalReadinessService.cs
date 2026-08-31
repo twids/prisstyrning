@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Prisstyrning.Data;
+using Prisstyrning.Data.Entities;
+using Prisstyrning.Thermal.Data;
 using Prisstyrning.Thermal.Domain;
 using Prisstyrning.Thermal.HomeAssistant;
 
@@ -8,6 +10,8 @@ namespace Prisstyrning.Thermal.Control;
 
 public sealed class ThermalReadinessService
 {
+    private static readonly string[] RequiredTelemetryRoles =
+        [ThermalEntityRoles.OutsideTemperature, ThermalEntityRoles.LeavingWaterTemperature, ThermalEntityRoles.ReturnWaterTemperature, ThermalEntityRoles.Flow];
     private readonly PrisstyrningDbContext _db;
     private readonly IHomeAssistantStateCache _cache;
     private readonly HomeAssistantConnectionService _connections;
@@ -36,13 +40,22 @@ public sealed class ThermalReadinessService
             .Where(x => x.UserId == userId)
             .OrderByDescending(x => x.TimestampUtc)
             .FirstOrDefaultAsync(cancellationToken);
+        var cache = _cache.ReadAccount(userId);
+        var configured = connection is { TelemetryEnabled: true, TelemetryTokenConfigured: true } &&
+                         HomeAssistantTelemetryClient.IsSupportedBaseUrl(connection.BaseUrl);
+        var currentSnapshot = configured && cache.ConfigurationUpdatedAtUtc == connection!.UpdatedAtUtc &&
+                              cache.LastSnapshotUtc >= connection.UpdatedAtUtc && cache.LastSnapshotUtc <= now.AddSeconds(30);
+        var configurationUpdated = site?.UpdatedAtUtc > connection?.UpdatedAtUtc ? site?.UpdatedAtUtc : connection?.UpdatedAtUtc;
+        var fresh = latest is not null && latest.TimestampUtc <= now && now - latest.TimestampUtc <= TimeSpan.FromMinutes(10) &&
+                    !(latest.TimestampUtc < configurationUpdated);
 
         var checks = new List<ReadinessCheck>
         {
-            Check("ha-telemetry-configured", "Home Assistant-telemetri är konfigurerad för kontot", connection is { TelemetryEnabled: true, TelemetryTokenConfigured: true } && HomeAssistantTelemetryClient.IsSupportedBaseUrl(connection.BaseUrl), "Konfigurera kontots Home Assistant-adress och separata telemetritoken under Inställningar."),
-            Check("ha-snapshot", "En startbild finns från Home Assistant", _cache.LastSnapshotUtcFor(userId) is not null, "Kontrollera HA-anslutningen så att en ny startbild kan hämtas."),
-            Check("ha-live", "Home Assistants WebSocket är ansluten", _cache.IsConnected(userId), "Kontrollera nätverk, token och WebSocket-status."),
-            Check("telemetry-fresh", "Senaste femminuterstelemetri är högst tio minuter gammal", latest is not null && now - latest.TimestampUtc <= TimeSpan.FromMinutes(10), "Åtgärda saknade eller gamla sensordata."),
+            Check("ha-telemetry-configured", "Home Assistant-telemetri är konfigurerad för kontot", configured, "Konfigurera kontots Home Assistant-adress och separata telemetritoken under Inställningar."),
+            Check("ha-snapshot", "En startbild finns från kontots aktuella HA-anslutning", currentSnapshot, "Kontrollera HA-anslutningen och invänta en ny startbild efter sparade ändringar."),
+            Check("ha-live", "Home Assistants aktuella WebSocket är ansluten", currentSnapshot && cache.Connected, "Kontrollera nätverk, token och WebSocket-status."),
+            Check("telemetry-fresh", "Senaste femminuterstelemetri är aktuell och högst tio minuter gammal", fresh, "Åtgärda gamla eller framtida tidsstämplar och invänta en ny insamling efter ändrade inställningar."),
+            Check("telemetry-quality", "Kritiska rum och obligatoriska värmegivare har giltig liveinsamling", fresh && currentSnapshot && cache.Connected && latest is not null && HasRequiredTelemetry(latest, rooms, entities), "Kontrollera givarnas enheter, tidsstämplar och fel i Rum/Inställningar. Historik och ersättningsvärden är inte godkänd liveinsamling."),
             Check("critical-room", "Minst ett kritiskt rum har en aktiverad givare", rooms.Any(x => x.IsCritical), "Markera minst ett komfortkritiskt rum."),
             Check("thermal-inputs", "Utetemperatur, LWT, RWT och flöde är mappade", RequiredRoles(entities, ThermalEntityRoles.OutsideTemperature, ThermalEntityRoles.LeavingWaterTemperature, ThermalEntityRoles.ReturnWaterTemperature, ThermalEntityRoles.Flow), "Mappa obligatoriska P1P2-entities i Inställningar.")
         };
@@ -64,7 +77,7 @@ public sealed class ThermalReadinessService
                 .OrderBy(x => x.TimestampUtc)
                 .ToListAsync(cancellationToken);
             var expectedSamples = 21 * 24 * 12;
-            var validSamples = shadowSamples.Count(x => HasRequiredTelemetry(x, rooms));
+            var validSamples = shadowSamples.Count(x => HasRequiredTelemetry(x, rooms, entities));
             var telemetryCoverage = validSamples / (double)expectedSamples;
             var heatingDays = await _db.ThermalTelemetrySamples.AsNoTracking()
                 .Where(x => x.UserId == userId && x.TimestampUtc >= now.AddDays(-60) && x.HeatOutputKw > 0.5)
@@ -186,22 +199,18 @@ public sealed class ThermalReadinessService
     }
 
     internal static bool HasRequiredTelemetry(
-        Prisstyrning.Data.Entities.ThermalTelemetrySample sample,
-        IReadOnlyCollection<Prisstyrning.Data.Entities.ThermalRoomConfig> rooms)
+        ThermalTelemetrySample sample,
+        IReadOnlyCollection<ThermalRoomConfig> rooms,
+        IReadOnlyCollection<ThermalEntityConfig>? entities = null)
     {
-        if (sample.OutsideTemperatureC is null || sample.LeavingWaterTemperatureC is null ||
-            sample.ReturnWaterTemperatureC is null || sample.FlowLitresPerMinute is null)
-            return false;
-        try
-        {
-            var values = JsonSerializer.Deserialize<Dictionary<string, double>>(sample.RoomTemperaturesJson) ?? [];
-            return rooms.Where(x => x.IsCritical).All(x =>
-                values.ContainsKey(x.EntityId) && Prisstyrning.Thermal.Jobs.ThermalDiagnosticsService.IsRoomValid(sample.QualityJson, x.EntityId));
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
+        var critical = rooms.Where(x => x.Enabled && x.IsCritical).ToArray();
+        if (critical.Length == 0) return false;
+        var required = RequiredTelemetryRoles.Select(role =>
+            entities?.FirstOrDefault(x => x.Enabled && x.Role.Equals(role, StringComparison.OrdinalIgnoreCase)) ??
+            new ThermalEntityConfig { Role = role, Enabled = true }).ToArray();
+        // Reuse the strict, read-only saved-value assessment for this required
+        // subset. It rejects imports, malformed metadata, exclusions and NaN.
+        return ThermalStatusQuality.Assess(sample, critical, required, sample.TimestampUtc).Quality == DataQuality.Valid;
     }
 
     private static int? Percentile(IReadOnlyCollection<int> values, double percentile)

@@ -88,6 +88,49 @@ public sealed class HomeAssistantRestClientTests
         Assert.Empty(log.Exceptions);
     }
 
+    [Fact]
+    public async Task History_RequestsCompleteRecordsAndPreservesUnitChangesWithoutForeignEntities()
+    {
+        await using var db = Database();
+        db.HomeAssistantConnections.Add(new HomeAssistantConnection
+        {
+            UserId = "account-a", BaseUrl = "https://ha.example.test/prefix", TelemetryEnabled = true,
+            TelemetryTokenCiphertext = TestSecretProtector.Instance.Protect("synthetic-secret", "account-a", "ha-telemetry")
+        });
+        await db.SaveChangesAsync();
+        var connections = new HomeAssistantConnectionService(db, TestSecretProtector.Instance, new AcceptingValidator(),
+            new HomeAssistantStateCache(), new HomeAssistantConnectionChanges());
+        var handler = new Handler(request =>
+        {
+            Assert.StartsWith("/prefix/api/history/period/", request.RequestUri!.AbsolutePath);
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query);
+            Assert.False(query.ContainsKey("minimal_response"));
+            Assert.False(query.ContainsKey("no_attributes"));
+            Assert.Equal("0", query["significant_changes_only"]);
+            Assert.Equal("sensor.room", query["filter_entity_id"]);
+            Assert.Equal(HttpMethod.Get, request.Method);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""
+                    [null,[null,{"entity_id":42},
+                    {"entity_id":"sensor.room","state":"21","attributes":{"unit_of_measurement":"°C"},"last_updated":"2026-08-01T12:00:00Z"},
+                    {"entity_id":"sensor.room","state":"70","attributes":{"unit_of_measurement":"°F"},"last_updated":"2026-08-01T12:05:00Z"},
+                    {"entity_id":"sensor.other","state":"99","attributes":{"unit_of_measurement":"°C"},"last_updated":"2026-08-01T12:05:00Z"}]]
+                    """, Encoding.UTF8, "application/json")
+            };
+        });
+        using var http = new HttpClient(handler);
+        var client = new HomeAssistantTelemetryClient(new Factory(http), connections, new RecordingLogger());
+        var from = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
+
+        var result = await client.GetHistoryAsync("account-a", "sensor.room", from, from.AddMinutes(10));
+
+        Assert.Equal(2, result.Count);
+        Assert.Equal(["°C", "°F"], result.Select(x => x.Unit));
+        Assert.All(result, state => Assert.Equal("sensor.room", state.EntityId));
+        Assert.Equal(1, handler.Calls);
+    }
+
     private static PrisstyrningDbContext Database() => new(new DbContextOptionsBuilder<PrisstyrningDbContext>()
         .UseInMemoryDatabase($"ha-rest-{Guid.NewGuid():N}").Options);
 

@@ -277,7 +277,7 @@ public class HomeAssistantTelemetryTests
         new JsonObject { ["unit_of_measurement"] = unit, ["friendly_name"] = "Test" },
         updated ?? Now,
         updated ?? Now,
-        Now);
+        updated ?? Now);
 
     private sealed class StubFactory(HttpClient client) : IHttpClientFactory
     {

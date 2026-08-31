@@ -10,6 +10,7 @@ import { useChangeThermalMode, useThermalReadiness } from '../../hooks/thermal/u
 import { modeLabel } from './thermalUi';
 
 const modes: ControlMode[] = ['Legacy', 'Shadow', 'LwtActive', 'FullActive'];
+const stepLabels = ['Välj läge', 'Kontrollera krav', 'Bekräfta ansvar'];
 
 export default function ModeWizard({ open, currentMode, onClose }: { open: boolean; currentMode: ControlMode; onClose: () => void }) {
   const [step, setStep] = useState(0);
@@ -18,10 +19,26 @@ export default function ModeWizard({ open, currentMode, onClose }: { open: boole
     return modes[Math.min(index + 1, modes.length - 1)];
   }, [currentMode]);
   const [target, setTarget] = useState<ControlMode>(defaultTarget);
-  const readiness = useThermalReadiness(target);
+  const readiness = useThermalReadiness(target, open);
   const mutation = useChangeThermalMode();
-  const passed = readiness.data?.checks.filter((check) => check.passed).length ?? 0;
-  const total = readiness.data?.checks.length ?? 0;
+  const [clock, setClock] = useState(Date.now);
+  const now = Math.max(clock, Date.now());
+  const busy = readiness.isLoading || readiness.isFetching;
+  const currentResult = !busy && !readiness.isError && readiness.data?.targetMode === target &&
+    readiness.dataUpdatedAt > 0 && now - readiness.dataUpdatedAt <= 120_000 && readiness.dataUpdatedAt - now <= 30_000;
+  const checks = currentResult ? readiness.data?.checks ?? [] : [];
+  const passed = checks.filter(check => check.passed).length;
+  const total = checks.length;
+  const allowedTarget = target !== currentMode && (target === 'Legacy' || Math.abs(modes.indexOf(target) - modes.indexOf(currentMode)) === 1);
+  // Rollback must remain available during a telemetry outage. The server still
+  // verifies safe zeroing and writer handover; this is not a readiness bypass.
+  const canProceed = allowedTarget && (target === 'Legacy' || currentResult && readiness.data?.ready === true && total > 0 && passed === total);
+
+  useEffect(() => {
+    if (!open) return;
+    const timer = window.setInterval(() => setClock(Date.now()), 10_000);
+    return () => window.clearInterval(timer);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -30,22 +47,30 @@ export default function ModeWizard({ open, currentMode, onClose }: { open: boole
   }, [open, defaultTarget]);
 
   const close = () => {
+    if (mutation.isPending) return;
     setStep(0);
     mutation.reset();
     onClose();
   };
 
   const activate = async () => {
-    await mutation.mutateAsync(target);
-    close();
+    if (!canProceed || mutation.isPending) return;
+    try {
+      await mutation.mutateAsync(target);
+      close();
+    } catch {
+      // The mutation renders a fixed error below. Never echo proxy/server text
+      // or leave a rejected event-handler promise unobserved.
+    }
   };
 
   return (
     <Dialog open={open} onClose={close} maxWidth="md" fullWidth aria-labelledby="mode-dialog-title">
       <DialogTitle id="mode-dialog-title">Guidad ändring av driftläge</DialogTitle>
       <DialogContent>
-        <Stepper activeStep={step} sx={{ my: 2 }}>
-          {['Välj läge', 'Kontrollera krav', 'Bekräfta ansvar'].map((label) => <Step key={label}><StepLabel>{label}</StepLabel></Step>)}
+        <Typography sx={{ display: { xs: 'block', sm: 'none' }, my: 2 }} role="status">Steg {step + 1} av 3: {stepLabels[step]}</Typography>
+        <Stepper activeStep={step} sx={{ display: { xs: 'none', sm: 'flex' }, my: 2 }}>
+          {stepLabels.map((label, index) => <Step key={label} completed={index === 0 ? step > 0 : index === 1 && step > 1 && canProceed}><StepLabel>{label}</StepLabel></Step>)}
         </Stepper>
 
         {step === 0 && (
@@ -75,17 +100,23 @@ export default function ModeWizard({ open, currentMode, onClose }: { open: boole
           </Box>
         )}
 
-        {step === 1 && (
+        {step >= 1 && (
           <Stack spacing={1.5}>
-            {readiness.isLoading && <LinearProgress />}
-            {readiness.isError && <Alert severity="error">Readiness kunde inte hämtas: {readiness.error.message}</Alert>}
-            {readiness.data && (
+            {target === 'Legacy' ? <Alert severity="info">Återgång till Legacy kräver inte godkänd telemetri. Servern kontrollerar att LWT kan nollställas och DHW-skrivansvaret återställas säkert.</Alert> : (
+              <>
+                {busy && <><LinearProgress aria-label="Kontrollerar krav" /><Typography role="status">Kontrollerar kraven på nytt …</Typography></>}
+                {!busy && readiness.isError && <Alert severity="error">Kraven kunde inte kontrolleras. Tidigare godkännanden gäller inte; driftläget har inte ändrats här.</Alert>}
+                {!busy && !readiness.isError && !currentResult && <Alert severity="warning">Ett aktuellt kontrollresultat för valt driftläge saknas. Hämta kraven igen innan du fortsätter.</Alert>}
+                <Button onClick={() => void readiness.refetch()} disabled={busy || mutation.isPending} sx={{ alignSelf: 'flex-start' }}>Kontrollera kraven igen</Button>
+              </>
+            )}
+            {step === 1 && target !== 'Legacy' && currentResult && (
               <>
                 <Typography>{passed} av {total} krav är godkända.</Typography>
-                {readiness.data.checks.map((check) => (
+                {checks.map((check) => (
                   <Stack key={check.key} direction="row" gap={1.5} alignItems="flex-start" sx={{ p: 1.5, borderRadius: 2, bgcolor: 'background.default' }}>
                     {check.passed ? <CheckCircleOutlineIcon color="success" /> : <RadioButtonUncheckedIcon color="warning" />}
-                    <Box><Typography fontWeight={700}>{check.requirement}</Typography><Typography variant="body2" color="text.secondary">{check.action}</Typography></Box>
+                    <Box><Typography fontWeight={700}>{check.requirement}</Typography><Typography variant="body2">{check.passed ? 'Godkänt' : 'Åtgärd krävs'}</Typography><Typography variant="body2" color="text.secondary">{check.action}</Typography></Box>
                   </Stack>
                 ))}
               </>
@@ -94,28 +125,31 @@ export default function ModeWizard({ open, currentMode, onClose }: { open: boole
         )}
 
         {step === 2 && (
-          <Stack spacing={2}>
+          <Stack spacing={2} sx={{ mt: 2 }}>
             <Alert severity={target === 'FullActive' ? 'warning' : 'info'}>
-              Du ändrar till <strong>{modeLabel[target]}</strong>. Rollback till Legacy är permanent synlig efter aktivering.
+              Valt läge: <strong>{modeLabel[target]}</strong>. Rollback till Legacy är permanent synlig efter aktivering.
             </Alert>
             <Typography>
               {target === 'FullActive'
                 ? 'ONECTA-skrivrätten flyttas atomiskt till den gemensamma planeraren. Legacy-jobbet finns kvar och återtar skrivansvaret vid rollback.'
+                : target === 'Legacy'
+                  ? 'Legacy återtar varmvattenstyrningen. Från ett aktivt läge nollställs LWT-avvikelsen; från FullActive återställs även legacy-schemat i ONECTA. Om nollställningen inte kan verifieras avbryter servern lägesbytet och rapporterar felet.'
                 : target === 'LwtActive'
                   ? 'Systemet får skriva en begränsad P1P2-avvikelse. DHW fortsätter helt oförändrat i Legacy.'
                   : 'Inga nya kommandon skickas till Home Assistant, ONECTA eller värmepumpen.'}
             </Typography>
-            {mutation.isError && <Alert severity="error">{mutation.error.message}</Alert>}
+            {mutation.isError && <Alert severity="error">Lägesbytet kunde inte bekräftas. Kontrollera aktuell drift och händelser i översikten innan du försöker igen.</Alert>}
           </Stack>
         )}
       </DialogContent>
-      <DialogActions sx={{ px: 3, pb: 3 }}>
-        <Button onClick={close}>Avbryt</Button>
-        {step > 0 && <Button onClick={() => setStep((value) => value - 1)}>Tillbaka</Button>}
+      <DialogActions sx={{ px: 3, pb: 3, display: { xs: 'grid', sm: 'flex' }, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 1,
+        '& > :last-child': { gridColumn: { xs: '1 / -1', sm: 'auto' } }, '& > :not(:first-of-type)': { ml: { xs: 0, sm: 1 } } }}>
+        <Button onClick={close} disabled={mutation.isPending}>Avbryt</Button>
+        {step > 0 && <Button onClick={() => setStep((value) => value - 1)} disabled={mutation.isPending}>Tillbaka</Button>}
         {step < 2 ? (
-          <Button variant="contained" onClick={() => setStep((value) => value + 1)} disabled={step === 1 && readiness.data?.ready !== true}>Fortsätt</Button>
+          <Button variant="contained" onClick={() => setStep((value) => value + 1)} disabled={!allowedTarget || step === 1 && !canProceed}>Fortsätt</Button>
         ) : (
-          <Button variant="contained" color={target === 'FullActive' ? 'warning' : 'primary'} onClick={activate} disabled={mutation.isPending || readiness.data?.ready !== true}>
+          <Button variant="contained" color={target === 'FullActive' ? 'warning' : 'primary'} onClick={activate} disabled={mutation.isPending || !canProceed}>
             {mutation.isPending ? <CircularProgress size={22} /> : `Aktivera ${modeLabel[target]}`}
           </Button>
         )}

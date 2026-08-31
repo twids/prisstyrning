@@ -28,10 +28,12 @@ export function useSaveThermalConfig() {
   });
 }
 
-export function useThermalReadiness(targetMode: ControlMode) {
+export function useThermalReadiness(targetMode: ControlMode, enabled = true) {
   return useQuery({
     queryKey: ['thermal', 'readiness', targetMode],
     queryFn: () => apiClient.getThermalReadiness(targetMode),
+    enabled,
+    refetchInterval: enabled ? 30_000 : false,
   });
 }
 

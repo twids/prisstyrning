@@ -109,6 +109,15 @@ De nio skipparna är befintliga tester som kräver nätverk eller saknar full HT
 - [Separat lokal kodrapport](2026-08-31-ha-reload-verification.md) redovisar revisionsbunden HA-återanslutning, cache-/konkurrensskydd, säker loggning, live-status-UX och 804/6 backendtester, 162 UI-tester samt 20 tillämpliga browserflöden. Ändringarna är **inte driftsatta**; regulator, legacy och aktiveringsspärrar är oförändrade.
 - Ingen produktionskonfiguration, behörighet, credential eller kontoägare ändrades. Nästa kodavgränsning gäller insamlingskedjans sensor-/tidsvalidering, inte ny deploy eller aktivering.
 
+### Read-only-uppföljning 2026-08-31 omkring 10:07 CEST / 08:07 UTC
+
+- App, PostgreSQL och EMHASS körde med noll omstarter och oförändrade image-referenser. Inga containrar ändrades.
+- Hälsa och anonym session gav 200; sessionen var oautentiserad med booleskt verifierad CSRF-utgivning. Anonym thermal-status, HA-status och HA-katalog gav 401. Inga sessions-/cookievärden visades.
+- Explicit read-only databastransaktion bekräftade en thermal-konfiguration i `Legacy/Legacy` och noll termiska styrkommandon.
+- Inga nya `apply OK`/`Applied`/`Apply failed`-markörer från 05:19:28 till 08:07:44 UTC. Ingen testsändning, schematrigger eller deploy gjordes.
+- Den föregående HA-omladdningen sparades som lokal commit `c67f1d1`. [Sensorvalideringsrapporten](2026-08-31-sensor-validation-verification.md) beskriver nästa lokala kodleverans: säker sensor-/tidsvalidering, komplett historikanrop, striktare telemetrikrav, lägesguidens felåterhämtning/mobilvy och 871/6 backendtester, 171 UI-tester samt 22 tillämpliga browserflöden. Inget av detta är driftsatt.
+- Inga kontoinställningar, kontoägare, credentials, rättigheter eller aktiveringsspärrar ändrades. Fortsatt arbete och kvarvarande modell-/verklighetsacceptans är separata från den friska Legacy-driften.
+
 ## Rollback
 
 Vanlig rollback görs i samma Dockhand-stack utan databasåterläsning. Behåll de additiva tabellerna och krypteringsnyckeln.

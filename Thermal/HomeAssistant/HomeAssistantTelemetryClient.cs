@@ -88,8 +88,9 @@ public sealed class HomeAssistantTelemetryClient : IHomeAssistantTelemetryClient
             {
                 ["filter_entity_id"] = entityId,
                 ["end_time"] = toUtc.UtcDateTime.ToString("O"),
-                ["minimal_response"] = "false",
-                ["no_attributes"] = "false"
+                // HA treats minimal_response/no_attributes as presence flags, even
+                // when their value is "false". Full records preserve unit changes.
+                ["significant_changes_only"] = "0"
             });
         using var response = await SendAsync(userId, HttpMethod.Get, path, cancellationToken);
         response.EnsureSuccessStatusCode();
@@ -98,24 +99,29 @@ public sealed class HomeAssistantTelemetryClient : IHomeAssistantTelemetryClient
         var receivedAt = DateTimeOffset.UtcNow;
         var result = new List<HomeAssistantState>();
         foreach (var series in document.RootElement.EnumerateArray())
-        foreach (var item in series.EnumerateArray())
-            if (ParseState(item, receivedAt) is { } state) result.Add(state);
+        {
+            if (series.ValueKind != JsonValueKind.Array) continue;
+            foreach (var item in series.EnumerateArray())
+                if (ParseState(item, receivedAt) is { } state && state.EntityId.Equals(entityId, StringComparison.OrdinalIgnoreCase))
+                    result.Add(state);
+        }
         return result.OrderBy(x => x.LastUpdatedUtc).ToArray();
     }
 
     internal static HomeAssistantState? ParseState(JsonElement element, DateTimeOffset receivedAt)
     {
-        if (!element.TryGetProperty("entity_id", out var entityProperty) || string.IsNullOrWhiteSpace(entityProperty.GetString())) return null;
-        var attributes = element.TryGetProperty("attributes", out var attributeProperty)
-            ? JsonNode.Parse(attributeProperty.GetRawText()) as JsonObject ?? new JsonObject()
-            : new JsonObject();
+        if (element.ValueKind != JsonValueKind.Object || !element.TryGetProperty("entity_id", out var entityProperty) ||
+            entityProperty.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(entityProperty.GetString())) return null;
+        var attributesValid = element.TryGetProperty("attributes", out var attributeProperty) && attributeProperty.ValueKind == JsonValueKind.Object;
+        var attributes = attributesValid ? JsonNode.Parse(attributeProperty.GetRawText())!.AsObject() : new JsonObject();
         return new HomeAssistantState(
             entityProperty.GetString()!,
-            element.TryGetProperty("state", out var stateProperty) ? stateProperty.GetString() ?? string.Empty : string.Empty,
+            element.TryGetProperty("state", out var stateProperty) && stateProperty.ValueKind == JsonValueKind.String
+                ? stateProperty.GetString() ?? string.Empty : string.Empty,
             attributes,
             ParseTimestamp(element, "last_changed"),
             ParseTimestamp(element, "last_updated"),
-            receivedAt);
+            receivedAt) { AttributesMalformed = !attributesValid };
     }
 
     private async Task<HttpResponseMessage> SendAsync(string userId, HttpMethod method, string path, CancellationToken cancellationToken)
@@ -146,9 +152,16 @@ public sealed class HomeAssistantTelemetryClient : IHomeAssistantTelemetryClient
         Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
         (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps) && string.IsNullOrEmpty(uri.UserInfo);
 
-    private static DateTimeOffset? ParseTimestamp(JsonElement element, string name) =>
-        element.TryGetProperty(name, out var property) && DateTimeOffset.TryParse(property.GetString(), out var timestamp)
-            ? timestamp.ToUniversalTime() : null;
+    private static DateTimeOffset? ParseTimestamp(JsonElement element, string name)
+    {
+        if (!element.TryGetProperty(name, out var property) || property.ValueKind != JsonValueKind.String) return null;
+        var text = property.GetString();
+        // A local date/time without an explicit offset must not silently acquire
+        // a different meaning on Windows, in Docker, or across a DST change.
+        if (text is not { Length: >= 20 } || text[10] != 'T' ||
+            !(text.EndsWith('Z') || text.Length >= 25 && text[^6] is '+' or '-' && text[^3] == ':')) return null;
+        return property.TryGetDateTimeOffset(out var timestamp) ? timestamp.ToUniversalTime() : null;
+    }
 
     private static void EnsureSafeEntityId(string entityId)
     {

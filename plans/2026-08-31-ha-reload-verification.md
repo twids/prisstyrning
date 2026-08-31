@@ -68,7 +68,7 @@ Read-only verifierat **2026-08-31 omkring 07:19 CEST / 05:19 UTC**:
 
 ## Nästa avgränsning och kvarvarande acceptans
 
-1. Fortsätt insamlingskedjans regressioner för icke-ändliga värden, felaktiga attribut samt saknade/framtida råtider genom collector, historik och readiness. Katalogbedömning och en lyckad prenumeration är inte i sig godkänd sensorkvalitet eller styrberedskap.
+1. Den avgränsade insamlings-/historik-/telemetrikvalitetsuppföljningen är nu lokalt verifierad i [sensorrapporten](2026-08-31-sensor-validation-verification.md). Katalogbedömning och en lyckad prenumeration är inte i sig godkänd sensorkvalitet eller styrberedskap; övriga modell- och dygnsgrindar återstår enligt den rapporten.
 2. Granska den samlade lokala serien och kör tillämplig CI före en motiverad uppdatering av samma Dockhand-stack. Den lokala adminraderingsspärren är ännu inte driftsatt; använd inte den gamla produktionsraderingen. Ingen separat stack och ingen aktivering ingår.
 3. Verklig kontoinloggning, kontoägd HA-konfiguration, nätverksavbrott/återanslutning och husets Shadow-, modell-, värmekurve- och DHW-acceptans återstår. Ett accepterat ONECTA-anrop är inte en verifierad fysisk varmvatten- eller hygiencykel.
 4. Inställningslåset och cachen är processlokala, avsedda för den befintliga enda appinstansen. Horisontell skalning kräver databasbaserad skrivkonkurrens och notifiering mellan instanser; det är inte implementerat eller godkänt här.

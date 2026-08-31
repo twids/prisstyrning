@@ -11,8 +11,12 @@ public sealed record HomeAssistantState(
     DateTimeOffset? LastUpdatedUtc,
     DateTimeOffset ReceivedAtUtc)
 {
-    public string FriendlyName => Attributes["friendly_name"]?.GetValue<string>() ?? EntityId;
-    public string? Unit => Attributes["unit_of_measurement"]?.GetValue<string>();
+    public bool AttributesMalformed { get; init; }
+    public string FriendlyName => StringAttribute("friendly_name") is { Length: > 0 } name ? name : EntityId;
+    public string? Unit => StringAttribute("unit_of_measurement");
+
+    internal string? StringAttribute(string name) =>
+        Attributes[name] is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
 }
 
 public sealed record NormalizedSensorValue(

@@ -37,7 +37,7 @@ internal static class HomeAssistantEntityCatalog
         if (value.Length == 0 || value.Equals("unknown", StringComparison.OrdinalIgnoreCase) ||
             value.Equals("unavailable", StringComparison.OrdinalIgnoreCase))
             return Result(DataQuality.Unavailable, "Home Assistant saknar ett tillgängligt värde för denna entity.");
-        if (state.Attributes["unit_of_measurement"] is not null && unit is null)
+        if (state.AttributesMalformed || state.Attributes["unit_of_measurement"] is not null && unit is null)
             return Result(DataQuality.Invalid, "Enheten har ett felaktigt format i Home Assistant.");
         if (updated is null || received == default)
             return Result(DataQuality.Unavailable, "Uppdaterings- eller mottagningstid saknas; värdets ålder kan inte verifieras.");

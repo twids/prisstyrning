@@ -22,31 +22,49 @@ public static class SensorValueNormalizer
             return new(null, null, expectedUnit, DataQuality.Unavailable, "Entity saknas i Home Assistant.");
         }
 
-        if (state.State.Equals("unknown", StringComparison.OrdinalIgnoreCase) ||
-            state.State.Equals("unavailable", StringComparison.OrdinalIgnoreCase) ||
-            string.IsNullOrWhiteSpace(state.State))
+        var text = state.State.Trim();
+        if (text.Equals("unknown", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("unavailable", StringComparison.OrdinalIgnoreCase) || text.Length == 0)
         {
-            return new(null, null, expectedUnit, DataQuality.Unavailable, $"Entity rapporterar {state.State}.");
+            return new(null, null, expectedUnit, DataQuality.Unavailable, "Home Assistant saknar ett tillgängligt värde.");
         }
+
+        if (state.AttributesMalformed || state.Attributes["unit_of_measurement"] is not null && state.Unit is null)
+            return new(null, null, expectedUnit, DataQuality.Invalid, "Givarens attribut eller enhet har ett felaktigt format.");
 
         if (IsBooleanUnit(expectedUnit))
         {
+            if (!string.IsNullOrWhiteSpace(state.Unit) && !IsBooleanUnit(state.Unit.Trim()))
+                return new(null, null, "bool", DataQuality.Invalid, "En givare med fysisk enhet kan inte användas som av/på-signal.");
             if (TrueValues.Contains(state.State)) return new(null, true, "bool", DataQuality.Valid, null);
             if (FalseValues.Contains(state.State)) return new(null, false, "bool", DataQuality.Valid, null);
             return new(null, null, "bool", DataQuality.Invalid, "Värdet kan inte tolkas som av/på.");
         }
 
-        if (!double.TryParse(state.State, NumberStyles.Float, CultureInfo.InvariantCulture, out var rawValue))
+        if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var rawValue))
         {
             return new(null, null, expectedUnit, DataQuality.Invalid, "Värdet är inte numeriskt.");
         }
+        if (!double.IsFinite(rawValue))
+            return new(null, null, expectedUnit, DataQuality.Invalid, "Värdet är inte ett ändligt tal.");
 
         var sourceUnit = NormalizeUnit(state.Unit);
         var targetUnit = NormalizeUnit(expectedUnit);
         var converted = Convert(rawValue, sourceUnit, targetUnit);
-        return converted is null
-            ? new(null, null, expectedUnit, DataQuality.Invalid, $"Enheten {state.Unit ?? "(saknas)"} kan inte konverteras till {expectedUnit}.")
-            : new(converted, null, CanonicalUnit(targetUnit), DataQuality.Valid, null);
+        if (converted is null)
+            return new(null, null, expectedUnit, DataQuality.Invalid, "Givarens enhet saknas eller kan inte konverteras till den konfigurerade enheten.");
+        if (!double.IsFinite(converted.Value))
+            return new(null, null, expectedUnit, DataQuality.Invalid, "Enhetskonverteringen ger ett för stort värde.");
+        if (targetUnit == "sek/kwh" && ToDecimal(converted) is null)
+            return new(null, null, expectedUnit, DataQuality.Invalid, "Priset är för stort för att lagras säkert.");
+        return new(converted, null, CanonicalUnit(targetUnit), DataQuality.Valid, null);
+    }
+
+    internal static decimal? ToDecimal(double? value)
+    {
+        if (value is null || !double.IsFinite(value.Value)) return null;
+        try { return (decimal)value.Value; }
+        catch (OverflowException) { return null; }
     }
 
     private static double? Convert(double value, string source, string target)

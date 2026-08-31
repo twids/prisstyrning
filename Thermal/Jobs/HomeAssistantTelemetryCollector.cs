@@ -44,18 +44,18 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
                 {
                     try { await CollectAsync(userId, stoppingToken); }
                     catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
-                    catch (Exception exception) { _logger.LogError(exception, "Could not create a Home Assistant five-minute telemetry snapshot for user {UserId}.", userId); }
+                    catch (Exception) { _logger.LogError("Could not create an account Home Assistant five-minute telemetry snapshot."); }
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 return;
             }
-            catch (Exception exception) { _logger.LogError(exception, "Could not enumerate thermal installations for telemetry collection."); }
+            catch (Exception) { _logger.LogError("Could not enumerate thermal installations for telemetry collection."); }
         } while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
-    internal async Task CollectAsync(string userId, CancellationToken cancellationToken)
+    internal async Task CollectAsync(string userId, CancellationToken cancellationToken, DateTimeOffset? collectedAtUtc = null)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
@@ -75,7 +75,13 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
             .SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
         var baseRoomTargetC = site?.BaseRoomTargetC ?? 21.5;
 
-        var now = DateTimeOffset.UtcNow;
+        var now = (collectedAtUtc ?? DateTimeOffset.UtcNow).ToUniversalTime();
+        var cache = _cache.ReadAccount(userId);
+        var connectionReady = cache.Connected && cache.ConfigurationUpdatedAtUtc == connection.UpdatedAtUtc &&
+                              cache.LastSnapshotUtc >= connection.UpdatedAtUtc && cache.LastSnapshotUtc <= now.AddSeconds(30) &&
+                              !string.IsNullOrWhiteSpace(connection.TelemetryTokenCiphertext);
+        var snapshot = cache.States.ToDictionary(x => x.EntityId, StringComparer.OrdinalIgnoreCase);
+        var revision = site?.UpdatedAtUtc > connection.UpdatedAtUtc ? site.UpdatedAtUtc : connection.UpdatedAtUtc;
         var bucket = new DateTimeOffset(now.Year, now.Month, now.Day, now.Hour, now.Minute / 5 * 5, 0, TimeSpan.Zero);
         var sample = await db.ThermalTelemetrySamples
             .SingleOrDefaultAsync(x => x.UserId == userId && x.TimestampUtc == bucket, cancellationToken)
@@ -86,14 +92,15 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
         var weatherForecast = new NormalizedWeatherForecast([], DataQuality.Unavailable, "Ingen väderprognos är mappad.");
         foreach (var entity in entities)
         {
-            _cache.TryGet(userId, entity.EntityId, out var raw);
+            snapshot.TryGetValue(entity.EntityId, out var raw);
             if (entity.Role.Equals(ThermalEntityRoles.WeatherForecast, StringComparison.OrdinalIgnoreCase))
             {
-                weatherForecast = HomeAssistantWeatherForecastParser.Parse(raw, now);
+                weatherForecast = connectionReady ? HomeAssistantWeatherForecastParser.Parse(raw, now)
+                    : new([], DataQuality.Unavailable, "En aktuell liveanslutning till Home Assistant saknas.");
                 continue;
             }
             values[entity.Role] = Assess(
-                entity.EntityId,
+                $"entity|{entity.Role}|{entity.EntityId}",
                 raw,
                 entity.ExpectedUnit,
                 entity.MinimumValid,
@@ -101,16 +108,18 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
                 entity.MaximumRatePerHour,
                 now,
                 staleAfter,
-                userId);
+                userId,
+                revision,
+                connectionReady);
         }
 
         var roomValues = new Dictionary<string, double>();
         var roomAssessments = new Dictionary<string, SensorAssessment>();
         foreach (var room in rooms)
         {
-            _cache.TryGet(userId, room.EntityId, out var raw);
+            snapshot.TryGetValue(room.EntityId, out var raw);
             var assessment = Assess(
-                room.EntityId,
+                $"room|{room.EntityId}",
                 raw,
                 "°C",
                 room.MinimumValidC,
@@ -118,7 +127,9 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
                 room.MaximumRateCPerHour,
                 now,
                 staleAfter,
-                userId);
+                userId,
+                revision,
+                connectionReady);
             roomAssessments[room.EntityId] = assessment;
             if (assessment.Quality == DataQuality.Valid && !assessment.Excluded && assessment.Value is { } valid)
             {
@@ -156,21 +167,22 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
         sample.TankTemperatureC = Numeric(values, ThermalEntityRoles.TankTemperature);
         sample.HeatPumpPowerKw = Numeric(values, ThermalEntityRoles.HeatPumpPower);
         sample.PropertyPowerKw = Numeric(values, ThermalEntityRoles.PropertyPower);
-        sample.SpotPriceSekPerKwh = Numeric(values, ThermalEntityRoles.SpotPrice) is { } spotPrice
-            ? (decimal)spotPrice
-            : null;
+        sample.SpotPriceSekPerKwh = SensorValueNormalizer.ToDecimal(Numeric(values, ThermalEntityRoles.SpotPrice));
         sample.DhwActive = Boolean(values, ThermalEntityRoles.DhwActive);
         sample.DefrostActive = Boolean(values, ThermalEntityRoles.DefrostActive);
         sample.BackupHeaterActive = Boolean(values, ThermalEntityRoles.BackupHeaterActive);
         sample.HeatOutputKw = CalculateHeatOutput(sample.FlowLitresPerMinute, sample.LeavingWaterTemperatureC, sample.ReturnWaterTemperatureC);
 
-        sample.Cop = site?.HeatPumpPowerSignVerified == true && sample.BackupHeaterActive != true &&
+        sample.Cop = site?.HeatPumpPowerSignVerified == true && sample.BackupHeaterActive == false &&
                      sample.HeatPumpPowerKw is > 0.1 && sample.HeatOutputKw is { } heatOutput
             ? heatOutput / sample.HeatPumpPowerKw.Value
             : null;
+        if (sample.Cop is { } cop && !double.IsFinite(cop)) sample.Cop = null;
         sample.RoomTemperaturesJson = JsonSerializer.Serialize(roomValues);
         sample.QualityJson = JsonSerializer.Serialize(new
         {
+            connectionRevisionUtc = connection.UpdatedAtUtc,
+            collectedAtUtc = now,
             entities = values.ToDictionary(x => x.Key, x => new { x.Value.Quality, x.Value.Reason, x.Value.Excluded }),
             rooms = roomAssessments.ToDictionary(x => x.Key, x => new { x.Value.Quality, x.Value.Reason, x.Value.Excluded }),
             forecast = new { weatherForecast.Quality, weatherForecast.Reason, points = weatherForecast.Points.Count }
@@ -207,13 +219,21 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
         double? maximumRatePerHour,
         DateTimeOffset now,
         TimeSpan staleAfter,
-        string userId) =>
-        _qualityTracker.Assess(
+        string userId,
+        DateTimeOffset revision,
+        bool connectionReady)
+    {
+        var normalized = SensorValueNormalizer.Normalize(state, expectedUnit);
+        if (!connectionReady)
+            normalized = normalized with { Quality = DataQuality.Unavailable, Reason = "En aktuell liveanslutning till Home Assistant saknas." };
+        return _qualityTracker.Assess(
             $"{userId}|{entityId}",
             state,
-            SensorValueNormalizer.Normalize(state, expectedUnit),
+            normalized,
             new SensorValidationRules(minimum, maximum, maximumRatePerHour, staleAfter),
-            now);
+            now,
+            configurationRevisionUtc: revision);
+    }
 
     private static double? Numeric(IReadOnlyDictionary<string, SensorAssessment> values, string role) =>
         values.TryGetValue(role, out var assessment) && assessment.Quality == DataQuality.Valid && !assessment.Excluded
@@ -227,8 +247,10 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
 
     internal static double? CalculateHeatOutput(double? flowLitresPerMinute, double? lwtC, double? rwtC)
     {
-        if (flowLitresPerMinute is not > 0 || lwtC is null || rwtC is null || lwtC <= rwtC) return null;
-        return flowLitresPerMinute.Value / 60 * 4.186 * (lwtC.Value - rwtC.Value);
+        if (flowLitresPerMinute is not > 0 || lwtC is null || rwtC is null || lwtC <= rwtC ||
+            !double.IsFinite(flowLitresPerMinute.Value) || !double.IsFinite(lwtC.Value) || !double.IsFinite(rwtC.Value)) return null;
+        var result = flowLitresPerMinute.Value / 60 * 4.186 * (lwtC.Value - rwtC.Value);
+        return double.IsFinite(result) ? result : null;
     }
 
     internal static double? CalculateRepresentativeError(

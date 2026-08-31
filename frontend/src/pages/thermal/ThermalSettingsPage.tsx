@@ -198,14 +198,14 @@ export function HomeAssistantConnectionPanel({ ha, connection }: { ha: ReturnTyp
     </Box>
     <Paper variant="outlined" sx={{ p: 2.5 }}>
       <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={2} alignItems={{ md: 'flex-end' }}>
-        <Box sx={{ flex: 1 }}><Typography component="h3" variant="h6">Historik för modellträning</Typography><Typography variant="body2" color="text.secondary">Hämta förändringshistorik från HA och återsampla den till fem minuter. Intervallet får vara högst 90 dagar och befintliga snapshots skrivs aldrig över.</Typography></Box>
+        <Box sx={{ flex: 1 }}><Typography component="h3" variant="h6">Historik för modellträning</Typography><Typography variant="body2" color="text.secondary">Hämta förändringshistorik från HA och återsampla den till fem minuter. Intervallet får vara högst 90 dagar och befintliga snapshots skrivs aldrig över. Importerade punkter valideras separat; de är inte godkänd liveinsamling eller verifierade Shadow-dygn.</Typography></Box>
         <Stack direction={{ xs: 'column', sm: 'row' }} gap={1.5}>
           <TextField type="datetime-local" label="Från" value={historyFrom} onChange={(event) => setHistoryFrom(event.target.value)} InputLabelProps={{ shrink: true }} />
           <TextField type="datetime-local" label="Till" value={historyTo} onChange={(event) => setHistoryTo(event.target.value)} InputLabelProps={{ shrink: true }} />
           <Button variant="outlined" onClick={importHistory} disabled={!ha.status.data?.configured || ha.importHistory.isPending || !historyFrom || !historyTo}>{ha.importHistory.isPending ? 'Importerar…' : 'Importera'}</Button>
         </Stack>
       </Stack>
-      {ha.importHistory.isSuccess && <Alert severity={ha.importHistory.data.entitiesWithoutHistory.length ? 'warning' : 'success'} sx={{ mt: 2 }}>{ha.importHistory.data.importedSamples} nya punkter importerades och {ha.importHistory.data.existingSamplesPreserved} befintliga bevarades.{ha.importHistory.data.entitiesWithoutHistory.length > 0 ? ` Historik saknades för: ${ha.importHistory.data.entitiesWithoutHistory.join(', ')}.` : ''}</Alert>}
+      {ha.importHistory.isSuccess && <Alert severity={ha.importHistory.data.entitiesWithoutHistory.length ? 'warning' : 'success'} sx={{ mt: 2 }}>{ha.importHistory.data.importedSamples} nya punkter importerades och {ha.importHistory.data.existingSamplesPreserved} befintliga bevarades.{ha.importHistory.data.entitiesWithoutHistory.length > 0 ? ` Användbar, tidsstämplad historik saknades för: ${ha.importHistory.data.entitiesWithoutHistory.join(', ')}.` : ''}</Alert>}
       {ha.importHistory.isError && <Alert severity="error" sx={{ mt: 2 }}>{ha.importHistory.error.message}</Alert>}
     </Paper>
     <ConfirmDialog open={removeOpen} title="Ta bort Home Assistant-anslutningen?" message="Telemetri och entity-listan stoppas för kontot. Åtgärden är blockerad i aktiva LWT-lägen och ändrar aldrig legacy-DHW." confirmText="Ta bort" cancelText="Avbryt" isDestructive onCancel={() => setRemoveOpen(false)} onConfirm={() => { setRemoveOpen(false); ha.remove.mutate(); }} />
