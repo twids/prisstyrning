@@ -239,6 +239,7 @@ EF Core migrations are applied automatically on startup.
 
 ### Testing
 * Backend: `dotnet test --verbosity normal`
+* Isolated PostgreSQL 17 acceptance: `powershell -File scripts/test-postgres-acceptance.ps1` (requires a working local Docker engine; never point it at an existing database)
 * Frontend unit/accessibility: `cd frontend && npm test`
 * Frontend production build: `cd frontend && npm run build`
 * Critical browser flows: `cd frontend && npm run test:e2e`

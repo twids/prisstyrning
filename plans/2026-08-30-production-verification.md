@@ -156,7 +156,7 @@ De nio skipparna är befintliga tester som kräver nätverk eller saknar full HT
 - [Modellprovenansrapporten](2026-09-01-thermal-model-provenance-verification.md) redovisar additiv `jsonb`-lagring och SHA-256-bindning till exakt kontoägt 2R2C-/COP-träningsurval, aktiverad konfiguration, urvalsregel och logisk algoritmversion. Äldre modeller utan bevis blir ej verifierade tills de tränats om.
 - Slutlig lokal verifiering: **1 157 godkända backendtester/6 befintliga undantag, 221 UI-tester och 26 tillämpliga browserflöden/6 projektexkluderingar**. .NET 10 Release och TypeScript/Vite är godkända; migrationsdrift och `git diff --check` är godkända.
 - Ingen produktionsavläsning, publicering, deploy, appstart, körd migration, testsändning, konto-/credentialändring eller aktivering ingick. Den tidigare verifierade Legacy-produktionen ovan är historiskt driftbevis, inte en ny kontroll i detta pass.
-- Beständigt källbevis är nu lokalt implementerat, men automatisk återhashning av ändrad råhistorik, build-digestbindning, verklig PostgreSQL-konkurrens och fysisk Shadow-/DHW-/hygienacceptans återstår. `Legacy/Legacy` är fortsatt det enda driftgodkända läget.
+- Beständigt källbevis är nu lokalt implementerat, men automatisk återhashning av ändrad råhistorik, build-digestbindning, verklig PostgreSQL-konkurrens och fysisk Shadow-/DHW-/hygienacceptans återstår. `Legacy/Legacy` är fortsatt det enda driftgodkända läget. Den historiska punkten om automatisk återhashning slutfördes senare i [källomvalideringsrapporten](2026-09-01-thermal-model-source-revalidation.md); övriga gränser kvarstår.
 
 ## Rollback
 
