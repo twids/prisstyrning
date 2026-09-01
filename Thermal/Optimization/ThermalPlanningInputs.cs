@@ -20,12 +20,18 @@ public sealed record ThermalPlanningInputEvidence(
     string PriceZone,
     DateTimeOffset PriceSavedAtUtc,
     string PriceFingerprint,
-    ThermalPlanningDhwEvidence? DhwEvidence = null);
+    ThermalPlanningDhwEvidence? DhwEvidence = null,
+    ThermalPlanningDhwProfileEvidence? DhwProfileEvidence = null);
 
 public sealed record ThermalPlanningDhwEvidence(
     long? ReservedCycleId,
     int OpenCycleCount,
     string OpenCycleFingerprint);
+
+public sealed record ThermalPlanningDhwProfileEvidence(
+    string Source,
+    long? StoredCycleId,
+    DhwProfileSourceEvidence? EstimatedEvidence);
 
 internal sealed record ThermalPlanningTelemetry(
     long SampleId,
@@ -150,6 +156,7 @@ internal static class ThermalPlanningInputs
         PriceSnapshot snapshot,
         string zone,
         long? reservedDhwCycleId,
+        ThermalPlanningDhwProfileEvidence dhwProfileEvidence,
         CancellationToken cancellationToken)
     {
         var dhwEvidence = await ReadDhwEvidenceAsync(
@@ -162,7 +169,8 @@ internal static class ThermalPlanningInputs
             NormalizeZone(zone),
             snapshot.SavedAtUtc,
             PriceFingerprint(snapshot),
-            dhwEvidence);
+            dhwEvidence,
+            dhwProfileEvidence);
     }
 
     internal static async Task EnsureCurrentAsync(
@@ -177,8 +185,8 @@ internal static class ThermalPlanningInputs
             evidence.TelemetryTimestampUtc == default || evidence.PriceSavedAtUtc == default ||
             string.IsNullOrWhiteSpace(evidence.TelemetryFingerprint) || string.IsNullOrWhiteSpace(evidence.PriceFingerprint) ||
             evidence.DhwEvidence is null || evidence.DhwEvidence.OpenCycleCount < 0 ||
-            string.IsNullOrWhiteSpace(evidence.DhwEvidence.OpenCycleFingerprint))
-            throw Evidence("Beräkningen saknar verifierbart telemetri-, pris- eller DHW-underlag och behöver skapas om.");
+            string.IsNullOrWhiteSpace(evidence.DhwEvidence.OpenCycleFingerprint) || evidence.DhwProfileEvidence is null)
+            throw Evidence("Beräkningen saknar verifierbart telemetri-, pris-, DHW- eller profilunderlag och behöver skapas om.");
 
         var sample = await db.ThermalTelemetrySamples.AsNoTracking().SingleOrDefaultAsync(
             x => x.Id == evidence.TelemetrySampleId && x.UserId == userId, cancellationToken);
@@ -201,6 +209,27 @@ internal static class ThermalPlanningInputs
             db, userId, evidence.DhwEvidence.ReservedCycleId, cancellationToken);
         if (dhwEvidence != evidence.DhwEvidence)
             throw Evidence("DHW-reservationen ändrades, försvann eller ersattes under beräkningen. En ny plan behövs.");
+
+        var dhwProfileEvidence = evidence.DhwProfileEvidence;
+        switch (dhwProfileEvidence.Source)
+        {
+            case "None" when dhwProfileEvidence.StoredCycleId is null &&
+                             dhwProfileEvidence.EstimatedEvidence is null &&
+                             evidence.DhwEvidence.OpenCycleCount == 0 &&
+                             evidence.DhwEvidence.ReservedCycleId is null:
+                break;
+            case "StoredCycle" when dhwProfileEvidence.StoredCycleId is > 0 &&
+                                    dhwProfileEvidence.StoredCycleId == evidence.DhwEvidence.ReservedCycleId &&
+                                    dhwProfileEvidence.EstimatedEvidence is null:
+                break;
+            case "Estimated" when dhwProfileEvidence.StoredCycleId is null &&
+                                  dhwProfileEvidence.EstimatedEvidence is not null:
+                await DhwProfileEstimator.EnsureCurrentAsync(
+                    db, userId, dhwProfileEvidence.EstimatedEvidence, cancellationToken);
+                break;
+            default:
+                throw Evidence("DHW-profilens provenans är ogiltig eller stämmer inte med den reserverade cykeln.");
+        }
     }
 
     private static async Task<ThermalPlanningDhwEvidence> ReadDhwEvidenceAsync(

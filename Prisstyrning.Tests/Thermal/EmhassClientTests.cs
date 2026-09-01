@@ -167,7 +167,11 @@ public class EmhassClientTests
                 "SE3",
                 DateTimeOffset.UtcNow,
                 "price-fingerprint",
-                new(14, 1, "dhw-cycle-fingerprint")),
+                new(14, 1, "dhw-cycle-fingerprint"),
+                new(
+                    "Estimated",
+                    null,
+                    new("Eco", 40, 45, 2, 3, 39, true, true, true, "dhw-profile-fingerprint"))),
             HorizonStartUtc = DateTimeOffset.UtcNow
         };
 
@@ -179,6 +183,7 @@ public class EmhassClientTests
         Assert.DoesNotContain("telemetry-fingerprint", actual);
         Assert.DoesNotContain("price-fingerprint", actual);
         Assert.DoesNotContain("dhw-cycle-fingerprint", actual);
+        Assert.DoesNotContain("dhw-profile-fingerprint", actual);
     }
 
     [Fact]

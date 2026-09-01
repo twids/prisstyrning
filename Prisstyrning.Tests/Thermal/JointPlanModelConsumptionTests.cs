@@ -118,6 +118,10 @@ public sealed class JointPlanModelConsumptionTests
         Assert.NotNull(request.InputEvidence);
         Assert.Null(request.InputEvidence.DhwEvidence?.ReservedCycleId);
         Assert.Equal(0, request.InputEvidence.DhwEvidence?.OpenCycleCount);
+        Assert.Equal("Estimated", request.InputEvidence.DhwProfileEvidence?.Source);
+        Assert.Null(request.InputEvidence.DhwProfileEvidence?.StoredCycleId);
+        Assert.False(string.IsNullOrWhiteSpace(
+            request.InputEvidence.DhwProfileEvidence?.EstimatedEvidence?.SourceFingerprint));
         Assert.Equal(1, fixture.Dispatcher.Calls);
         await fixture.ChangeAsync(async db =>
         {
@@ -134,6 +138,10 @@ public sealed class JointPlanModelConsumptionTests
             Assert.Equal(cycle.Id, evidence.DhwEvidence?.ReservedCycleId);
             Assert.Equal(1, evidence.DhwEvidence?.OpenCycleCount);
             Assert.False(string.IsNullOrWhiteSpace(evidence.DhwEvidence?.OpenCycleFingerprint));
+            Assert.Equal("Estimated", evidence.DhwProfileEvidence?.Source);
+            Assert.Equal(
+                request.InputEvidence.DhwProfileEvidence?.EstimatedEvidence,
+                evidence.DhwProfileEvidence?.EstimatedEvidence);
             Assert.Equal("Legacy", (await db.ThermalSiteConfigs.SingleAsync()).DhwWriter);
             Assert.Empty(await db.ThermalControlCommands.ToListAsync());
         });
@@ -147,7 +155,10 @@ public sealed class JointPlanModelConsumptionTests
         {
             db.ThermalRoomConfigs.Add(new ThermalRoomConfig
             {
-                UserId = "account-a", Name = "Annat rum", EntityId = "sensor.other", Weight = 1
+                UserId = "account-a",
+                Name = "Annat rum",
+                EntityId = "sensor.other",
+                Weight = 1
             });
             var sample = await db.ThermalTelemetrySamples.SingleAsync();
             sample.RoomTemperaturesJson = "{\"sensor.room\":5,\"sensor.other\":21.8}";
@@ -271,6 +282,7 @@ public sealed class JointPlanModelConsumptionTests
     [InlineData("price-change")]
     [InlineData("zone-change")]
     [InlineData("dhw-cycle-created")]
+    [InlineData("dhw-profile-source-created")]
     public async Task Replan_DiscardsResultWhenInputsAreRevokedWhileSolverRuns(string change)
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -298,12 +310,30 @@ public sealed class JointPlanModelConsumptionTests
                 PredictedDurationMinutes = 45,
                 ReservedDurationMinutes = 60
             });
+            if (change == "dhw-profile-source-created")
+            {
+                var start = DateTimeOffset.UtcNow.AddDays(-1);
+                db.DhwCycles.Add(new DhwCycle
+                {
+                    UserId = "account-a",
+                    Kind = "Comfort",
+                    Source = "LegacyObserved",
+                    Status = "Completed",
+                    PlannedStartUtc = start,
+                    ActualStartUtc = start,
+                    TargetReachedUtc = start.AddMinutes(60),
+                    ActualEndUtc = start.AddMinutes(65),
+                    StartTemperatureC = 40,
+                    TargetTemperatureC = 60,
+                    TargetVerificationCount = 2
+                });
+            }
         });
 
         await Assert.ThrowsAnyAsync<InvalidOperationException>(() => fixture.ReplanAsync());
 
         Assert.Equal(1, fixture.Dispatcher.Calls);
-        if (change == "dhw-cycle-created")
+        if (change is "dhw-cycle-created" or "dhw-profile-source-created")
         {
             await fixture.ChangeAsync(async db =>
             {
@@ -439,24 +469,48 @@ public sealed class JointPlanModelConsumptionTests
                 db.UserSettings.Add(new UserSettings { UserId = "account-a", Zone = "SE3" });
                 db.ThermalRoomConfigs.Add(new ThermalRoomConfig
                 {
-                    UserId = "account-a", Name = "Rum", EntityId = "sensor.room", IsCritical = true, Weight = 1
+                    UserId = "account-a",
+                    Name = "Rum",
+                    EntityId = "sensor.room",
+                    IsCritical = true,
+                    Weight = 1
                 });
                 db.ThermalEntityConfigs.AddRange(PlanningRoles.Select(role => new ThermalEntityConfig
                 {
-                    UserId = "account-a", Role = role, EntityId = role == ThermalEntityRoles.WeatherForecast
+                    UserId = "account-a",
+                    Role = role,
+                    EntityId = role == ThermalEntityRoles.WeatherForecast
                         ? "weather.home" : $"sensor.{role}"
                 }));
                 db.ThermalModelVersions.AddRange(ThermalModelEvidenceTests.ValidModel("2R2C", now), ThermalModelEvidenceTests.ValidModel("COP", now));
-                db.ThermalTelemetrySamples.Add(new ThermalTelemetrySample { UserId = "account-a", TimestampUtc = now.AddMinutes(-1),
-                    OutsideTemperatureC = 2, OutsideTemperatureForecastJson = JsonSerializer.Serialize(forecast),
-                    RoomTemperaturesJson = "{\"sensor.room\":21}", QualityJson = quality, BrineInC = 0,
-                    LeavingWaterTemperatureC = 35, ReturnWaterTemperatureC = 30,
-                    FlowLitresPerMinute = 240d / 20.93d, HeatOutputKw = 4,
-                    TankTemperatureC = 40, HeatPumpPowerKw = 1, PropertyPowerKw = 2,
-                    DhwActive = false, DefrostActive = false, BackupHeaterActive = false });
-                db.PriceSnapshots.Add(new PriceSnapshot { Zone = "SE3", SavedAtUtc = now, Date = DateOnly.FromDateTime(now.UtcDateTime),
+                db.ThermalTelemetrySamples.Add(new ThermalTelemetrySample
+                {
+                    UserId = "account-a",
+                    TimestampUtc = now.AddMinutes(-1),
+                    OutsideTemperatureC = 2,
+                    OutsideTemperatureForecastJson = JsonSerializer.Serialize(forecast),
+                    RoomTemperaturesJson = "{\"sensor.room\":21}",
+                    QualityJson = quality,
+                    BrineInC = 0,
+                    LeavingWaterTemperatureC = 35,
+                    ReturnWaterTemperatureC = 30,
+                    FlowLitresPerMinute = 240d / 20.93d,
+                    HeatOutputKw = 4,
+                    TankTemperatureC = 40,
+                    HeatPumpPowerKw = 1,
+                    PropertyPowerKw = 2,
+                    DhwActive = false,
+                    DefrostActive = false,
+                    BackupHeaterActive = false
+                });
+                db.PriceSnapshots.Add(new PriceSnapshot
+                {
+                    Zone = "SE3",
+                    SavedAtUtc = now,
+                    Date = DateOnly.FromDateTime(now.UtcDateTime),
                     TodayPricesJson = JsonSerializer.Serialize(pricePoints[..96]),
-                    TomorrowPricesJson = JsonSerializer.Serialize(pricePoints[96..]) });
+                    TomorrowPricesJson = JsonSerializer.Serialize(pricePoints[96..])
+                });
                 return Task.CompletedTask;
             });
             return fixture;

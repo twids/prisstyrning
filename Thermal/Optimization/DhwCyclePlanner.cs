@@ -10,7 +10,20 @@ public sealed record DhwCycleProfile(
     string Kind,
     int ExpectedDurationMinutes,
     int ReservedDurationMinutes,
-    IReadOnlyList<DhwPowerStep> PowerSteps);
+    IReadOnlyList<DhwPowerStep> PowerSteps,
+    DhwProfileSourceEvidence? SourceEvidence = null);
+
+public sealed record DhwProfileSourceEvidence(
+    string Kind,
+    double StartTemperatureC,
+    double TargetTemperatureC,
+    double? BrineTemperatureC,
+    int CompletedCycleCount,
+    int PhaseSampleCount,
+    bool HeatPumpPowerSignVerified,
+    bool UsedEmpiricalDuration,
+    bool UsedEmpiricalPower,
+    string SourceFingerprint);
 
 public sealed record DhwPlanningInput(
     DateTimeOffset NowUtc,

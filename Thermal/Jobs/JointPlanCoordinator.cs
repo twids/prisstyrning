@@ -155,6 +155,7 @@ public sealed class JointPlanCoordinator : BackgroundService
             parameters,
             roomTemperature,
             cancellationToken);
+        var dhwProfileEvidence = BuildDhwProfileEvidence(dhw);
         var inputEvidence = await ThermalPlanningInputs.EvidenceAsync(
             db,
             userId,
@@ -162,6 +163,7 @@ public sealed class JointPlanCoordinator : BackgroundService
             prices.Snapshot,
             prices.Zone,
             dhw?.Cycle is { Id: > 0 } existingCycle ? existingCycle.Id : null,
+            dhwProfileEvidence,
             cancellationToken);
         var horizonEnd = horizonStart.AddHours(_options.HorizonHours);
         var reservationStart = dhw?.Selected is null ? (DateTimeOffset?)null : Max(dhw.Selected.StartUtc, horizonStart);
@@ -242,6 +244,7 @@ public sealed class JointPlanCoordinator : BackgroundService
                 prices.Snapshot,
                 prices.Zone,
                 dhw?.Cycle is { Id: > 0 } persistedCycle ? persistedCycle.Id : null,
+                dhwProfileEvidence,
                 cancellationToken);
 
             var plan = new ThermalPlan
@@ -801,6 +804,14 @@ public sealed class JointPlanCoordinator : BackgroundService
 
     private static DateTimeOffset Min(DateTimeOffset a, DateTimeOffset b) => a < b ? a : b;
     private static DateTimeOffset Max(DateTimeOffset a, DateTimeOffset b) => a > b ? a : b;
+
+    private static ThermalPlanningDhwProfileEvidence BuildDhwProfileEvidence(PlannedDhw? planned)
+    {
+        if (planned is null) return new("None", null, null);
+        if (planned.Profile.SourceEvidence is { } estimated) return new("Estimated", null, estimated);
+        if (planned.Cycle is { Id: > 0 } storedCycle) return new("StoredCycle", storedCycle.Id, null);
+        throw new ThermalPlanningEvidenceException("DHW-profilen saknar verifierbar källa.");
+    }
 
     private sealed record PricePoint(DateTimeOffset StartUtc, decimal Price);
     private sealed record PriceForecast(

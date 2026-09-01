@@ -13,6 +13,7 @@ public sealed class ThermalPlanConsumptionTests
     [InlineData("missing-evidence")]
     [InlineData("missing-input-evidence")]
     [InlineData("missing-dhw-evidence")]
+    [InlineData("missing-dhw-profile-evidence")]
     [InlineData("revoked-model")]
     [InlineData("changed-settings")]
     [InlineData("rollback")]
@@ -29,6 +30,7 @@ public sealed class ThermalPlanConsumptionTests
     [InlineData("changed-price")]
     [InlineData("changed-zone")]
     [InlineData("changed-dhw-cycle")]
+    [InlineData("changed-dhw-profile-source")]
     public async Task ActiveConsumer_RejectsPlanThatIsNotCompleteCurrentAndProven(string fault)
     {
         await using var fixture = await ActiveFixtureAsync();
@@ -50,6 +52,12 @@ public sealed class ThermalPlanConsumptionTests
                 input["inputEvidence"]!.AsObject().Remove("DhwEvidence");
                 plan.InputSnapshotJson = input.ToJsonString();
             }
+            if (fault == "missing-dhw-profile-evidence")
+            {
+                var input = JsonNode.Parse(plan.InputSnapshotJson)!.AsObject();
+                input["inputEvidence"]!.AsObject().Remove("DhwProfileEvidence");
+                plan.InputSnapshotJson = input.ToJsonString();
+            }
             if (fault == "revoked-model") (await db.ThermalModelVersions.FirstAsync(x => x.ModelType == "COP")).IsActive = false;
             if (fault == "changed-settings") (await db.ThermalSiteConfigs.SingleAsync()).UpperComfortBandC += .1;
             if (fault == "rollback") (await db.ThermalSiteConfigs.SingleAsync()).ControlMode = "Legacy";
@@ -66,6 +74,7 @@ public sealed class ThermalPlanConsumptionTests
             if (fault == "changed-price") (await db.PriceSnapshots.SingleAsync()).SavedAtUtc = DateTimeOffset.UtcNow.AddSeconds(1);
             if (fault == "changed-zone") (await db.UserSettings.SingleAsync()).Zone = "SE2";
             if (fault == "changed-dhw-cycle") (await db.DhwCycles.SingleAsync()).PredictedCost += .25m;
+            if (fault == "changed-dhw-profile-source") AddCompletedProfileCycle(db);
         });
 
         await Assert.ThrowsAsync<ThermalPlanningEvidenceException>(() => ReadAsync(fixture, DateTimeOffset.UtcNow));
@@ -99,6 +108,7 @@ public sealed class ThermalPlanConsumptionTests
     [InlineData("telemetry")]
     [InlineData("price")]
     [InlineData("dhw-cycle")]
+    [InlineData("dhw-profile")]
     public async Task WriteBoundary_RejectsPlanOrConfigurationChangedAfterInitialRead(string change)
     {
         await using var fixture = await ActiveFixtureAsync();
@@ -111,6 +121,7 @@ public sealed class ThermalPlanConsumptionTests
             if (change == "telemetry") (await db.ThermalTelemetrySamples.SingleAsync()).PropertyPowerKw += .1;
             if (change == "price") (await db.PriceSnapshots.SingleAsync()).TomorrowPricesJson = "[]";
             if (change == "dhw-cycle") (await db.DhwCycles.SingleAsync()).ReservedDurationMinutes += 5;
+            if (change == "dhw-profile") AddCompletedProfileCycle(db);
         });
 
         await Assert.ThrowsAsync<ThermalPlanningEvidenceException>(() => EnsureStillCurrentAsync(fixture, validated!));
@@ -136,8 +147,12 @@ public sealed class ThermalPlanConsumptionTests
             own.ValidUntilUtc = own.ValidFromUtc;
             db.ThermalPlans.Add(new ThermalPlan
             {
-                UserId = "account-b", CreatedAtUtc = DateTimeOffset.UtcNow.AddMinutes(1), ValidFromUtc = DateTimeOffset.UtcNow.AddMinutes(-1),
-                ValidUntilUtc = DateTimeOffset.UtcNow.AddHours(1), Status = "Valid", IsShadow = false
+                UserId = "account-b",
+                CreatedAtUtc = DateTimeOffset.UtcNow.AddMinutes(1),
+                ValidFromUtc = DateTimeOffset.UtcNow.AddMinutes(-1),
+                ValidUntilUtc = DateTimeOffset.UtcNow.AddHours(1),
+                Status = "Valid",
+                IsShadow = false
             });
         });
 
@@ -174,9 +189,34 @@ public sealed class ThermalPlanConsumptionTests
 
     private static ThermalPlanStep Copy(ThermalPlanStep value) => new()
     {
-        StartUtc = value.StartUtc, EndUtc = value.EndUtc, DesiredHeatOutputKw = value.DesiredHeatOutputKw,
-        DesiredLwtDeviationC = value.DesiredLwtDeviationC, DhwReserved = value.DhwReserved, DhwMode = value.DhwMode,
-        IncrementalCost = value.IncrementalCost, Confidence = value.Confidence,
-        ExpectedRoomsJson = value.ExpectedRoomsJson, DecisionReasonJson = value.DecisionReasonJson
+        StartUtc = value.StartUtc,
+        EndUtc = value.EndUtc,
+        DesiredHeatOutputKw = value.DesiredHeatOutputKw,
+        DesiredLwtDeviationC = value.DesiredLwtDeviationC,
+        DhwReserved = value.DhwReserved,
+        DhwMode = value.DhwMode,
+        IncrementalCost = value.IncrementalCost,
+        Confidence = value.Confidence,
+        ExpectedRoomsJson = value.ExpectedRoomsJson,
+        DecisionReasonJson = value.DecisionReasonJson
     };
+
+    private static void AddCompletedProfileCycle(Prisstyrning.Data.PrisstyrningDbContext db)
+    {
+        var start = DateTimeOffset.UtcNow.AddDays(-1);
+        db.DhwCycles.Add(new DhwCycle
+        {
+            UserId = "account-a",
+            Kind = "Comfort",
+            Source = "LegacyObserved",
+            Status = "Completed",
+            PlannedStartUtc = start,
+            ActualStartUtc = start,
+            TargetReachedUtc = start.AddMinutes(60),
+            ActualEndUtc = start.AddMinutes(65),
+            StartTemperatureC = 40,
+            TargetTemperatureC = 60,
+            TargetVerificationCount = 2
+        });
+    }
 }
