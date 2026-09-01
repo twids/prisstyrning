@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Collections.Concurrent;
+using System.Data;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -122,7 +123,6 @@ public sealed class JointPlanCoordinator : BackgroundService
         var horizonSteps = _options.HorizonHours * 60 / _options.OptimizationTimeStepMinutes;
         var prices = await LoadPriceForecastAsync(
             db, userId, horizonStart, horizonSteps, site, planningStartedUtc, cancellationToken);
-        var inputEvidence = ThermalPlanningInputs.Evidence(planningTelemetry, prices.Snapshot, prices.Zone);
         var parameters = models.Thermal;
         var roomTemperature = planningTelemetry.RepresentativeRoomTemperatureC;
         var phaseEstimatedCopInput = planningTelemetry.DhwActive;
@@ -154,6 +154,14 @@ public sealed class JointPlanCoordinator : BackgroundService
             weather,
             parameters,
             roomTemperature,
+            cancellationToken);
+        var inputEvidence = await ThermalPlanningInputs.EvidenceAsync(
+            db,
+            userId,
+            planningTelemetry,
+            prices.Snapshot,
+            prices.Zone,
+            dhw?.Cycle is { Id: > 0 } existingCycle ? existingCycle.Id : null,
             cancellationToken);
         var horizonEnd = horizonStart.AddHours(_options.HorizonHours);
         var reservationStart = dhw?.Selected is null ? (DateTimeOffset?)null : Max(dhw.Selected.StartUtc, horizonStart);
@@ -211,85 +219,103 @@ public sealed class JointPlanCoordinator : BackgroundService
             "JointPlan",
             request,
             cancellationToken: cancellationToken);
-        // A rollback, retraining or settings change during the asynchronous solver
-        // must not be turned into a newly valid plan or a DHW schedule update.
-        await ThermalPlanningModels.EnsureCurrentAsync(db, userId, models.Evidence, DateTimeOffset.UtcNow, cancellationToken);
-        await ThermalPlanningInputs.EnsureCurrentAsync(db, userId, inputEvidence, DateTimeOffset.UtcNow, cancellationToken);
-        EmhassOptimizationValidation.ValidateResult(request, optimized, _options.OptimizationTimeStepMinutes);
 
-        var inputCoverage = Math.Min(prices.ActualCoverage, weather.ActualCoverage) * (phaseEstimatedCopInput ? .9 : 1);
-        var planConfidence = Math.Round(Math.Clamp(.85 * (.5 + .5 * inputCoverage), 0, .85), 3);
+        {
+            await using var transaction = db.Database.IsRelational()
+                ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
+                : null;
+            // A rollback, retraining or settings change during the asynchronous solver
+            // must not be turned into a newly valid plan or a DHW schedule update.
+            await ThermalPlanningModels.EnsureCurrentAsync(db, userId, models.Evidence, DateTimeOffset.UtcNow, cancellationToken);
+            await ThermalPlanningInputs.EnsureCurrentAsync(db, userId, inputEvidence, DateTimeOffset.UtcNow, cancellationToken);
+            EmhassOptimizationValidation.ValidateResult(request, optimized, _options.OptimizationTimeStepMinutes);
 
-        var plan = new ThermalPlan
-        {
-            UserId = userId,
-            CreatedAtUtc = DateTimeOffset.UtcNow,
-            ValidFromUtc = horizonStart,
-            ValidUntilUtc = horizonStart.AddHours(_options.HorizonHours),
-            Status = "Valid",
-            IsShadow = mode == ControlMode.Shadow,
-            SolverDurationMs = optimized.SolverDurationMs,
-            ObjectiveCost = optimized.ObjectiveCost + (dhw?.Selected?.TotalCostSek ?? 0),
-            Confidence = planConfidence,
-            Summary = dhw?.Result.Reason.MainReason ?? "Husvärme optimerad utan DHW-reservation.",
-            InputSnapshotJson = JsonSerializer.Serialize(new
+            var inputCoverage = Math.Min(prices.ActualCoverage, weather.ActualCoverage) * (phaseEstimatedCopInput ? .9 : 1);
+            var planConfidence = Math.Round(Math.Clamp(.85 * (.5 + .5 * inputCoverage), 0, .85), 3);
+
+            await UpsertDhwCycleAsync(db, userId, mode, dhw, cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
+            var persistedInputEvidence = await ThermalPlanningInputs.EvidenceAsync(
+                db,
+                userId,
+                planningTelemetry,
+                prices.Snapshot,
+                prices.Zone,
+                dhw?.Cycle is { Id: > 0 } persistedCycle ? persistedCycle.Id : null,
+                cancellationToken);
+
+            var plan = new ThermalPlan
             {
-                telemetry.TimestampUtc,
-                modelVersionId = models.Evidence.ThermalModelVersionId,
-                copModelVersionId = models.Evidence.CopModelVersionId,
-                modelEvidence = models.Evidence,
-                inputEvidence,
-                estimatedCop,
-                copInput = phaseEstimatedCopInput
-                    ? new { source = "weatherCurveEstimateDuringDhw", leavingWaterTemperatureC = copLwtC, heatOutputKw = copHeatOutputKw }
-                    : new { source = "verifiedLiveSpaceHeating", leavingWaterTemperatureC = copLwtC, heatOutputKw = copHeatOutputKw },
-                dhw = dhw?.Selected,
-                priceForecast = new
+                UserId = userId,
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                ValidFromUtc = horizonStart,
+                ValidUntilUtc = horizonStart.AddHours(_options.HorizonHours),
+                Status = "Valid",
+                IsShadow = mode == ControlMode.Shadow,
+                SolverDurationMs = optimized.SolverDurationMs,
+                ObjectiveCost = optimized.ObjectiveCost + (dhw?.Selected?.TotalCostSek ?? 0),
+                Confidence = planConfidence,
+                Summary = dhw?.Result.Reason.MainReason ?? "Husvärme optimerad utan DHW-reservation.",
+                InputSnapshotJson = JsonSerializer.Serialize(new
                 {
-                    actualCoverage = prices.ActualCoverage,
-                    actualSteps = prices.ActualSteps,
-                    estimatedSteps = prices.EstimatedSteps,
-                    estimation = "Föregående dygns motsvarande kvart, annars medel av verifierade priser."
-                },
-                weatherForecast = new
-                {
-                    actualCoverage = weather.ActualCoverage,
-                    actualSteps = weather.ActualSteps,
-                    estimatedSteps = weather.EstimatedSteps,
-                    estimation = "Senaste giltiga prognospunkt hålls konstant efter prognosens slut."
-                },
-                confidenceBasis = "0,85 modellbas multiplicerad med verifierad pris- och väderprognostäckning."
-            })
-        };
-        foreach (var step in optimized.Steps)
-        {
-            var start = horizonStart.AddMinutes(step.Index * _options.OptimizationTimeStepMinutes);
-            var end = start.AddMinutes(_options.OptimizationTimeStepMinutes);
-            var duty = Math.Clamp(step.SpaceHeatingPowerW / request.HeatPumpElectricPowerW, 0, 1);
-            var deviation = Math.Round(((duty - 0.5) * 2 * site.ActiveDeviationLimitC) * 2) / 2;
-            var reserved = dhw?.Selected is { } selected && selected.StartUtc < end && selected.EndUtc > start;
-            plan.Steps.Add(new ThermalPlanStep
+                    telemetry.TimestampUtc,
+                    modelVersionId = models.Evidence.ThermalModelVersionId,
+                    copModelVersionId = models.Evidence.CopModelVersionId,
+                    modelEvidence = models.Evidence,
+                    inputEvidence = persistedInputEvidence,
+                    estimatedCop,
+                    copInput = phaseEstimatedCopInput
+                        ? new { source = "weatherCurveEstimateDuringDhw", leavingWaterTemperatureC = copLwtC, heatOutputKw = copHeatOutputKw }
+                        : new { source = "verifiedLiveSpaceHeating", leavingWaterTemperatureC = copLwtC, heatOutputKw = copHeatOutputKw },
+                    dhw = dhw?.Selected,
+                    priceForecast = new
+                    {
+                        actualCoverage = prices.ActualCoverage,
+                        actualSteps = prices.ActualSteps,
+                        estimatedSteps = prices.EstimatedSteps,
+                        estimation = "Föregående dygns motsvarande kvart, annars medel av verifierade priser."
+                    },
+                    weatherForecast = new
+                    {
+                        actualCoverage = weather.ActualCoverage,
+                        actualSteps = weather.ActualSteps,
+                        estimatedSteps = weather.EstimatedSteps,
+                        estimation = "Senaste giltiga prognospunkt hålls konstant efter prognosens slut."
+                    },
+                    confidenceBasis = "0,85 modellbas multiplicerad med verifierad pris- och väderprognostäckning."
+                })
+            };
+            foreach (var step in optimized.Steps)
             {
-                StartUtc = start,
-                EndUtc = end,
-                DesiredHeatOutputKw = step.SpaceHeatingPowerW / 1000 * estimatedCop,
-                DesiredLwtDeviationC = reserved ? 0 : deviation,
-                DhwReserved = reserved,
-                DhwMode = reserved ? dhw!.Kind : string.Empty,
-                IncrementalCost = (decimal)(step.SpaceHeatingPowerW / 1000 * _options.OptimizationTimeStepMinutes / 60d) * prices.Steps[step.Index],
-                Confidence = plan.Confidence,
-                ExpectedRoomsJson = JsonSerializer.Serialize(new { representative = step.PredictedTemperatureC }),
-                DecisionReasonJson = JsonSerializer.Serialize(new DecisionReason(
-                    reserved ? "Kompressorkapaciteten är reserverad för varmvatten." : "EMHASS minimerar kostnaden inom komfortbandet.",
-                    prices.Steps[step.Index],
-                    step.PredictedTemperatureC - minimum[step.Index],
-                    plan.Confidence,
-                    null))
-            });
+                var start = horizonStart.AddMinutes(step.Index * _options.OptimizationTimeStepMinutes);
+                var end = start.AddMinutes(_options.OptimizationTimeStepMinutes);
+                var duty = Math.Clamp(step.SpaceHeatingPowerW / request.HeatPumpElectricPowerW, 0, 1);
+                var deviation = Math.Round(((duty - 0.5) * 2 * site.ActiveDeviationLimitC) * 2) / 2;
+                var reserved = dhw?.Selected is { } selected && selected.StartUtc < end && selected.EndUtc > start;
+                plan.Steps.Add(new ThermalPlanStep
+                {
+                    StartUtc = start,
+                    EndUtc = end,
+                    DesiredHeatOutputKw = step.SpaceHeatingPowerW / 1000 * estimatedCop,
+                    DesiredLwtDeviationC = reserved ? 0 : deviation,
+                    DhwReserved = reserved,
+                    DhwMode = reserved ? dhw!.Kind : string.Empty,
+                    IncrementalCost = (decimal)(step.SpaceHeatingPowerW / 1000 * _options.OptimizationTimeStepMinutes / 60d) * prices.Steps[step.Index],
+                    Confidence = plan.Confidence,
+                    ExpectedRoomsJson = JsonSerializer.Serialize(new { representative = step.PredictedTemperatureC }),
+                    DecisionReasonJson = JsonSerializer.Serialize(new DecisionReason(
+                        reserved ? "Kompressorkapaciteten är reserverad för varmvatten." : "EMHASS minimerar kostnaden inom komfortbandet.",
+                        prices.Steps[step.Index],
+                        step.PredictedTemperatureC - minimum[step.Index],
+                        plan.Confidence,
+                        null))
+                });
+            }
+            db.ThermalPlans.Add(plan);
+            await db.SaveChangesAsync(cancellationToken);
+            if (transaction is not null)
+                await transaction.CommitAsync(cancellationToken);
         }
-        db.ThermalPlans.Add(plan);
-        await UpsertDhwCycleAsync(db, userId, mode, dhw, cancellationToken);
-        await db.SaveChangesAsync(cancellationToken);
 
         if (mode == ControlMode.FullActive && dhw?.Cycle is { ScheduleAcceptedUtc: null } cycle)
         {

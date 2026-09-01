@@ -159,7 +159,15 @@ public class EmhassClientTests
         var withEvidence = request with
         {
             ModelEvidence = new(10, 11, "Shadow", DateTimeOffset.UtcNow, "local-fingerprint"),
-            InputEvidence = new(12, DateTimeOffset.UtcNow, "telemetry-fingerprint", 13, "SE3", DateTimeOffset.UtcNow, "price-fingerprint"),
+            InputEvidence = new(
+                12,
+                DateTimeOffset.UtcNow,
+                "telemetry-fingerprint",
+                13,
+                "SE3",
+                DateTimeOffset.UtcNow,
+                "price-fingerprint",
+                new(14, 1, "dhw-cycle-fingerprint")),
             HorizonStartUtc = DateTimeOffset.UtcNow
         };
 
@@ -170,6 +178,7 @@ public class EmhassClientTests
         Assert.DoesNotContain("local-fingerprint", actual);
         Assert.DoesNotContain("telemetry-fingerprint", actual);
         Assert.DoesNotContain("price-fingerprint", actual);
+        Assert.DoesNotContain("dhw-cycle-fingerprint", actual);
     }
 
     [Fact]

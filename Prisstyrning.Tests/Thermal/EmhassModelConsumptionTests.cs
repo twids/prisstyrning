@@ -15,6 +15,7 @@ public sealed class EmhassModelConsumptionTests
     [Theory]
     [InlineData("missing-evidence")]
     [InlineData("missing-input-evidence")]
+    [InlineData("missing-dhw-evidence")]
     [InlineData("wrong-fingerprint")]
     [InlineData("wrong-telemetry-fingerprint")]
     [InlineData("wrong-price-fingerprint")]
@@ -26,10 +27,10 @@ public sealed class EmhassModelConsumptionTests
     public async Task Worker_RejectsUnprovenOrRevokedQueuedRequestBeforeCallingSolver(string fault)
     {
         await using var fixture = await JointPlanModelConsumptionTests.Fixture.CreateAsync();
-        await fixture.ReplanAsync();
-        var request = fixture.Dispatcher.Request!;
+        var request = await PreparedRequestAsync(fixture);
         if (fault == "missing-evidence") request = request with { ModelEvidence = null };
         if (fault == "missing-input-evidence") request = request with { InputEvidence = null };
+        if (fault == "missing-dhw-evidence") request = request with { InputEvidence = request.InputEvidence! with { DhwEvidence = null } };
         if (fault == "wrong-fingerprint") request = request with { ModelEvidence = request.ModelEvidence! with { Fingerprint = "wrong" } };
         if (fault == "wrong-telemetry-fingerprint") request = request with { InputEvidence = request.InputEvidence! with { TelemetryFingerprint = "wrong" } };
         if (fault == "wrong-price-fingerprint") request = request with { InputEvidence = request.InputEvidence! with { PriceFingerprint = "wrong" } };
@@ -57,12 +58,13 @@ public sealed class EmhassModelConsumptionTests
     [InlineData("telemetry")]
     [InlineData("price")]
     [InlineData("zone")]
+    [InlineData("dhw-cycle")]
     public async Task Worker_DiscardsResultWhenEvidenceChangesDuringSolve(string change)
     {
         await using var fixture = await JointPlanModelConsumptionTests.Fixture.CreateAsync();
-        await fixture.ReplanAsync();
+        var request = await PreparedRequestAsync(fixture);
         var queue = CreateQueue(fixture);
-        var claim = await EnqueueAsync(queue, fixture.Dispatcher.Request!);
+        var claim = await EnqueueAsync(queue, request);
         using var worker = CreateWorker(fixture, queue);
         fixture.Solver.BeforeReturn = () => fixture.ChangeAsync(async db =>
         {
@@ -73,6 +75,7 @@ public sealed class EmhassModelConsumptionTests
             if (change == "telemetry") (await db.ThermalTelemetrySamples.SingleAsync()).PropertyPowerKw += .1;
             if (change == "price") (await db.PriceSnapshots.SingleAsync()).TomorrowPricesJson = "[]";
             if (change == "zone") (await db.UserSettings.SingleAsync()).Zone = "SE2";
+            if (change == "dhw-cycle") (await db.DhwCycles.SingleAsync()).EstimatedCompletionUtc = DateTimeOffset.UtcNow.AddHours(2);
         });
 
         await Assert.ThrowsAsync<ThermalPlanningEvidenceException>(() => worker.ProcessClaimAsync(claim, CancellationToken.None));
@@ -85,9 +88,8 @@ public sealed class EmhassModelConsumptionTests
     public async Task Worker_VerifiedRequestSurvivesPersistenceAndIgnoresOtherAccountChanges()
     {
         await using var fixture = await JointPlanModelConsumptionTests.Fixture.CreateAsync();
-        await fixture.ReplanAsync();
+        var request = await PreparedRequestAsync(fixture);
         var queue = CreateQueue(fixture);
-        var request = fixture.Dispatcher.Request!;
         var claim = await EnqueueAsync(queue, request);
         Assert.Equal(request.ModelEvidence, queue.DeserializeRequest(claim).ModelEvidence);
         Assert.Equal(request.InputEvidence, queue.DeserializeRequest(claim).InputEvidence);
@@ -97,6 +99,7 @@ public sealed class EmhassModelConsumptionTests
             db.ThermalSiteConfigs.Add(new ThermalSiteConfig { UserId = "account-b" });
             db.ThermalRoomConfigs.Add(new ThermalRoomConfig { UserId = "account-b", EntityId = "sensor.foreign" });
             db.HomeAssistantConnections.Add(new HomeAssistantConnection { UserId = "account-b" });
+            db.DhwCycles.Add(new DhwCycle { UserId = "account-b", PlannedStartUtc = DateTimeOffset.UtcNow, TargetTemperatureC = 45 });
             return Task.CompletedTask;
         });
 
@@ -119,9 +122,8 @@ public sealed class EmhassModelConsumptionTests
     public async Task Worker_InvalidSolverResultNeverCompletesPersistentJob()
     {
         await using var fixture = await JointPlanModelConsumptionTests.Fixture.CreateAsync();
-        await fixture.ReplanAsync();
+        var request = await PreparedRequestAsync(fixture);
         var queue = CreateQueue(fixture);
-        var request = fixture.Dispatcher.Request!;
         var claim = await EnqueueAsync(queue, request);
         using var worker = CreateWorker(fixture, queue);
         fixture.Solver.ResultFactory = value =>
@@ -147,6 +149,21 @@ public sealed class EmhassModelConsumptionTests
         Assert.Empty(await db.ThermalControlCommands.ToListAsync());
         Assert.Equal("Legacy", (await db.ThermalSiteConfigs.SingleAsync()).DhwWriter);
     });
+
+    private static async Task<EmhassOptimizationRequest> PreparedRequestAsync(JointPlanModelConsumptionTests.Fixture fixture)
+    {
+        await fixture.ReplanAsync();
+        var request = fixture.Dispatcher.Request!;
+        ThermalPlanningInputEvidence? persistedEvidence = null;
+        await fixture.ChangeAsync(async db =>
+        {
+            var snapshot = (await db.ThermalPlans.AsNoTracking().SingleAsync()).InputSnapshotJson;
+            using var document = JsonDocument.Parse(snapshot);
+            persistedEvidence = document.RootElement.GetProperty("inputEvidence")
+                .Deserialize<ThermalPlanningInputEvidence>(JsonSerializerOptions.Web);
+        });
+        return request with { InputEvidence = Assert.IsType<ThermalPlanningInputEvidence>(persistedEvidence) };
+    }
 
     private static ThermalOptimizationQueue CreateQueue(JointPlanModelConsumptionTests.Fixture fixture) => new(
         fixture.Services.GetRequiredService<IServiceScopeFactory>(), Options.Create(new ThermalOptimizationQueueOptions()),

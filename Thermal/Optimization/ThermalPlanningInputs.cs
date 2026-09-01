@@ -19,7 +19,13 @@ public sealed record ThermalPlanningInputEvidence(
     int PriceSnapshotId,
     string PriceZone,
     DateTimeOffset PriceSavedAtUtc,
-    string PriceFingerprint);
+    string PriceFingerprint,
+    ThermalPlanningDhwEvidence? DhwEvidence = null);
+
+public sealed record ThermalPlanningDhwEvidence(
+    long? ReservedCycleId,
+    int OpenCycleCount,
+    string OpenCycleFingerprint);
 
 internal sealed record ThermalPlanningTelemetry(
     long SampleId,
@@ -137,17 +143,27 @@ internal static class ThermalPlanningInputs
             TelemetryFingerprint(userId, sample));
     }
 
-    internal static ThermalPlanningInputEvidence Evidence(
+    internal static async Task<ThermalPlanningInputEvidence> EvidenceAsync(
+        PrisstyrningDbContext db,
+        string userId,
         ThermalPlanningTelemetry telemetry,
         PriceSnapshot snapshot,
-        string zone) => new(
+        string zone,
+        long? reservedDhwCycleId,
+        CancellationToken cancellationToken)
+    {
+        var dhwEvidence = await ReadDhwEvidenceAsync(
+            db, userId, reservedDhwCycleId, cancellationToken);
+        return new(
             telemetry.SampleId,
             telemetry.TimestampUtc,
             telemetry.Fingerprint,
             snapshot.Id,
             NormalizeZone(zone),
             snapshot.SavedAtUtc,
-            PriceFingerprint(snapshot));
+            PriceFingerprint(snapshot),
+            dhwEvidence);
+    }
 
     internal static async Task EnsureCurrentAsync(
         PrisstyrningDbContext db,
@@ -159,8 +175,10 @@ internal static class ThermalPlanningInputs
     {
         if (evidence is null || evidence.TelemetrySampleId <= 0 || evidence.PriceSnapshotId <= 0 ||
             evidence.TelemetryTimestampUtc == default || evidence.PriceSavedAtUtc == default ||
-            string.IsNullOrWhiteSpace(evidence.TelemetryFingerprint) || string.IsNullOrWhiteSpace(evidence.PriceFingerprint))
-            throw Evidence("Beräkningen saknar verifierbart telemetri- eller prisunderlag och behöver skapas om.");
+            string.IsNullOrWhiteSpace(evidence.TelemetryFingerprint) || string.IsNullOrWhiteSpace(evidence.PriceFingerprint) ||
+            evidence.DhwEvidence is null || evidence.DhwEvidence.OpenCycleCount < 0 ||
+            string.IsNullOrWhiteSpace(evidence.DhwEvidence.OpenCycleFingerprint))
+            throw Evidence("Beräkningen saknar verifierbart telemetri-, pris- eller DHW-underlag och behöver skapas om.");
 
         var sample = await db.ThermalTelemetrySamples.AsNoTracking().SingleOrDefaultAsync(
             x => x.Id == evidence.TelemetrySampleId && x.UserId == userId, cancellationToken);
@@ -178,6 +196,53 @@ internal static class ThermalPlanningInputs
             PriceFingerprint(snapshot) != evidence.PriceFingerprint || snapshot.SavedAtUtc > now.AddMinutes(2) ||
             now - snapshot.SavedAtUtc > TimeSpan.FromHours(36))
             throw Evidence("Prisunderlaget ändrades, försvann eller blev för gammalt under beräkningen. En ny plan behövs.");
+
+        var dhwEvidence = await ReadDhwEvidenceAsync(
+            db, userId, evidence.DhwEvidence.ReservedCycleId, cancellationToken);
+        if (dhwEvidence != evidence.DhwEvidence)
+            throw Evidence("DHW-reservationen ändrades, försvann eller ersattes under beräkningen. En ny plan behövs.");
+    }
+
+    private static async Task<ThermalPlanningDhwEvidence> ReadDhwEvidenceAsync(
+        PrisstyrningDbContext db,
+        string userId,
+        long? reservedCycleId,
+        CancellationToken cancellationToken)
+    {
+        if (reservedCycleId is <= 0)
+            throw Evidence("Den reserverade DHW-cykelns identitet är ogiltig.");
+
+        var cycles = await db.DhwCycles.AsNoTracking()
+            .Where(x => x.UserId == userId && x.ActualEndUtc == null)
+            .OrderBy(x => x.Id)
+            .ToListAsync(cancellationToken);
+        if (reservedCycleId is { } cycleId && cycles.All(x => x.Id != cycleId))
+            throw Evidence("Den reserverade DHW-cykeln saknas eller tillhör inte längre det öppna planeringsunderlaget.");
+
+        var serialized = JsonSerializer.Serialize(cycles.Select(x => new
+        {
+            x.Id,
+            x.Kind,
+            x.Source,
+            x.Status,
+            x.PlannedStartUtc,
+            x.ScheduleAcceptedUtc,
+            x.ActualStartUtc,
+            x.TargetReachedUtc,
+            x.ActualEndUtc,
+            x.StartTemperatureC,
+            x.TargetTemperatureC,
+            x.PredictedDurationMinutes,
+            x.ReservedDurationMinutes,
+            x.PredictedCost,
+            x.ActualCost,
+            x.BackupHeaterUsed,
+            x.PowerProfileJson,
+            x.TargetVerificationCount,
+            x.EstimatedCompletionUtc,
+            x.LastVerificationSampleUtc
+        }), JsonSerializerOptions.Web);
+        return new(reservedCycleId, cycles.Count, Hash(serialized));
     }
 
     internal static async Task<string> PriceZoneAsync(

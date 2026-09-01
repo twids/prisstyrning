@@ -116,15 +116,24 @@ public sealed class JointPlanModelConsumptionTests
         Assert.Equal(4.75, request.Thermal.HeatingRateCPerHour, 6);
         Assert.Equal(.175, request.Thermal.CoolingConstantPerHourPerC, 6);
         Assert.NotNull(request.InputEvidence);
+        Assert.Null(request.InputEvidence.DhwEvidence?.ReservedCycleId);
+        Assert.Equal(0, request.InputEvidence.DhwEvidence?.OpenCycleCount);
         Assert.Equal(1, fixture.Dispatcher.Calls);
         await fixture.ChangeAsync(async db =>
         {
             var plan = await db.ThermalPlans.SingleAsync();
+            var cycle = await db.DhwCycles.SingleAsync();
+            using var input = JsonDocument.Parse(plan.InputSnapshotJson);
+            var evidence = input.RootElement.GetProperty("inputEvidence")
+                .Deserialize<ThermalPlanningInputEvidence>(JsonSerializerOptions.Web)!;
             Assert.Equal("Valid", plan.Status);
             Assert.True(plan.IsShadow);
             Assert.InRange(plan.Confidence, 0.4, 0.85);
             Assert.Contains("inputEvidence", plan.InputSnapshotJson);
             Assert.Contains("estimatedSteps", plan.InputSnapshotJson);
+            Assert.Equal(cycle.Id, evidence.DhwEvidence?.ReservedCycleId);
+            Assert.Equal(1, evidence.DhwEvidence?.OpenCycleCount);
+            Assert.False(string.IsNullOrWhiteSpace(evidence.DhwEvidence?.OpenCycleFingerprint));
             Assert.Equal("Legacy", (await db.ThermalSiteConfigs.SingleAsync()).DhwWriter);
             Assert.Empty(await db.ThermalControlCommands.ToListAsync());
         });
@@ -194,7 +203,13 @@ public sealed class JointPlanModelConsumptionTests
         Assert.True(request.DhwDurationSteps >= 3);
         await fixture.ChangeAsync(async db =>
         {
+            var cycle = await db.DhwCycles.SingleAsync();
             var plan = await db.ThermalPlans.Include(x => x.Steps).SingleAsync();
+            using var input = JsonDocument.Parse(plan.InputSnapshotJson);
+            var evidence = input.RootElement.GetProperty("inputEvidence")
+                .Deserialize<ThermalPlanningInputEvidence>(JsonSerializerOptions.Web)!;
+            Assert.Equal(cycle.Id, request.InputEvidence?.DhwEvidence?.ReservedCycleId);
+            Assert.Equal(cycle.Id, evidence.DhwEvidence?.ReservedCycleId);
             Assert.Contains("weatherCurveEstimateDuringDhw", plan.InputSnapshotJson);
             Assert.Contains(plan.Steps, x => x.DhwReserved);
             Assert.Equal("Legacy", (await db.ThermalSiteConfigs.SingleAsync()).DhwWriter);
@@ -255,6 +270,7 @@ public sealed class JointPlanModelConsumptionTests
     [InlineData("telemetry-change")]
     [InlineData("price-change")]
     [InlineData("zone-change")]
+    [InlineData("dhw-cycle-created")]
     public async Task Replan_DiscardsResultWhenInputsAreRevokedWhileSolverRuns(string change)
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -270,12 +286,37 @@ public sealed class JointPlanModelConsumptionTests
             if (change == "telemetry-change") (await db.ThermalTelemetrySamples.SingleAsync()).PropertyPowerKw += .1;
             if (change == "price-change") (await db.PriceSnapshots.SingleAsync()).SavedAtUtc = DateTimeOffset.UtcNow.AddSeconds(1);
             if (change == "zone-change") (await db.UserSettings.SingleAsync()).Zone = "SE2";
+            if (change == "dhw-cycle-created") db.DhwCycles.Add(new DhwCycle
+            {
+                UserId = "account-a",
+                Kind = "Eco",
+                Source = "LegacyObserved",
+                Status = "Running",
+                PlannedStartUtc = DateTimeOffset.UtcNow,
+                ActualStartUtc = DateTimeOffset.UtcNow,
+                TargetTemperatureC = 45,
+                PredictedDurationMinutes = 45,
+                ReservedDurationMinutes = 60
+            });
         });
 
         await Assert.ThrowsAnyAsync<InvalidOperationException>(() => fixture.ReplanAsync());
 
         Assert.Equal(1, fixture.Dispatcher.Calls);
-        await fixture.AssertNoPlansOrCommandsAsync();
+        if (change == "dhw-cycle-created")
+        {
+            await fixture.ChangeAsync(async db =>
+            {
+                Assert.Empty(await db.ThermalPlans.ToListAsync());
+                Assert.Single(await db.DhwCycles.ToListAsync());
+                Assert.Empty(await db.ThermalControlCommands.ToListAsync());
+                Assert.Equal("Legacy", (await db.ThermalSiteConfigs.SingleAsync()).DhwWriter);
+            });
+        }
+        else
+        {
+            await fixture.AssertNoPlansOrCommandsAsync();
+        }
     }
 
     [Fact]

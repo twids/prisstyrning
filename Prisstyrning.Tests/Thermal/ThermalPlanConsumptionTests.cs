@@ -12,6 +12,7 @@ public sealed class ThermalPlanConsumptionTests
     [InlineData("shadow")]
     [InlineData("missing-evidence")]
     [InlineData("missing-input-evidence")]
+    [InlineData("missing-dhw-evidence")]
     [InlineData("revoked-model")]
     [InlineData("changed-settings")]
     [InlineData("rollback")]
@@ -27,6 +28,7 @@ public sealed class ThermalPlanConsumptionTests
     [InlineData("changed-telemetry")]
     [InlineData("changed-price")]
     [InlineData("changed-zone")]
+    [InlineData("changed-dhw-cycle")]
     public async Task ActiveConsumer_RejectsPlanThatIsNotCompleteCurrentAndProven(string fault)
     {
         await using var fixture = await ActiveFixtureAsync();
@@ -40,6 +42,12 @@ public sealed class ThermalPlanConsumptionTests
             {
                 var input = JsonNode.Parse(plan.InputSnapshotJson)!.AsObject();
                 input.Remove("inputEvidence");
+                plan.InputSnapshotJson = input.ToJsonString();
+            }
+            if (fault == "missing-dhw-evidence")
+            {
+                var input = JsonNode.Parse(plan.InputSnapshotJson)!.AsObject();
+                input["inputEvidence"]!.AsObject().Remove("DhwEvidence");
                 plan.InputSnapshotJson = input.ToJsonString();
             }
             if (fault == "revoked-model") (await db.ThermalModelVersions.FirstAsync(x => x.ModelType == "COP")).IsActive = false;
@@ -57,6 +65,7 @@ public sealed class ThermalPlanConsumptionTests
             if (fault == "changed-telemetry") (await db.ThermalTelemetrySamples.SingleAsync()).HeatPumpPowerKw += .1;
             if (fault == "changed-price") (await db.PriceSnapshots.SingleAsync()).SavedAtUtc = DateTimeOffset.UtcNow.AddSeconds(1);
             if (fault == "changed-zone") (await db.UserSettings.SingleAsync()).Zone = "SE2";
+            if (fault == "changed-dhw-cycle") (await db.DhwCycles.SingleAsync()).PredictedCost += .25m;
         });
 
         await Assert.ThrowsAsync<ThermalPlanningEvidenceException>(() => ReadAsync(fixture, DateTimeOffset.UtcNow));
@@ -89,6 +98,7 @@ public sealed class ThermalPlanConsumptionTests
     [InlineData("settings")]
     [InlineData("telemetry")]
     [InlineData("price")]
+    [InlineData("dhw-cycle")]
     public async Task WriteBoundary_RejectsPlanOrConfigurationChangedAfterInitialRead(string change)
     {
         await using var fixture = await ActiveFixtureAsync();
@@ -100,6 +110,7 @@ public sealed class ThermalPlanConsumptionTests
             if (change == "settings") (await db.ThermalSiteConfigs.SingleAsync()).LowerComfortBandC += .1;
             if (change == "telemetry") (await db.ThermalTelemetrySamples.SingleAsync()).PropertyPowerKw += .1;
             if (change == "price") (await db.PriceSnapshots.SingleAsync()).TomorrowPricesJson = "[]";
+            if (change == "dhw-cycle") (await db.DhwCycles.SingleAsync()).ReservedDurationMinutes += 5;
         });
 
         await Assert.ThrowsAsync<ThermalPlanningEvidenceException>(() => EnsureStillCurrentAsync(fixture, validated!));
