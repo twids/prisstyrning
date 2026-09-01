@@ -36,14 +36,36 @@ public sealed class ThermalModelTrainingJob
                         x.OutsideTemperatureC != null && x.HeatOutputKw != null)
             .OrderBy(x => x.TimestampUtc)
             .ToListAsync(cancellationToken);
-        var observations = samples.GroupBy(x => x.TimestampUtc).Where(x => x.Count() == 1)
-            .Select(x => ThermalModelTrainingData.Thermal(x.Single(), rooms, entities, now))
-            .Where(x => x is not null).Cast<ThermalObservation>().ToArray();
+        var selected = samples.GroupBy(x => x.TimestampUtc).Where(x => x.Count() == 1)
+            .Select(group =>
+            {
+                var sample = group.Single();
+                return (Sample: sample, Observation: ThermalModelTrainingData.Thermal(sample, rooms, entities, now));
+            })
+            .Where(x => x.Observation is not null)
+            .OrderBy(x => x.Sample.TimestampUtc)
+            .ToArray();
+        var observations = selected.Select(x => x.Observation!).ToArray();
         if (observations.Length < 21 * 24 * 12 * 0.98) return;
 
         var result = _model.Train(observations);
-        var fittingTimestamps = observations.Take(result.Metrics.TrainingSamples).Select(x => x.TimestampUtc).ToHashSet();
-        var parameters = result.Parameters with { RoomAdjustments = EstimateRoomAdjustments(samples.Where(x => fittingTimestamps.Contains(x.TimestampUtc)).ToArray(), rooms) };
+        var fittingSampleIds = selected.Take(result.Metrics.TrainingSamples).Select(x => x.Sample.Id).ToHashSet();
+        var parameters = result.Parameters with
+        {
+            RoomAdjustments = EstimateRoomAdjustments(
+                selected.Where(x => fittingSampleIds.Contains(x.Sample.Id)).Select(x => x.Sample).ToArray(), rooms)
+        };
+        var provenance = ThermalModelProvenance.Create(
+            userId,
+            "2R2C",
+            from,
+            now,
+            selected.Select(x => x.Sample).ToArray(),
+            rooms,
+            entities,
+            result.Metrics.TrainingSamples,
+            result.Metrics.ValidationSamples,
+            heatPumpPowerSignVerified: false);
         var previous = await _db.ThermalModelVersions
             .Where(x => x.UserId == userId && x.ModelType == "2R2C" && x.IsActive)
             .OrderByDescending(x => x.CreatedAtUtc).FirstOrDefaultAsync(cancellationToken);
@@ -55,7 +77,8 @@ public sealed class ThermalModelTrainingJob
             TrainingFromUtc = observations.First().TimestampUtc,
             TrainingToUtc = observations.Last().TimestampUtc,
             ParametersJson = JsonSerializer.Serialize(parameters, CamelCase),
-            MetricsJson = JsonSerializer.Serialize(result.Metrics, CamelCase)
+            MetricsJson = JsonSerializer.Serialize(result.Metrics, CamelCase),
+            SourceEvidenceJson = ThermalModelProvenance.Serialize(provenance)
         };
         var accepted = ThermalModelEvidence.Assess(version, DateTimeOffset.UtcNow).Passed;
         version.IsActive = accepted;

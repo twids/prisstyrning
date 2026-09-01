@@ -381,7 +381,19 @@ export interface ThermalModelVersion {
   isActive: boolean;
   parametersJson: string;
   metricsJson: string;
+  provenance?: ThermalModelProvenance;
   validation?: ThermalModelValidation;
+}
+
+export interface ThermalModelProvenance {
+  verifiable: boolean;
+  algorithmVersion: string | null;
+  selectionVersion: string | null;
+  selectionFromUtc: string | null;
+  selectionToUtc: string | null;
+  observationCount: number | null;
+  trainingSamples: number | null;
+  validationSamples: number | null;
 }
 
 export interface ThermalModelValidation {

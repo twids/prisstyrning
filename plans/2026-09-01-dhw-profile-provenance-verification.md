@@ -47,7 +47,7 @@ Frontendkällan ändrades inte. Föregående verifierade resultat, 216 Vitest-te
 
 ## Kvarvarande gränser
 
-- De aktiva 2R2C- och COP-modellversionerna har validerade parametrar och mätvärden, men behöver fortfarande en beständig revisionskedja till exakt träningsurval och träningskod/version.
+- En beständig revisionskedja till 2R2C-/COP-modellernas exakta träningsurval och logiska träningsversion är nu lokalt implementerad i [den efterföljande modellprovenansrapporten](2026-09-01-thermal-model-provenance-verification.md). Automatisk återhashning av historiska modellrader och bindning till signerad build-digest återstår.
 - InMemory-regressionerna bevisar kontraktet men inte PostgreSQLs verkliga serialiseringskonflikter. En driftlik integration med två samtidiga DbContext/transactions behövs.
 - Den sista databaskontrollen kan inte vara atomisk med en fysisk HA/P1P2- eller ONECTA-skrivning. Befintlig lease, bekräftelse och safe-zero minskar men eliminerar inte det externa intervallet.
 - Verklig HA/EMHASS/prognos/pris och representativ DHW-historik måste fortsatt observeras i Shadow enligt readinesskraven. Den här leveransen är kodverifiering, inte aktivt driftgodkännande.

@@ -12,7 +12,9 @@ const refresh = vi.fn().mockResolvedValue({});
 function model(): ThermalModelVersion {
   return { id: 4, modelType: '2R2C', isActive: true, createdAtUtc: '2026-08-31T07:00:00Z', trainingFromUtc: '2026-08-01T00:00:00Z', trainingToUtc: '2026-08-30T00:00:00Z',
     parametersJson: '{"roomAdjustments":null}', metricsJson: '{}', validation: { passed: true, status: 'Validated', reason: 'Hela tvåtimmars- och dygnsfönster klarar kraven.', checkedAtUtc: new Date(now).toISOString(),
-      twoHourMaeC: .1, dayMaeC: .2, copMae: null, twoHourValidationWindows: 126, dayValidationWindows: 4 } };
+      twoHourMaeC: .1, dayMaeC: .2, copMae: null, twoHourValidationWindows: 126, dayValidationWindows: 4 },
+    provenance: { verifiable: true, algorithmVersion: 'grey-box-2r2c-v1', selectionVersion: 'thermal-validated-history-v1', selectionFromUtc: '2026-07-01T00:00:00Z',
+      selectionToUtc: '2026-08-30T00:00:00Z', observationCount: 2000, trainingSamples: 1600, validationSamples: 400 } };
 }
 const query = (data: unknown) => ({ data, isLoading: false, isError: false, isFetching: false, refetch: refresh });
 function view() { return render(<main><ThermalModelPage /></main>); }
@@ -36,6 +38,20 @@ describe('ThermalModelPage', () => {
     expect(screen.getByText(/inte antal verifierade uppvärmningsdygn/)).toBeInTheDocument();
     expect(screen.getByText(/En validerad modell är inte ett godkännande av aktiv styrning/)).toBeInTheDocument();
     expect(screen.getByText('Validerad · aktivmarkering')).toBeInTheDocument();
+    expect(screen.getByText(/Träningsunderlag: spårbart · 2[  ]000 valda mätpunkter/)).toBeInTheDocument();
+    expect(screen.getByText(/Spårbart källurval · 2[  ]000 mätpunkter/)).toBeInTheDocument();
+  });
+
+  it('fails closed and explains how to repair a model without source provenance', () => {
+    const version = model();
+    delete version.provenance;
+    hooks.models.mockReturnValue(query([version]));
+    view();
+
+    expect(screen.getByText('Husmodell: ej verifierad')).toBeInTheDocument();
+    expect(screen.getByText(/Träningsunderlag: saknar verifierbart källbevis/)).toBeInTheDocument();
+    expect(screen.getByText(/Källbevis saknas · modellen måste tränas om/)).toBeInTheDocument();
+    expect(screen.queryByText('Husmodell: validerad')).not.toBeInTheDocument();
   });
 
   it.each(['legacy', 'invalid', 'insufficient', 'expired', 'malformed-number'])('does not present %s active flags as validated', fault => {

@@ -253,7 +253,13 @@ public sealed class ThermalReadinessEvidenceTests
         var at = future ? fixture.Now.AddDays(1) : fixture.Now.AddDays(-1);
         fixture.Db.ThermalPlans.AddRange(Enumerable.Range(0, 2016).Select(_ => new ThermalPlan
         {
-            UserId = "account-a", CreatedAtUtc = at, ValidFromUtc = at, ValidUntilUtc = at.AddHours(1), Status = "Valid", SolverDurationMs = 1000, Confidence = .9
+            UserId = "account-a",
+            CreatedAtUtc = at,
+            ValidFromUtc = at,
+            ValidUntilUtc = at.AddHours(1),
+            Status = "Valid",
+            SolverDurationMs = 1000,
+            Confidence = .9
         }));
         await fixture.Db.SaveChangesAsync();
 
@@ -274,20 +280,25 @@ public sealed class ThermalReadinessEvidenceTests
     private static HeatingDayEvidence AssessDay(ThermalTelemetrySample[] samples, DateTimeOffset start, DateTimeOffset end) =>
         ThermalReadinessEvidence.HeatingDays(samples, [new ThermalRoomConfig { EntityId = "sensor.room", IsCritical = true }], [], new ThermalSiteConfig(), start, end);
 
-    private static ThermalModelVersion Model(string type, string metrics) => new()
+    private static ThermalModelVersion Model(string type, string metrics)
     {
-        UserId = "account-a", ModelType = type, IsActive = true,
-        CreatedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-1), TrainingFromUtc = DateTimeOffset.UtcNow.AddDays(-30),
-        TrainingToUtc = DateTimeOffset.UtcNow.AddDays(-1), MetricsJson = metrics,
-        ParametersJson = type == "COP" ? JsonSerializer.Serialize(CopModel.ConservativeDefault, JsonSerializerOptions.Web)
-            : JsonSerializer.Serialize(new GreyBoxParameters(2, 35, .35, .8, .95, 35, -.45), JsonSerializerOptions.Web)
-    };
+        var model = ThermalModelEvidenceTests.ValidModel(type, DateTimeOffset.UtcNow);
+        model.MetricsJson = metrics;
+        return model;
+    }
 
     internal static ThermalTelemetrySample Sample(DateTimeOffset timestamp) => new()
     {
-        UserId = "account-a", TimestampUtc = timestamp, OutsideTemperatureC = 5,
-        LeavingWaterTemperatureC = 35, ReturnWaterTemperatureC = 30, FlowLitresPerMinute = 12,
-        HeatOutputKw = 4.186, DhwActive = false, DefrostActive = false, BackupHeaterActive = false,
+        UserId = "account-a",
+        TimestampUtc = timestamp,
+        OutsideTemperatureC = 5,
+        LeavingWaterTemperatureC = 35,
+        ReturnWaterTemperatureC = 30,
+        FlowLitresPerMinute = 12,
+        HeatOutputKw = 4.186,
+        DhwActive = false,
+        DefrostActive = false,
+        BackupHeaterActive = false,
         RoomTemperaturesJson = "{\"sensor.room\":21.5}",
         QualityJson = """
             {"rooms":{"sensor.room":{"quality":0,"excluded":false}},

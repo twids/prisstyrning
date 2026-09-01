@@ -31,6 +31,11 @@ public sealed class ThermalModelTrainingJobTests
         Assert.True(version.IsActive);
         Assert.True(ThermalModelEvidence.Assess(version, DateTimeOffset.UtcNow).Passed);
         Assert.Contains("\"dayValidationWindows\":", version.MetricsJson);
+        var provenance = ThermalModelProvenance.Read(version);
+        Assert.NotNull(provenance);
+        Assert.Equal(ThermalModelProvenance.ThermalAlgorithmVersion, provenance.AlgorithmVersion);
+        Assert.Equal(6500, provenance.ObservationCount);
+        Assert.DoesNotContain("account-a", version.SourceEvidenceJson, StringComparison.OrdinalIgnoreCase);
         await AssertLegacyAsync(db);
     }
 
@@ -54,6 +59,13 @@ public sealed class ThermalModelTrainingJobTests
         Assert.Equal(verified ? 2 : 1, versions.Count);
         Assert.Single(versions.Where(x => x.IsActive));
         Assert.Equal(!verified, old.IsActive);
+        if (verified)
+        {
+            var provenance = ThermalModelProvenance.Read(versions.Single(x => x != old));
+            Assert.NotNull(provenance);
+            Assert.Equal(ThermalModelProvenance.CopAlgorithmVersion, provenance.AlgorithmVersion);
+            Assert.Equal(600, provenance.ObservationCount);
+        }
         await AssertLegacyAsync(db);
     }
 

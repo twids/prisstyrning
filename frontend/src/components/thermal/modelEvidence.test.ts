@@ -6,6 +6,8 @@ const now = Date.parse('2026-08-31T08:00:00Z');
 export const validModel: ThermalModelVersion = {
   id: 1, modelType: '2R2C', isActive: true, createdAtUtc: '2026-08-31T07:00:00Z',
   trainingFromUtc: '2026-08-01T00:00:00Z', trainingToUtc: '2026-08-30T00:00:00Z', parametersJson: '{}', metricsJson: '{}',
+  provenance: { verifiable: true, algorithmVersion: 'grey-box-2r2c-v1', selectionVersion: 'thermal-validated-history-v1',
+    selectionFromUtc: '2026-07-01T00:00:00Z', selectionToUtc: '2026-08-30T00:00:00Z', observationCount: 2000, trainingSamples: 1600, validationSamples: 400 },
   validation: { passed: true, status: 'Validated', reason: 'Hela prognosfönster klarar kraven.', checkedAtUtc: new Date(now).toISOString(),
     twoHourMaeC: .1, dayMaeC: .2, copMae: null, twoHourValidationWindows: 126, dayValidationWindows: 4 },
 };
@@ -30,6 +32,14 @@ describe('modelEvidence', () => {
     if (fault === 'missing-windows') model.validation!.dayValidationWindows = 0;
     if (fault === 'contradiction') model.validation!.passed = false;
     expect(modelEvidence(model, now).passed).toBe(false);
+  });
+  it.each(['absent', 'unknown-algorithm', 'bad-count', 'bad-window'])('rejects %s source provenance even when validation says passed', fault => {
+    const model = structuredClone(validModel);
+    if (fault === 'absent') delete model.provenance;
+    if (fault === 'unknown-algorithm') model.provenance!.algorithmVersion = 'grey-box-2r2c-v2';
+    if (fault === 'bad-count') model.provenance!.trainingSamples = 2001;
+    if (fault === 'bad-window') model.provenance!.selectionToUtc = '2026-08-01T00:00:00Z';
+    expect(modelEvidence(model, now)).toMatchObject({ passed: false, scored: false, sourceVerified: false });
   });
   it('does not treat JSON null or arrays as safe parameter records', () => {
     expect(parseRecord('null')).toEqual({});

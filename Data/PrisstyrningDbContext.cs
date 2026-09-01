@@ -218,6 +218,8 @@ public class PrisstyrningDbContext : DbContext
             e.Property(x => x.ModelType).HasMaxLength(50).IsRequired();
             e.Property(x => x.ParametersJson).HasColumnType("jsonb");
             e.Property(x => x.MetricsJson).HasColumnType("jsonb");
+            // Existing versions deliberately start unproven until they are retrained.
+            e.Property(x => x.SourceEvidenceJson).HasColumnType("jsonb").HasDefaultValue("{}");
             e.HasIndex(x => new { x.UserId, x.ModelType, x.CreatedAtUtc });
         });
 

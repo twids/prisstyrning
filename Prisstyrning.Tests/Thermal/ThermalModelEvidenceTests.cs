@@ -93,15 +93,63 @@ public sealed class ThermalModelEvidenceTests
         Assert.Equal(4, result.DayValidationWindows);
     }
 
-    internal static ThermalModelVersion ValidModel(string type, DateTimeOffset now) => new()
+    [Theory]
+    [InlineData("missing", "Unproven")]
+    [InlineData("algorithm", "Unproven")]
+    [InlineData("fingerprint", "Unproven")]
+    [InlineData("sample-count", "Invalid")]
+    public void Assess_MissingOrInconsistentSourceEvidenceFailsClosed(string fault, string expectedStatus)
     {
-        UserId = "account-a", ModelType = type, IsActive = true,
-        TrainingFromUtc = now.AddDays(-30), TrainingToUtc = now.AddDays(-1), CreatedAtUtc = now.AddMinutes(-1),
-        ParametersJson = type == "COP" ? JsonSerializer.Serialize(CopModel.ConservativeDefault, JsonSerializerOptions.Web)
-            : JsonSerializer.Serialize(new GreyBoxParameters(2, 35, .35, .8, .95, 35, -.45), JsonSerializerOptions.Web),
-        MetricsJson = type == "COP" ? JsonSerializer.Serialize(new CopModelMetrics(.1, 480, 120, 1), JsonSerializerOptions.Web)
-            : JsonSerializer.Serialize(new ThermalModelMetrics(.1, .2, 1600, 400, 126, 4, 1), JsonSerializerOptions.Web)
-    };
+        var model = ValidModel("2R2C", Now);
+        var source = JsonSerializer.Deserialize<ThermalModelSourceEvidence>(model.SourceEvidenceJson, JsonSerializerOptions.Web)!;
+        model.SourceEvidenceJson = fault switch
+        {
+            "missing" => "{}",
+            "algorithm" => ThermalModelProvenance.Serialize(source with { AlgorithmVersion = "grey-box-2r2c-v0" }),
+            "fingerprint" => ThermalModelProvenance.Serialize(source with { SampleFingerprint = "not-a-sha256" }),
+            "sample-count" => ThermalModelProvenance.Serialize(source with { TrainingSamples = source.TrainingSamples - 1 }),
+            _ => throw new InvalidOperationException()
+        };
+
+        var result = ThermalModelEvidence.Assess(model, Now);
+
+        Assert.False(result.Passed);
+        Assert.Equal(expectedStatus, result.Status);
+        Assert.Contains("Träna", result.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static ThermalModelVersion ValidModel(string type, DateTimeOffset now)
+    {
+        var training = type == "COP" ? 480 : 1600;
+        var validation = type == "COP" ? 120 : 400;
+        var source = new ThermalModelSourceEvidence(
+            ThermalModelProvenance.SchemaVersion,
+            type == "COP" ? ThermalModelProvenance.CopAlgorithmVersion : ThermalModelProvenance.ThermalAlgorithmVersion,
+            type == "COP" ? ThermalModelProvenance.CopSelectionVersion : ThermalModelProvenance.ThermalSelectionVersion,
+            now.AddDays(-31),
+            now.AddMinutes(-2),
+            training + validation,
+            training,
+            validation,
+            1,
+            training + validation,
+            new string('A', 64),
+            new string('B', 64));
+        return new ThermalModelVersion
+        {
+            UserId = "account-a",
+            ModelType = type,
+            IsActive = true,
+            TrainingFromUtc = now.AddDays(-30),
+            TrainingToUtc = now.AddDays(-1),
+            CreatedAtUtc = now.AddMinutes(-1),
+            ParametersJson = type == "COP" ? JsonSerializer.Serialize(CopModel.ConservativeDefault, JsonSerializerOptions.Web)
+                : JsonSerializer.Serialize(new GreyBoxParameters(2, 35, .35, .8, .95, 35, -.45), JsonSerializerOptions.Web),
+            MetricsJson = type == "COP" ? JsonSerializer.Serialize(new CopModelMetrics(.1, training, validation, 1), JsonSerializerOptions.Web)
+                : JsonSerializer.Serialize(new ThermalModelMetrics(.1, .2, training, validation, 126, 4, 1), JsonSerializerOptions.Web),
+            SourceEvidenceJson = ThermalModelProvenance.Serialize(source)
+        };
+    }
 
     private static string Replace(string json, string field, string value)
     {

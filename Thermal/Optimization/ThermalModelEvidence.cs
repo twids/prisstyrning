@@ -32,6 +32,12 @@ internal static class ThermalModelEvidence
         var capacity = Math.Floor((model.TrainingToUtc - model.TrainingFromUtc).TotalMinutes / 5) + 1;
         if (training is null || validation is null || (long)training + validation > capacity)
             return Block("Invalid", "Antalet mätpunkter stämmer inte med träningsperioden. Träna en ny modellversion.");
+        var provenance = ThermalModelProvenance.Read(model);
+        if (provenance is null)
+            return Block("Unproven", "Modellversionen saknar ett verifierbart fingeravtryck för exakt träningsurval och kodversion. Träna om modellen.");
+        if (provenance.TrainingSamples != training || provenance.ValidationSamples != validation ||
+            provenance.ObservationCount > capacity)
+            return Block("Invalid", "Modellens källbevis stämmer inte med träningsperioden eller valideringsmåtten. Träna en ny version.");
 
         if (model.ModelType == "2R2C")
         {
@@ -48,7 +54,7 @@ internal static class ThermalModelEvidence
                 return Block("Invalid", "Modellens prognosfel måste vara ändliga, icke-negativa tal. Träna en ny version.");
             var passed = twoHour <= .3 && day <= .6;
             return new(passed, passed ? "Validated" : "ThresholdExceeded", passed
-                ? "Hela tvåtimmars- och dygnsfönster på undanhållen data klarar MAE-kraven. Detta godkänner inte aktiv styrning."
+                ? "Hela tvåtimmars- och dygnsfönster på undanhållen data klarar MAE-kraven. Källurval och träningskod är versionsbundna; detta godkänner inte aktiv styrning."
                 : "Prognosfelet överskrider 0,30 °C för två timmar eller 0,60 °C för ett dygn. Fortsätt i Shadow och granska modellen.",
                 now, twoHour, day, TwoHourValidationWindows: twoHourWindows, DayValidationWindows: dayWindows);
         }
@@ -62,7 +68,7 @@ internal static class ThermalModelEvidence
             if (mae is not >= 0)
                 return Block("Invalid", "COP-felet måste vara ett ändligt, icke-negativt tal. Träna en ny version.");
             return new(mae <= .5, mae <= .5 ? "Validated" : "ThresholdExceeded", mae <= .5
-                ? "Separata COP-valideringspunkter klarar MAE-kravet. Effektmätning och övriga aktiveringskrav måste också verifieras."
+                ? "Separata COP-valideringspunkter klarar MAE-kravet och källurvalet är versionsbundet. Effektmätning och övriga aktiveringskrav måste också verifieras."
                 : "COP-modellens fel överstiger 0,50. Kontrollera mätdata och träna om modellen.", now, CopMae: mae);
         }
         return Block("Invalid", "Modelltypen stöds inte för styrning.");

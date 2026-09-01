@@ -300,8 +300,15 @@ public static class ThermalApiEndpoints
         // edits the stored active marker nor approves a mode transition.
         return Results.Ok(models.Select(model => new
         {
-            model.Id, model.ModelType, model.CreatedAtUtc, model.TrainingFromUtc, model.TrainingToUtc,
-            model.IsActive, model.ParametersJson, model.MetricsJson,
+            model.Id,
+            model.ModelType,
+            model.CreatedAtUtc,
+            model.TrainingFromUtc,
+            model.TrainingToUtc,
+            model.IsActive,
+            model.ParametersJson,
+            model.MetricsJson,
+            provenance = ThermalModelProvenance.Summary(model),
             validation = ThermalModelEvidence.Assess(model, now)
         }));
     }

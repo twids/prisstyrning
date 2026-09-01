@@ -9,6 +9,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import { useThermalConfig, useThermalHistory, useThermalModels } from '../../hooks/thermal/useThermal';
 import { MetricCard, PageHeader, formatDateTime } from '../../components/thermal/thermalUi';
 import { finite, modelEvidence, observedCop, parseRecord, record } from '../../components/thermal/modelEvidence';
+import type { ThermalModelVersion } from '../../types/api';
 
 export default function ThermalModelPage() {
   const models = useThermalModels();
@@ -43,10 +44,12 @@ export default function ThermalModelPage() {
         <Alert severity={evidence.passed ? 'success' : 'warning'} icon={evidence.passed ? <FactCheckOutlinedIcon /> : undefined}>
           <Typography fontWeight={700}>{evidence.passed ? 'Husmodell: validerad' : 'Husmodell: ej verifierad'}</Typography>
           {thermal ? evidence.reason : 'Ingen modellversion finns ännu. Samla giltiga mätdata och låt den nattliga träningen utvärdera underlaget.'}
+          {thermal && <Typography variant="body2" mt={.75}>{sourceSummary(thermal, evidence.sourceVerified)}</Typography>}
         </Alert>
         <Alert severity={copEvidence.passed ? 'success' : 'warning'}>
           <Typography fontWeight={700}>{copEvidence.passed ? 'COP-modell: validerad' : 'COP-modell: ej verifierad'}</Typography>
           {cop ? copEvidence.reason : 'Ingen separat COP-modell finns ännu. Verifiera effektmätningen och samla kompressordata utan elpatron.'}
+          {cop && <Typography variant="body2" mt={.75}>{sourceSummary(cop, copEvidence.sourceVerified)}</Typography>}
         </Alert>
       </>}
       {(history.isError || config.isError) && <Alert severity="warning">COP-underlaget eller effektmätningens inställningar kunde inte hämtas. Ingen observerad COP kan verifieras just nu.</Alert>}
@@ -60,6 +63,7 @@ export default function ThermalModelPage() {
       {evidence.scored && <Accordion slots={{ heading: 'h2' }}>
         <AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography component="span" variant="h6">Avancerat: husmodell och rumskalibrering</Typography></AccordionSummary>
         <AccordionDetails><Stack spacing={2}>
+          <SourceDetails model={thermal} verified={evidence.sourceVerified} />
           <Parameter label="Klimatskalets värmeförlust" value={parameters.envelopeConductanceKwPerC} unit="kW/°C" />
           <Parameter label="Byggnadsmassans kapacitet" value={parameters.massCapacityKwhPerC} unit="kWh/°C" />
           <Parameter label="Koppling luft ↔ massa" value={parameters.massCouplingKwPerC} unit="kW/°C" />
@@ -75,6 +79,7 @@ export default function ThermalModelPage() {
       {copEvidence.scored && <Accordion slots={{ heading: 'h2' }}>
         <AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography component="span" variant="h6">Avancerat: COP-modell</Typography></AccordionSummary>
         <AccordionDetails><Stack spacing={1.5}>
+          <SourceDetails model={cop} verified={copEvidence.sourceVerified} />
           <Typography>Valideringsfel: {copEvidence.cop == null ? '–' : decimal(copEvidence.cop)} · krav ≤ 0,50</Typography>
           <Parameter label="Bas-COP" value={copParameters.intercept} unit="" /><Parameter label="Köldbärarfaktor" value={copParameters.brineCoefficient} unit="COP/°C" />
           <Parameter label="LWT-faktor" value={copParameters.lwtCoefficient} unit="COP/°C" /><Parameter label="Belastningsfaktor" value={copParameters.loadCoefficient} unit="COP/kW" />
@@ -90,6 +95,9 @@ export default function ThermalModelPage() {
               <Chip size="small" label={(assessment.passed ? 'Validerad' : 'Ej verifierad') + (model.isActive ? ' · aktivmarkering' : '')} color={assessment.passed ? 'success' : 'warning'} variant="outlined" />
             </Stack>
             <Typography variant="body2" color="text.secondary">{date(model.trainingFromUtc)} – {date(model.trainingToUtc)}</Typography>
+            <Typography variant="body2" color={assessment.sourceVerified ? 'text.secondary' : 'warning.main'}>
+              {assessment.sourceVerified ? `Spårbart källurval · ${integer(model.provenance!.observationCount!)} mätpunkter` : 'Källbevis saknas · modellen måste tränas om'}
+            </Typography>
             <Typography variant="body2">{assessment.reason}</Typography>
           </Stack>; })}
           {!models.isLoading && ordered.length === 0 && <Typography component="li">Inga modellversioner har sparats ännu.</Typography>}
@@ -100,8 +108,23 @@ export default function ThermalModelPage() {
 }
 
 function decimal(value: number, digits = 2) { return value.toLocaleString('sv-SE', { minimumFractionDigits: digits, maximumFractionDigits: digits }); }
+function integer(value: number) { return value.toLocaleString('sv-SE', { maximumFractionDigits: 0 }); }
 function temperature(value: number | null) { return value == null ? '–' : decimal(value) + ' °C'; }
 function date(value: string) { return Number.isFinite(Date.parse(value)) ? formatDateTime(value) : 'Okänd tid'; }
+function sourceSummary(model: ThermalModelVersion, verified: boolean) {
+  return verified
+    ? `Träningsunderlag: spårbart · ${integer(model.provenance!.observationCount!)} valda mätpunkter.`
+    : 'Träningsunderlag: saknar verifierbart källbevis. En ny nattlig träning krävs.';
+}
+function SourceDetails({ model, verified }: { model: ThermalModelVersion | undefined; verified: boolean }) {
+  if (!model?.provenance || !verified) return null;
+  return <Box sx={{ borderLeft: 3, borderColor: 'info.main', pl: 1.5 }}>
+    <Typography fontWeight={700}>Versionsbundet träningsunderlag</Typography>
+    <Typography variant="body2">Källurval: {date(model.provenance.selectionFromUtc!)} – {date(model.provenance.selectionToUtc!)}</Typography>
+    <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>Algoritm: {model.provenance.algorithmVersion} · urvalsregel: {model.provenance.selectionVersion}</Typography>
+    <Typography variant="body2">{integer(model.provenance.trainingSamples!)} träningspunkter · {integer(model.provenance.validationSamples!)} valideringspunkter</Typography>
+  </Box>;
+}
 function Parameter({ label, value, unit }: { label: string; value: unknown; unit: string }) {
   const number = finite(value);
   return <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" gap={.5}><Typography color="text.secondary">{label}</Typography><Typography fontWeight={700}>{number == null ? '–' : decimal(number, 3)} {unit}</Typography></Stack>;

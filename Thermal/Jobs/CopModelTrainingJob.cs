@@ -41,11 +41,30 @@ public sealed class CopModelTrainingJob
                         x.HeatOutputKw > 0.5)
             .OrderBy(x => x.TimestampUtc)
             .ToListAsync(cancellationToken);
-        var observations = samples.GroupBy(x => x.TimestampUtc).Where(x => x.Count() == 1)
-            .Select(x => ThermalModelTrainingData.Cop(x.Single(), entities, now)).Where(x => x is not null).Cast<CopObservation>().ToArray();
+        var selected = samples.GroupBy(x => x.TimestampUtc).Where(x => x.Count() == 1)
+            .Select(group =>
+            {
+                var sample = group.Single();
+                return (Sample: sample, Observation: ThermalModelTrainingData.Cop(sample, entities, now));
+            })
+            .Where(x => x.Observation is not null)
+            .OrderBy(x => x.Sample.TimestampUtc)
+            .ToArray();
+        var observations = selected.Select(x => x.Observation!).ToArray();
         if (observations.Length < 500) return;
 
         var result = _model.Train(observations);
+        var provenance = ThermalModelProvenance.Create(
+            userId,
+            "COP",
+            from,
+            now,
+            selected.Select(x => x.Sample).ToArray(),
+            [],
+            entities,
+            result.Metrics.TrainingSamples,
+            result.Metrics.ValidationSamples,
+            heatPumpPowerSignVerified: true);
         var previous = await _db.ThermalModelVersions
             .Where(x => x.UserId == userId && x.ModelType == "COP" && x.IsActive)
             .OrderByDescending(x => x.CreatedAtUtc)
@@ -58,7 +77,8 @@ public sealed class CopModelTrainingJob
             TrainingFromUtc = observations[0].TimestampUtc,
             TrainingToUtc = observations[^1].TimestampUtc,
             ParametersJson = JsonSerializer.Serialize(result.Parameters, CamelCase),
-            MetricsJson = JsonSerializer.Serialize(result.Metrics, CamelCase)
+            MetricsJson = JsonSerializer.Serialize(result.Metrics, CamelCase),
+            SourceEvidenceJson = ThermalModelProvenance.Serialize(provenance)
         };
         var accepted = ThermalModelEvidence.Assess(version, DateTimeOffset.UtcNow).Passed;
         version.IsActive = accepted;

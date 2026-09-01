@@ -23,14 +23,36 @@ export function modelEvidence(model: ThermalModelVersion | undefined, now: numbe
   const metricsValid = model?.modelType === '2R2C'
     ? twoHour != null && twoHour >= 0 && day != null && day >= 0 && count(value?.twoHourValidationWindows) && count(value?.dayValidationWindows)
     : model?.modelType === 'COP' && cop != null && cop >= 0;
-  const scored = current && metricsValid && (value?.status === 'Validated' || value?.status === 'ThresholdExceeded');
+  const sourceVerified = validProvenance(model);
+  const scored = current && metricsValid && sourceVerified && (value?.status === 'Validated' || value?.status === 'ThresholdExceeded');
   const passed = scored && value?.passed === true && value.status === 'Validated' &&
     (model?.modelType === '2R2C' ? twoHour! <= .3 && day! <= .6 : cop! <= .5);
   const knownBlocked = current && ['Missing', 'Invalid', 'Unproven', 'Insufficient', 'ThresholdExceeded'].includes(value?.status ?? '');
-  const reason = (passed || knownBlocked) && typeof value?.reason === 'string' && value.reason
-    ? value.reason : 'Valideringsunderlaget saknas, är för gammalt eller kan inte verifieras. Hämta det igen; äldre modeller kan behöva tränas om.';
+  const reason = !sourceVerified && model
+    ? 'Modellens exakta träningsurval eller kodversion kan inte verifieras. Träna om modellen innan den används.'
+    : (passed || knownBlocked) && typeof value?.reason === 'string' && value.reason
+      ? value.reason : 'Valideringsunderlaget saknas, är för gammalt eller kan inte verifieras. Hämta det igen; äldre modeller kan behöva tränas om.';
   return { passed, scored, reason, twoHour: scored ? twoHour : null, day: scored ? day : null, cop: scored ? cop : null,
-    twoHourWindows: scored ? value?.twoHourValidationWindows : null, dayWindows: scored ? value?.dayValidationWindows : null };
+    twoHourWindows: scored ? value?.twoHourValidationWindows : null, dayWindows: scored ? value?.dayValidationWindows : null, sourceVerified };
+}
+
+function validProvenance(model: ThermalModelVersion | undefined) {
+  const source = model?.provenance;
+  if (!model || source?.verifiable !== true) return false;
+  const expected = model.modelType === '2R2C'
+    ? ['grey-box-2r2c-v1', 'thermal-validated-history-v1']
+    : model.modelType === 'COP' ? ['ridge-cop-v1', 'cop-validated-history-v1'] : [];
+  const selectionFrom = Date.parse(source.selectionFromUtc ?? '');
+  const selectionTo = Date.parse(source.selectionToUtc ?? '');
+  const trainingFrom = Date.parse(model.trainingFromUtc);
+  const trainingTo = Date.parse(model.trainingToUtc);
+  const created = Date.parse(model.createdAtUtc);
+  const positiveCount = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+  return source.algorithmVersion === expected[0] && source.selectionVersion === expected[1] &&
+    [selectionFrom, selectionTo, trainingFrom, trainingTo, created].every(Number.isFinite) &&
+    selectionFrom < selectionTo && selectionFrom <= trainingFrom && trainingTo <= selectionTo && selectionTo <= created &&
+    positiveCount(source.observationCount) && positiveCount(source.trainingSamples) && positiveCount(source.validationSamples) &&
+    source.trainingSamples! + source.validationSamples! <= source.observationCount!;
 }
 
 function field(value: unknown, name: string): unknown {

@@ -12,4 +12,5 @@ public class ThermalModelVersion
     public bool IsActive { get; set; }
     public string ParametersJson { get; set; } = "{}";
     public string MetricsJson { get; set; } = "{}";
+    public string SourceEvidenceJson { get; set; } = "{}";
 }
