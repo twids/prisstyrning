@@ -38,9 +38,17 @@ public sealed class ThermalModelsApiTests
         {
             var db = services.GetRequiredService<PrisstyrningDbContext>();
             db.ThermalSiteConfigs.AddRange(new ThermalSiteConfig { UserId = "account-a" }, new ThermalSiteConfig { UserId = "account-b" });
-            var model = ThermalModelEvidenceTests.ValidModel("2R2C", DateTimeOffset.UtcNow);
+            db.ThermalRoomConfigs.Add(new ThermalRoomConfig
+            { UserId = "account-a", EntityId = "sensor.room", IsCritical = true });
+            db.ThermalEntityConfigs.AddRange(ThermalModelTrainingDataTests.Entities.Select(entity => new ThermalEntityConfig
+            {
+                UserId = "account-a",
+                Role = entity.Role,
+                EntityId = entity.EntityId
+            }));
+            var model = Assert.Single(await ThermalCurrentModelTestData.SeedAsync(
+                db, "account-a", DateTimeOffset.UtcNow, "2R2C"));
             if (!proven) model.MetricsJson = "{\"twoHourMaeC\":0.1,\"dayMaeC\":0.2}";
-            db.ThermalModelVersions.Add(model);
             var other = ThermalModelEvidenceTests.ValidModel("COP", DateTimeOffset.UtcNow);
             other.UserId = "account-b";
             db.ThermalModelVersions.Add(other);
@@ -59,10 +67,13 @@ public sealed class ThermalModelsApiTests
         var evidence = modelJson.GetProperty("validation");
         Assert.Equal(proven, evidence.GetProperty("passed").GetBoolean());
         Assert.Equal(proven ? "Validated" : "Unproven", evidence.GetProperty("status").GetString());
+        var sourceValidation = modelJson.GetProperty("sourceValidation");
+        Assert.True(sourceValidation.GetProperty("passed").GetBoolean());
+        Assert.Equal("Current", sourceValidation.GetProperty("status").GetString());
         var provenance = modelJson.GetProperty("provenance");
         Assert.True(provenance.GetProperty("verifiable").GetBoolean());
         Assert.Equal("grey-box-2r2c-v1", provenance.GetProperty("algorithmVersion").GetString());
-        Assert.Equal(2000, provenance.GetProperty("observationCount").GetInt32());
+        Assert.Equal(489, provenance.GetProperty("observationCount").GetInt32());
         Assert.False(modelJson.TryGetProperty("sourceEvidenceJson", out _));
         Assert.DoesNotContain("sampleFingerprint", content, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("configurationFingerprint", content, StringComparison.OrdinalIgnoreCase);
@@ -74,6 +85,52 @@ public sealed class ThermalModelsApiTests
             var db = services.GetRequiredService<PrisstyrningDbContext>();
             Assert.All(await db.ThermalModelVersions.ToListAsync(), version => Assert.True(version.IsActive));
             Assert.All(await db.ThermalSiteConfigs.ToListAsync(), site => { Assert.Equal("Legacy", site.ControlMode); Assert.Equal("Legacy", site.DhwWriter); });
+            Assert.Empty(await db.ThermalControlCommands.ToListAsync());
+            Assert.Empty(await db.ThermalEvents.ToListAsync());
+        });
+    }
+
+    [Fact]
+    public async Task Models_RehashesHistoryAndReportsChangedWithoutExposingFingerprintsOrMutatingLegacy()
+    {
+        await using var host = await AccountApiTestHost.CreateAsync(includeThermalStatus: true);
+        using var browser = host.CreateBrowser();
+        await browser.SignInAsync();
+        await host.WithServicesAsync(async services =>
+        {
+            var db = services.GetRequiredService<PrisstyrningDbContext>();
+            db.ThermalSiteConfigs.Add(new ThermalSiteConfig { UserId = "account-a" });
+            db.ThermalRoomConfigs.Add(new ThermalRoomConfig
+            { UserId = "account-a", EntityId = "sensor.room", IsCritical = true });
+            db.ThermalEntityConfigs.AddRange(ThermalModelTrainingDataTests.Entities.Select(entity => new ThermalEntityConfig
+            {
+                UserId = "account-a",
+                Role = entity.Role,
+                EntityId = entity.EntityId
+            }));
+            await ThermalCurrentModelTestData.SeedAsync(db, "account-a", DateTimeOffset.UtcNow, "2R2C");
+            (await db.ThermalTelemetrySamples.OrderBy(x => x.TimestampUtc).FirstAsync()).RoomTemperaturesJson =
+                "{\"sensor.room\":21.6}";
+            await db.SaveChangesAsync();
+        });
+
+        using var response = await browser.Client.GetAsync("/api/thermal/models");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var content = await response.Content.ReadAsStringAsync();
+        using var document = JsonDocument.Parse(content);
+        var model = Assert.Single(document.RootElement.EnumerateArray());
+        var source = model.GetProperty("sourceValidation");
+        Assert.False(source.GetProperty("passed").GetBoolean());
+        Assert.Equal("Changed", source.GetProperty("status").GetString());
+        Assert.Equal("SourceChanged", model.GetProperty("validation").GetProperty("status").GetString());
+        Assert.DoesNotContain("fingerprint", content, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("account-a", content);
+        await host.WithServicesAsync(async services =>
+        {
+            var db = services.GetRequiredService<PrisstyrningDbContext>();
+            var site = await db.ThermalSiteConfigs.SingleAsync();
+            Assert.Equal("Legacy", site.ControlMode);
+            Assert.Equal("Legacy", site.DhwWriter);
             Assert.Empty(await db.ThermalControlCommands.ToListAsync());
             Assert.Empty(await db.ThermalEvents.ToListAsync());
         });

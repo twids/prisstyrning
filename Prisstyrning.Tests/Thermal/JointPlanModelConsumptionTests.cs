@@ -60,28 +60,28 @@ public sealed class JointPlanModelConsumptionTests
             if (fault == "failed-cop-validation") cop.MetricsJson = "{\"mae\":0.9,\"trainingSamples\":480,\"validationSamples\":120,\"validationVersion\":1}";
             if (fault == "future-model") thermal.CreatedAtUtc = DateTimeOffset.UtcNow.AddHours(1);
             if (fault == "unverified-meter") (await db.ThermalSiteConfigs.SingleAsync()).HeatPumpPowerSignVerified = false;
-            if (fault == "future-telemetry") (await db.ThermalTelemetrySamples.SingleAsync()).TimestampUtc = DateTimeOffset.UtcNow.AddMinutes(1);
-            if (fault == "missing-brine") (await db.ThermalTelemetrySamples.SingleAsync()).BrineInC = null;
-            if (fault == "invalid-lwt") (await db.ThermalTelemetrySamples.SingleAsync()).LeavingWaterTemperatureC = double.NaN;
-            if (fault == "missing-heat") (await db.ThermalTelemetrySamples.SingleAsync()).HeatOutputKw = null;
+            if (fault == "future-telemetry") (await ThermalCurrentModelTestData.LatestTelemetryAsync(db)).TimestampUtc = DateTimeOffset.UtcNow.AddMinutes(1);
+            if (fault == "missing-brine") (await ThermalCurrentModelTestData.LatestTelemetryAsync(db)).BrineInC = null;
+            if (fault == "invalid-lwt") (await ThermalCurrentModelTestData.LatestTelemetryAsync(db)).LeavingWaterTemperatureC = double.NaN;
+            if (fault == "missing-heat") (await ThermalCurrentModelTestData.LatestTelemetryAsync(db)).HeatOutputKw = null;
             if (fault == "missing-entity") db.Remove(await db.ThermalEntityConfigs.SingleAsync(x => x.Role == ThermalEntityRoles.OutsideTemperature));
             if (fault is "invalid-room-quality" or "history-import" or "invalid-forecast")
             {
-                var sample = await db.ThermalTelemetrySamples.SingleAsync();
+                var sample = await ThermalCurrentModelTestData.LatestTelemetryAsync(db);
                 var quality = JsonNode.Parse(sample.QualityJson)!.AsObject();
                 if (fault == "invalid-room-quality") quality["rooms"]!["sensor.room"]!["quality"] = 2;
                 if (fault == "history-import") quality["source"] = "HomeAssistantHistoryImport";
                 if (fault == "invalid-forecast") quality["forecast"]!["quality"] = 2;
                 sample.QualityJson = quality.ToJsonString();
             }
-            if (fault == "missing-return") (await db.ThermalTelemetrySamples.SingleAsync()).ReturnWaterTemperatureC = null;
-            if (fault == "inconsistent-heat") (await db.ThermalTelemetrySamples.SingleAsync()).HeatOutputKw = 40;
-            if (fault == "dhw-active") (await db.ThermalTelemetrySamples.SingleAsync()).DhwActive = true;
-            if (fault == "defrost-active") (await db.ThermalTelemetrySamples.SingleAsync()).DefrostActive = true;
-            if (fault == "unknown-backup") (await db.ThermalTelemetrySamples.SingleAsync()).BackupHeaterActive = null;
+            if (fault == "missing-return") (await ThermalCurrentModelTestData.LatestTelemetryAsync(db)).ReturnWaterTemperatureC = null;
+            if (fault == "inconsistent-heat") (await ThermalCurrentModelTestData.LatestTelemetryAsync(db)).HeatOutputKw = 40;
+            if (fault == "dhw-active") (await ThermalCurrentModelTestData.LatestTelemetryAsync(db)).DhwActive = true;
+            if (fault == "defrost-active") (await ThermalCurrentModelTestData.LatestTelemetryAsync(db)).DefrostActive = true;
+            if (fault == "unknown-backup") (await ThermalCurrentModelTestData.LatestTelemetryAsync(db)).BackupHeaterActive = null;
             if (fault == "short-forecast")
             {
-                var sample = await db.ThermalTelemetrySamples.SingleAsync();
+                var sample = await ThermalCurrentModelTestData.LatestTelemetryAsync(db);
                 sample.OutsideTemperatureForecastJson = JsonSerializer.Serialize(new[]
                 {
                     new WeatherForecastPoint(sample.TimestampUtc.AddHours(-1), 2, null, null),
@@ -160,12 +160,15 @@ public sealed class JointPlanModelConsumptionTests
                 EntityId = "sensor.other",
                 Weight = 1
             });
-            var sample = await db.ThermalTelemetrySamples.SingleAsync();
+            var sample = await ThermalCurrentModelTestData.LatestTelemetryAsync(db);
             sample.RoomTemperaturesJson = "{\"sensor.room\":5,\"sensor.other\":21.8}";
             var quality = JsonNode.Parse(sample.QualityJson)!.AsObject();
             quality["rooms"]!["sensor.room"] = JsonNode.Parse("{\"quality\":2,\"excluded\":true}");
             quality["rooms"]!["sensor.other"] = JsonNode.Parse("{\"quality\":0,\"excluded\":false}");
             sample.QualityJson = quality.ToJsonString();
+            (await db.ThermalModelVersions.FirstAsync(x => x.ModelType == "2R2C")).IsActive = false;
+            await ThermalCurrentModelTestData.AddVersionAsync(
+                db, "account-a", "2R2C", DateTimeOffset.UtcNow);
         });
 
         await fixture.ReplanAsync();
@@ -185,7 +188,7 @@ public sealed class JointPlanModelConsumptionTests
         await using var fixture = await Fixture.CreateAsync();
         await fixture.ChangeAsync(async db =>
         {
-            var sample = await db.ThermalTelemetrySamples.SingleAsync();
+            var sample = await ThermalCurrentModelTestData.LatestTelemetryAsync(db);
             sample.DhwActive = true;
             db.DhwCycles.Add(new DhwCycle
             {
@@ -279,6 +282,7 @@ public sealed class JointPlanModelConsumptionTests
     [InlineData("ha-revision")]
     [InlineData("same-revision-setting-change")]
     [InlineData("telemetry-change")]
+    [InlineData("historical-source-change")]
     [InlineData("price-change")]
     [InlineData("zone-change")]
     [InlineData("dhw-cycle-created")]
@@ -295,7 +299,9 @@ public sealed class JointPlanModelConsumptionTests
             if (change == "room-change") db.ThermalRoomConfigs.Add(new ThermalRoomConfig { UserId = "account-a", EntityId = "sensor.new_room" });
             if (change == "ha-revision") db.HomeAssistantConnections.Add(new HomeAssistantConnection { UserId = "account-a", UpdatedAtUtc = DateTimeOffset.UtcNow });
             if (change == "same-revision-setting-change") (await db.ThermalSiteConfigs.SingleAsync()).BaseRoomTargetC += 1;
-            if (change == "telemetry-change") (await db.ThermalTelemetrySamples.SingleAsync()).PropertyPowerKw += .1;
+            if (change == "telemetry-change") (await ThermalCurrentModelTestData.LatestTelemetryAsync(db)).PropertyPowerKw += .1;
+            if (change == "historical-source-change")
+                (await db.ThermalTelemetrySamples.OrderBy(x => x.TimestampUtc).FirstAsync()).RoomTemperaturesJson = "{\"sensor.room\":21.6}";
             if (change == "price-change") (await db.PriceSnapshots.SingleAsync()).SavedAtUtc = DateTimeOffset.UtcNow.AddSeconds(1);
             if (change == "zone-change") (await db.UserSettings.SingleAsync()).Zone = "SE2";
             if (change == "dhw-cycle-created") db.DhwCycles.Add(new DhwCycle
@@ -355,7 +361,8 @@ public sealed class JointPlanModelConsumptionTests
         await using var fixture = await Fixture.CreateAsync();
         await fixture.ChangeAsync(async db => (await db.ThermalModelVersions.FirstAsync(x => x.ModelType == "2R2C")).IsActive = false);
         await Assert.ThrowsAnyAsync<InvalidOperationException>(() => fixture.ReplanAsync());
-        await fixture.ChangeAsync(db => { db.ThermalModelVersions.Add(ThermalModelEvidenceTests.ValidModel("2R2C", DateTimeOffset.UtcNow)); return Task.CompletedTask; });
+        await fixture.ChangeAsync(async db =>
+            await ThermalCurrentModelTestData.AddVersionAsync(db, "account-a", "2R2C", DateTimeOffset.UtcNow));
 
         await fixture.ReplanAsync();
 
@@ -442,7 +449,7 @@ public sealed class JointPlanModelConsumptionTests
         internal static async Task<Fixture> CreateAsync()
         {
             var fixture = new Fixture();
-            await fixture.ChangeAsync(db =>
+            await fixture.ChangeAsync(async db =>
             {
                 var now = DateTimeOffset.UtcNow;
                 var forecast = Enumerable.Range(0, 51).Select(hour =>
@@ -482,7 +489,6 @@ public sealed class JointPlanModelConsumptionTests
                     EntityId = role == ThermalEntityRoles.WeatherForecast
                         ? "weather.home" : $"sensor.{role}"
                 }));
-                db.ThermalModelVersions.AddRange(ThermalModelEvidenceTests.ValidModel("2R2C", now), ThermalModelEvidenceTests.ValidModel("COP", now));
                 db.ThermalTelemetrySamples.Add(new ThermalTelemetrySample
                 {
                     UserId = "account-a",
@@ -511,7 +517,7 @@ public sealed class JointPlanModelConsumptionTests
                     TodayPricesJson = JsonSerializer.Serialize(pricePoints[..96]),
                     TomorrowPricesJson = JsonSerializer.Serialize(pricePoints[96..])
                 });
-                return Task.CompletedTask;
+                await ThermalCurrentModelTestData.SeedAsync(db, "account-a", now, "2R2C", "COP");
             });
             return fixture;
         }

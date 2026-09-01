@@ -44,12 +44,12 @@ export default function ThermalModelPage() {
         <Alert severity={evidence.passed ? 'success' : 'warning'} icon={evidence.passed ? <FactCheckOutlinedIcon /> : undefined}>
           <Typography fontWeight={700}>{evidence.passed ? 'Husmodell: validerad' : 'Husmodell: ej verifierad'}</Typography>
           {thermal ? evidence.reason : 'Ingen modellversion finns ännu. Samla giltiga mätdata och låt den nattliga träningen utvärdera underlaget.'}
-          {thermal && <Typography variant="body2" mt={.75}>{sourceSummary(thermal, evidence.sourceVerified)}</Typography>}
+          {thermal && <Typography variant="body2" mt={.75}>{sourceSummary(thermal, evidence.sourceStatus)}</Typography>}
         </Alert>
         <Alert severity={copEvidence.passed ? 'success' : 'warning'}>
           <Typography fontWeight={700}>{copEvidence.passed ? 'COP-modell: validerad' : 'COP-modell: ej verifierad'}</Typography>
           {cop ? copEvidence.reason : 'Ingen separat COP-modell finns ännu. Verifiera effektmätningen och samla kompressordata utan elpatron.'}
-          {cop && <Typography variant="body2" mt={.75}>{sourceSummary(cop, copEvidence.sourceVerified)}</Typography>}
+          {cop && <Typography variant="body2" mt={.75}>{sourceSummary(cop, copEvidence.sourceStatus)}</Typography>}
         </Alert>
       </>}
       {(history.isError || config.isError) && <Alert severity="warning">COP-underlaget eller effektmätningens inställningar kunde inte hämtas. Ingen observerad COP kan verifieras just nu.</Alert>}
@@ -96,7 +96,7 @@ export default function ThermalModelPage() {
             </Stack>
             <Typography variant="body2" color="text.secondary">{date(model.trainingFromUtc)} – {date(model.trainingToUtc)}</Typography>
             <Typography variant="body2" color={assessment.sourceVerified ? 'text.secondary' : 'warning.main'}>
-              {assessment.sourceVerified ? `Spårbart källurval · ${integer(model.provenance!.observationCount!)} mätpunkter` : 'Källbevis saknas · modellen måste tränas om'}
+              {sourceListLabel(model, assessment.sourceStatus)}
             </Typography>
             <Typography variant="body2">{assessment.reason}</Typography>
           </Stack>; })}
@@ -111,10 +111,17 @@ function decimal(value: number, digits = 2) { return value.toLocaleString('sv-SE
 function integer(value: number) { return value.toLocaleString('sv-SE', { maximumFractionDigits: 0 }); }
 function temperature(value: number | null) { return value == null ? '–' : decimal(value) + ' °C'; }
 function date(value: string) { return Number.isFinite(Date.parse(value)) ? formatDateTime(value) : 'Okänd tid'; }
-function sourceSummary(model: ThermalModelVersion, verified: boolean) {
-  return verified
-    ? `Träningsunderlag: spårbart · ${integer(model.provenance!.observationCount!)} valda mätpunkter.`
-    : 'Träningsunderlag: saknar verifierbart källbevis. En ny nattlig träning krävs.';
+function sourceSummary(model: ThermalModelVersion, status: string) {
+  if (status === 'current') return `Träningsunderlag: omverifierat mot ${integer(model.provenance!.observationCount!)} valda mätpunkter.`;
+  if (status === 'changed') return 'Träningsunderlag: historik eller inställningar har ändrats sedan träningen. Träna en ny modellversion.';
+  if (status === 'unverified') return 'Träningsunderlag: har inte kunnat omverifieras nyligen. Hämta underlaget igen.';
+  return 'Träningsunderlag: saknar verifierbart källbevis. En ny nattlig träning krävs.';
+}
+function sourceListLabel(model: ThermalModelVersion, status: string) {
+  if (status === 'current') return `Omverifierat källurval · ${integer(model.provenance!.observationCount!)} mätpunkter`;
+  if (status === 'changed') return 'Källunderlaget har ändrats · träna om modellen';
+  if (status === 'unverified') return 'Källunderlaget är inte omverifierat';
+  return 'Källbevis saknas · modellen måste tränas om';
 }
 function SourceDetails({ model, verified }: { model: ThermalModelVersion | undefined; verified: boolean }) {
   if (!model?.provenance || !verified) return null;

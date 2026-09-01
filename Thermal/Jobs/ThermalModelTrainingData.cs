@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using Prisstyrning.Data.Entities;
 using Prisstyrning.Thermal.Data;
 using Prisstyrning.Thermal.Domain;
@@ -8,6 +9,77 @@ namespace Prisstyrning.Thermal.Jobs;
 
 internal static class ThermalModelTrainingData
 {
+    internal static IQueryable<ThermalTelemetrySample> ThermalCandidates(
+        IQueryable<ThermalTelemetrySample> samples,
+        string userId,
+        DateTimeOffset fromUtc,
+        DateTimeOffset toUtc) => samples.Where(ThermalCandidate(userId, fromUtc, toUtc));
+
+    internal static IQueryable<ThermalTelemetrySample> CopCandidates(
+        IQueryable<ThermalTelemetrySample> samples,
+        string userId,
+        DateTimeOffset fromUtc,
+        DateTimeOffset toUtc) => samples.Where(CopCandidate(userId, fromUtc, toUtc));
+
+    internal static (ThermalTelemetrySample Sample, ThermalObservation Observation)[] SelectThermal(
+        IEnumerable<ThermalTelemetrySample> samples,
+        string userId,
+        DateTimeOffset selectionFromUtc,
+        DateTimeOffset selectionToUtc,
+        IReadOnlyCollection<ThermalRoomConfig> rooms,
+        IReadOnlyCollection<ThermalEntityConfig> entities) => samples
+        .Where(ThermalCandidate(userId, selectionFromUtc, selectionToUtc).Compile())
+        .GroupBy(x => x.TimestampUtc)
+        .Where(x => x.Count() == 1)
+        .Select(group =>
+        {
+            var sample = group.Single();
+            return (Sample: sample, Observation: Thermal(sample, rooms, entities, selectionToUtc));
+        })
+        .Where(x => x.Observation is not null)
+        .Select(x => (x.Sample, x.Observation!))
+        .OrderBy(x => x.Sample.TimestampUtc)
+        .ThenBy(x => x.Sample.Id)
+        .ToArray();
+
+    internal static (ThermalTelemetrySample Sample, CopObservation Observation)[] SelectCop(
+        IEnumerable<ThermalTelemetrySample> samples,
+        string userId,
+        DateTimeOffset selectionFromUtc,
+        DateTimeOffset selectionToUtc,
+        IReadOnlyCollection<ThermalEntityConfig> entities) => samples
+        .Where(CopCandidate(userId, selectionFromUtc, selectionToUtc).Compile())
+        .GroupBy(x => x.TimestampUtc)
+        .Where(x => x.Count() == 1)
+        .Select(group =>
+        {
+            var sample = group.Single();
+            return (Sample: sample, Observation: Cop(sample, entities, selectionToUtc));
+        })
+        .Where(x => x.Observation is not null)
+        .Select(x => (x.Sample, x.Observation!))
+        .OrderBy(x => x.Sample.TimestampUtc)
+        .ThenBy(x => x.Sample.Id)
+        .ToArray();
+
+    private static Expression<Func<ThermalTelemetrySample, bool>> ThermalCandidate(
+        string userId,
+        DateTimeOffset fromUtc,
+        DateTimeOffset toUtc) => x =>
+        x.UserId == userId && x.TimestampUtc >= fromUtc && x.TimestampUtc <= toUtc &&
+        x.DhwActive != null && x.DefrostActive == false &&
+        x.OutsideTemperatureC != null && x.HeatOutputKw != null;
+
+    private static Expression<Func<ThermalTelemetrySample, bool>> CopCandidate(
+        string userId,
+        DateTimeOffset fromUtc,
+        DateTimeOffset toUtc) => x =>
+        x.UserId == userId && x.TimestampUtc >= fromUtc && x.TimestampUtc <= toUtc &&
+        x.BackupHeaterActive == false && x.DefrostActive == false &&
+        x.BrineInC != null && x.LeavingWaterTemperatureC != null &&
+        x.HeatOutputKw != null && x.Cop != null && x.Cop >= 1.2 && x.Cop <= 8 &&
+        x.HeatOutputKw > 0.5;
+
     internal static ThermalObservation? Thermal(
         ThermalTelemetrySample sample, IReadOnlyCollection<ThermalRoomConfig> rooms,
         IReadOnlyCollection<ThermalEntityConfig> entities, DateTimeOffset now)

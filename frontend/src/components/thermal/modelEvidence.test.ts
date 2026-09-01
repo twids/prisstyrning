@@ -8,6 +8,7 @@ export const validModel: ThermalModelVersion = {
   trainingFromUtc: '2026-08-01T00:00:00Z', trainingToUtc: '2026-08-30T00:00:00Z', parametersJson: '{}', metricsJson: '{}',
   provenance: { verifiable: true, algorithmVersion: 'grey-box-2r2c-v1', selectionVersion: 'thermal-validated-history-v1',
     selectionFromUtc: '2026-07-01T00:00:00Z', selectionToUtc: '2026-08-30T00:00:00Z', observationCount: 2000, trainingSamples: 1600, validationSamples: 400 },
+  sourceValidation: { passed: true, status: 'Current', reason: 'Exakt historiskt urval matchar.', checkedAtUtc: new Date(now).toISOString() },
   validation: { passed: true, status: 'Validated', reason: 'Hela prognosfönster klarar kraven.', checkedAtUtc: new Date(now).toISOString(),
     twoHourMaeC: .1, dayMaeC: .2, copMae: null, twoHourValidationWindows: 126, dayValidationWindows: 4 },
 };
@@ -40,6 +41,15 @@ describe('modelEvidence', () => {
     if (fault === 'bad-count') model.provenance!.trainingSamples = 2001;
     if (fault === 'bad-window') model.provenance!.selectionToUtc = '2026-08-01T00:00:00Z';
     expect(modelEvidence(model, now)).toMatchObject({ passed: false, scored: false, sourceVerified: false });
+  });
+  it.each(['absent', 'changed', 'expired', 'future'])('rejects %s source revalidation even when stored provenance is structurally valid', fault => {
+    const model = structuredClone(validModel);
+    if (fault === 'absent') delete model.sourceValidation;
+    if (fault === 'changed') model.sourceValidation = { ...model.sourceValidation!, passed: false, status: 'Changed', reason: 'Historiken har ändrats.' };
+    if (fault === 'expired') model.sourceValidation!.checkedAtUtc = new Date(now - 301_000).toISOString();
+    if (fault === 'future') model.sourceValidation!.checkedAtUtc = new Date(now + 1).toISOString();
+    expect(modelEvidence(model, now)).toMatchObject({ passed: false, scored: false, sourceVerified: false,
+      sourceStatus: fault === 'changed' ? 'changed' : 'unverified' });
   });
   it('does not treat JSON null or arrays as safe parameter records', () => {
     expect(parseRecord('null')).toEqual({});

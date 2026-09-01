@@ -70,7 +70,7 @@ public sealed class ThermalPlanConsumptionTests
             if (fault == "bad-room-json") plan.Steps[0].ExpectedRoomsJson = "{}";
             if (fault == "bad-reason-json") plan.Steps[0].DecisionReasonJson = "{}";
             if (fault == "bad-confidence") plan.Steps[0].Confidence = 2;
-            if (fault == "changed-telemetry") (await db.ThermalTelemetrySamples.SingleAsync()).HeatPumpPowerKw += .1;
+            if (fault == "changed-telemetry") (await ThermalCurrentModelTestData.LatestTelemetryAsync(db)).HeatPumpPowerKw += .1;
             if (fault == "changed-price") (await db.PriceSnapshots.SingleAsync()).SavedAtUtc = DateTimeOffset.UtcNow.AddSeconds(1);
             if (fault == "changed-zone") (await db.UserSettings.SingleAsync()).Zone = "SE2";
             if (fault == "changed-dhw-cycle") (await db.DhwCycles.SingleAsync()).PredictedCost += .25m;
@@ -118,7 +118,7 @@ public sealed class ThermalPlanConsumptionTests
             if (change == "status") (await db.ThermalPlans.SingleAsync()).Status = "Rejected";
             if (change == "step") (await db.ThermalPlanSteps.OrderBy(x => x.StartUtc).FirstAsync()).DesiredLwtDeviationC = .5;
             if (change == "settings") (await db.ThermalSiteConfigs.SingleAsync()).LowerComfortBandC += .1;
-            if (change == "telemetry") (await db.ThermalTelemetrySamples.SingleAsync()).PropertyPowerKw += .1;
+            if (change == "telemetry") (await ThermalCurrentModelTestData.LatestTelemetryAsync(db)).PropertyPowerKw += .1;
             if (change == "price") (await db.PriceSnapshots.SingleAsync()).TomorrowPricesJson = "[]";
             if (change == "dhw-cycle") (await db.DhwCycles.SingleAsync()).ReservedDurationMinutes += 5;
             if (change == "dhw-profile") AddCompletedProfileCycle(db);
@@ -166,7 +166,7 @@ public sealed class ThermalPlanConsumptionTests
         {
             var site = await db.ThermalSiteConfigs.SingleAsync();
             site.ControlMode = "LwtActive";
-            site.UpdatedAtUtc = (await db.ThermalTelemetrySamples.SingleAsync()).TimestampUtc.AddSeconds(-1);
+            site.UpdatedAtUtc = (await ThermalCurrentModelTestData.LatestTelemetryAsync(db)).TimestampUtc.AddSeconds(-1);
         });
         await fixture.ReplanAsync();
         return fixture;

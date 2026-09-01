@@ -20,8 +20,8 @@ Ingen migration kördes mot någon databas och ingen app eller worker startades.
 
 ## UX/UI
 
-- Modellens vanliga statuskort säger på svenska om träningsunderlaget är spårbart och visar antal valda mätpunkter.
-- Versionslistan skiljer `Spårbart källurval` från `Källbevis saknas · modellen måste tränas om`.
+- Modellens vanliga statuskort säger på svenska om träningsunderlaget har omverifierats och visar antal valda mätpunkter.
+- Versionslistan skiljer omverifierat, ändrat, ännu inte omverifierat och saknat källunderlag. Den automatiska uppföljningen beskrivs i [källomvalideringsrapporten](2026-09-01-thermal-model-source-revalidation.md).
 - Logisk algoritmversion, urvalsregel, källperiod och delmängdsantal ligger bakom **Avancerat**, medan den primära vyn använder vardagsspråk.
 - Saknat källbevis tar bort grönt modellgodkännande även om en äldre aktivmarkering eller cache säger annat.
 - Desktop- och 320-pixels mobilbilder granskades efter testkörningen. Status, källantal och Avancerat-information är läsbara utan sidscroll. Browserns Shadow-status är syntetisk testdata, inte produktionens driftläge.
@@ -46,7 +46,7 @@ EF-verktyget 10.0.2 varnade för att det är äldre än runtime 10.0.11 men gene
 
 ## Kvarvarande gränser
 
-- Det lagrade beviset är ett reproducerbart kryptografiskt åtagande till träningsögonblickets urval. Historiska rader återhashas inte automatiskt vid varje planläsning. Om administrativ redigering av råhistorik ska stödjas behövs en separat kontoägd revisions-/omvalideringstjänst.
+- Det lagrade beviset är ett reproducerbart kryptografiskt åtagande till träningsögonblickets urval. En senare lokal leverans återhashar nu exakta kontoägda historikrader automatiskt vid planering, readiness och modell-API. Driftlik PostgreSQL-prestanda och samtidiga konflikter återstår att verifiera.
 - Algoritmversionerna är explicita kodkontrakt, inte signerade container- eller commit-digests. Varje semantisk träningsändring måste höja rätt algoritm- eller urvalsversion; en framtida build-digestbindning kan ge starkare leveranskedjebevis.
 - InMemory- och migrationsdrifttester bevisar inte verkliga PostgreSQL-konflikter, lås eller driftmigrationstid. Dessa ska provas i en isolerad driftlik PostgreSQL före nästa release.
 - Verklig kontoägd HA-konfiguration, representativ historik, Shadow-dygn, grundkurva, komfort, DHW-/hygiencykler och normaliserad kostnadsjämförelse återstår. Denna leverans är kodverifiering, inte godkännande av LWT eller FullActive.

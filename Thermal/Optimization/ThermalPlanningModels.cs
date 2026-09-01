@@ -36,16 +36,34 @@ internal sealed record ThermalPlanningModels(
         var active = await db.ThermalModelVersions.AsNoTracking()
             .Where(x => x.UserId == userId && x.IsActive && (x.ModelType == "2R2C" || x.ModelType == "COP"))
             .OrderByDescending(x => x.CreatedAtUtc).ThenByDescending(x => x.Id).ToListAsync(cancellationToken);
-        var thermal = RequireModel(active.FirstOrDefault(x => x.ModelType == "2R2C"), "Husmodellen", now);
-        var cop = RequireModel(active.FirstOrDefault(x => x.ModelType == "COP"), "COP-modellen", now);
+        var thermalCandidate = active.FirstOrDefault(x => x.ModelType == "2R2C");
+        var copCandidate = active.FirstOrDefault(x => x.ModelType == "COP");
         var rooms = await db.ThermalRoomConfigs.AsNoTracking().Where(x => x.UserId == userId).OrderBy(x => x.Id).ToListAsync(cancellationToken);
         var entities = await db.ThermalEntityConfigs.AsNoTracking().Where(x => x.UserId == userId).OrderBy(x => x.Id).ToListAsync(cancellationToken);
+        var selectedModels = new[] { thermalCandidate, copCandidate }.Where(x => x is not null).Select(x => x!).ToArray();
+        var sourceValidations = await ThermalModelProvenance.VerifyCurrentAsync(
+            db,
+            userId,
+            selectedModels,
+            rooms.Where(x => x.Enabled).ToArray(),
+            entities.Where(x => x.Enabled).ToArray(),
+            site.HeatPumpPowerSignVerified,
+            now,
+            cancellationToken);
+        var thermal = RequireModel(thermalCandidate, SourceFor(thermalCandidate, sourceValidations), "Husmodellen", now);
+        var cop = RequireModel(copCandidate, SourceFor(copCandidate, sourceValidations), "COP-modellen", now);
         // Never serialize credentials, URLs or connection objects into the evidence.
         var connection = await db.HomeAssistantConnections.AsNoTracking().Where(x => x.UserId == userId)
             .Select(x => new { x.UpdatedAtUtc, x.TelemetryEnabled, x.ControlEnabled }).SingleOrDefaultAsync(cancellationToken);
         var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
         {
-            userId, site, rooms, entities, connection, thermal, cop
+            userId,
+            site,
+            rooms,
+            entities,
+            connection,
+            thermal,
+            cop
         }, JsonSerializerOptions.Web))));
         var evidence = new ThermalPlanningModelEvidence(thermal.Id, cop.Id, site.ControlMode, telemetryTimestampUtc, fingerprint);
         try
@@ -84,12 +102,21 @@ internal sealed record ThermalPlanningModels(
         return current;
     }
 
-    private static ThermalModelVersion RequireModel(ThermalModelVersion? model, string label, DateTimeOffset now)
+    private static ThermalModelVersion RequireModel(
+        ThermalModelVersion? model,
+        ThermalModelSourceValidation? source,
+        string label,
+        DateTimeOffset now)
     {
-        var assessment = ThermalModelEvidence.Assess(model, now);
+        var assessment = ThermalModelEvidence.AssessCurrent(model, source, now);
         if (!assessment.Passed) throw new ThermalPlanningEvidenceException($"{label}: {assessment.Reason}");
         return model!;
     }
+
+    private static ThermalModelSourceValidation? SourceFor(
+        ThermalModelVersion? model,
+        IReadOnlyDictionary<long, ThermalModelSourceValidation> validations) =>
+        model is not null && validations.TryGetValue(model.Id, out var source) ? source : null;
 }
 
 internal sealed class ThermalPlanningEvidenceException(string message) : InvalidOperationException(message);

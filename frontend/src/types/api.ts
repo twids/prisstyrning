@@ -382,6 +382,7 @@ export interface ThermalModelVersion {
   parametersJson: string;
   metricsJson: string;
   provenance?: ThermalModelProvenance;
+  sourceValidation?: ThermalModelSourceValidation;
   validation?: ThermalModelValidation;
 }
 
@@ -398,7 +399,7 @@ export interface ThermalModelProvenance {
 
 export interface ThermalModelValidation {
   passed: boolean;
-  status: 'Missing' | 'Invalid' | 'Unproven' | 'Insufficient' | 'Validated' | 'ThresholdExceeded';
+  status: 'Missing' | 'Invalid' | 'Unproven' | 'Insufficient' | 'Validated' | 'ThresholdExceeded' | 'SourceChanged';
   reason: string;
   checkedAtUtc: string;
   twoHourMaeC: number | null;
@@ -406,6 +407,13 @@ export interface ThermalModelValidation {
   copMae: number | null;
   twoHourValidationWindows: number | null;
   dayValidationWindows: number | null;
+}
+
+export interface ThermalModelSourceValidation {
+  passed: boolean;
+  status: 'Current' | 'Changed' | 'Invalid' | 'Unproven';
+  reason: string;
+  checkedAtUtc: string;
 }
 
 export interface HomeAssistantStatus {

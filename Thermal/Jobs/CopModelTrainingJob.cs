@@ -34,23 +34,12 @@ public sealed class CopModelTrainingJob
         var now = DateTimeOffset.UtcNow;
         var from = now.AddDays(-60);
         var entities = await _db.ThermalEntityConfigs.AsNoTracking().Where(x => x.UserId == userId && x.Enabled).ToListAsync(cancellationToken);
-        var samples = await _db.ThermalTelemetrySamples.AsNoTracking()
-            .Where(x => x.UserId == userId && x.TimestampUtc >= from && x.TimestampUtc <= now && x.BackupHeaterActive == false && x.DefrostActive == false &&
-                        x.BrineInC != null && x.LeavingWaterTemperatureC != null &&
-                        x.HeatOutputKw != null && x.Cop != null && x.Cop >= 1.2 && x.Cop <= 8 &&
-                        x.HeatOutputKw > 0.5)
+        var samples = await ThermalModelTrainingData.CopCandidates(
+                _db.ThermalTelemetrySamples.AsNoTracking(), userId, from, now)
             .OrderBy(x => x.TimestampUtc)
             .ToListAsync(cancellationToken);
-        var selected = samples.GroupBy(x => x.TimestampUtc).Where(x => x.Count() == 1)
-            .Select(group =>
-            {
-                var sample = group.Single();
-                return (Sample: sample, Observation: ThermalModelTrainingData.Cop(sample, entities, now));
-            })
-            .Where(x => x.Observation is not null)
-            .OrderBy(x => x.Sample.TimestampUtc)
-            .ToArray();
-        var observations = selected.Select(x => x.Observation!).ToArray();
+        var selected = ThermalModelTrainingData.SelectCop(samples, userId, from, now, entities);
+        var observations = selected.Select(x => x.Observation).ToArray();
         if (observations.Length < 500) return;
 
         var result = _model.Train(observations);

@@ -118,6 +118,31 @@ public sealed class ThermalModelEvidenceTests
         Assert.Contains("Träna", result.Reason, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("missing", "Unproven")]
+    [InlineData("stale", "Unproven")]
+    [InlineData("future", "Unproven")]
+    [InlineData("changed", "SourceChanged")]
+    [InlineData("contradictory", "Unproven")]
+    public void AssessCurrent_RequiresFreshConsistentSuccessfulSourceRevalidation(
+        string fault,
+        string expectedStatus)
+    {
+        var model = ValidModel("2R2C", Now);
+        ThermalModelSourceValidation? source = new(true, "Current", "Exakt underlag matchar.", Now);
+        if (fault == "missing") source = null;
+        if (fault == "stale") source = source! with { CheckedAtUtc = Now.AddMinutes(-6) };
+        if (fault == "future") source = source! with { CheckedAtUtc = Now.AddSeconds(1) };
+        if (fault == "changed") source = new(false, "Changed", "Historiken har ändrats.", Now);
+        if (fault == "contradictory") source = source! with { Status = "Changed" };
+
+        var result = ThermalModelEvidence.AssessCurrent(model, source, Now);
+
+        Assert.False(result.Passed);
+        Assert.Equal(expectedStatus, result.Status);
+        Assert.NotEmpty(result.Reason);
+    }
+
     internal static ThermalModelVersion ValidModel(string type, DateTimeOffset now)
     {
         var training = type == "COP" ? 480 : 1600;

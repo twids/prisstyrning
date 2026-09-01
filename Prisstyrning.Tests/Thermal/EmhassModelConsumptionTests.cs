@@ -102,7 +102,7 @@ public sealed class EmhassModelConsumptionTests
             if (change == "settings") (await db.ThermalSiteConfigs.SingleAsync()).LowerComfortBandC = .2;
             if (change == "entity") db.ThermalEntityConfigs.Add(new ThermalEntityConfig { UserId = "account-a", EntityId = "sensor.new_outside", Role = "outside_temperature" });
             if (change == "rollback") (await db.ThermalSiteConfigs.SingleAsync()).ControlMode = "Legacy";
-            if (change == "telemetry") (await db.ThermalTelemetrySamples.SingleAsync()).PropertyPowerKw += .1;
+            if (change == "telemetry") (await ThermalCurrentModelTestData.LatestTelemetryAsync(db)).PropertyPowerKw += .1;
             if (change == "price") (await db.PriceSnapshots.SingleAsync()).TomorrowPricesJson = "[]";
             if (change == "zone") (await db.UserSettings.SingleAsync()).Zone = "SE2";
             if (change == "dhw-cycle") (await db.DhwCycles.SingleAsync()).EstimatedCompletionUtc = DateTimeOffset.UtcNow.AddHours(2);

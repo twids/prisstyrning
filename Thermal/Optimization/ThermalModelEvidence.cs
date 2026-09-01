@@ -13,6 +13,23 @@ public sealed record ThermalModelValidation(
 /// <summary>Read-only evidence assessment shared by readiness, training and the model UI.</summary>
 internal static class ThermalModelEvidence
 {
+    internal static ThermalModelValidation AssessCurrent(
+        ThermalModelVersion? model,
+        ThermalModelSourceValidation? source,
+        DateTimeOffset now)
+    {
+        var assessment = Assess(model, now);
+        if (!assessment.Passed) return assessment;
+        if (source is null || source.CheckedAtUtc == default || source.CheckedAtUtc > now ||
+            now - source.CheckedAtUtc > TimeSpan.FromMinutes(5))
+            return new(false, "Unproven", "Modellens historiska källunderlag har inte omvaliderats nyligen. Hämta underlaget igen eller träna om modellen.", now);
+        if (source.Passed && source.Status == "Current") return assessment;
+        var reason = string.IsNullOrWhiteSpace(source.Reason)
+            ? "Modellens historiska källunderlag kan inte verifieras. Hämta underlaget igen eller träna om modellen."
+            : source.Reason;
+        return new(false, !source.Passed && source.Status == "Changed" ? "SourceChanged" : "Unproven", reason, now);
+    }
+
     internal static ThermalModelValidation Assess(ThermalModelVersion? model, DateTimeOffset now)
     {
         ThermalModelValidation Block(string status, string reason) => new(false, status, reason, now);

@@ -56,13 +56,44 @@ public sealed class ThermalReadinessEvidenceTests
     {
         await using var fixture = new Fixture();
         fixture.Db.ThermalSiteConfigs.Local.Single().HeatPumpPowerSignVerified = verified;
-        if (verified) fixture.Db.ThermalModelVersions.Add(ThermalModelEvidenceTests.ValidModel("COP", fixture.Now));
+        if (verified)
+        {
+            fixture.Db.ThermalEntityConfigs.AddRange(ThermalModelTrainingDataTests.Entities.Select(entity => new ThermalEntityConfig
+            {
+                UserId = "account-a",
+                Role = entity.Role,
+                EntityId = entity.EntityId
+            }));
+            await ThermalCurrentModelTestData.SeedAsync(fixture.Db, "account-a", fixture.Now, "COP");
+        }
         await fixture.Db.SaveChangesAsync();
 
         var checks = await fixture.EvaluateAsync(target);
 
         Assert.Equal(verified, checks.Single(x => x.Key == "power-sign").Passed);
         Assert.Equal(verified, checks.Single(x => x.Key == "cop-model").Passed);
+        await fixture.AssertLegacyAsync();
+    }
+
+    [Fact]
+    public async Task Readiness_ChangedHistoricalModelSourceBlocksActivationWithoutChangingLegacy()
+    {
+        await using var fixture = new Fixture();
+        fixture.Db.ThermalEntityConfigs.AddRange(ThermalModelTrainingDataTests.Entities.Select(entity => new ThermalEntityConfig
+        {
+            UserId = "account-a",
+            Role = entity.Role,
+            EntityId = entity.EntityId
+        }));
+        await ThermalCurrentModelTestData.SeedAsync(fixture.Db, "account-a", fixture.Now, "2R2C");
+        (await fixture.Db.ThermalTelemetrySamples.OrderBy(x => x.TimestampUtc).FirstAsync()).RoomTemperaturesJson =
+            "{\"sensor.room\":21.6}";
+        await fixture.Db.SaveChangesAsync();
+
+        var modelCheck = (await fixture.EvaluateAsync(ControlMode.LwtActive)).Single(x => x.Key == "model");
+
+        Assert.False(modelCheck.Passed);
+        Assert.Contains("Träna", modelCheck.Action, StringComparison.OrdinalIgnoreCase);
         await fixture.AssertLegacyAsync();
     }
 

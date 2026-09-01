@@ -106,6 +106,22 @@ public sealed class ThermalReadinessService
                 .Where(x => x.UserId == userId && x.ModelType == "2R2C" && x.IsActive)
                 .OrderByDescending(x => x.CreatedAtUtc).ThenByDescending(x => x.Id)
                 .FirstOrDefaultAsync(cancellationToken);
+            var activeCopModel = await _db.ThermalModelVersions.AsNoTracking()
+                .Where(x => x.UserId == userId && x.ModelType == "COP" && x.IsActive)
+                .OrderByDescending(x => x.CreatedAtUtc).ThenByDescending(x => x.Id)
+                .FirstOrDefaultAsync(cancellationToken);
+            var activeModels = new[] { activeModel, activeCopModel }.Where(x => x is not null).Select(x => x!).ToArray();
+            var modelSources = await ThermalModelProvenance.VerifyCurrentAsync(
+                _db,
+                userId,
+                activeModels,
+                rooms,
+                entities,
+                site?.HeatPumpPowerSignVerified == true,
+                now,
+                cancellationToken);
+            modelSources.TryGetValue(activeModel?.Id ?? 0, out var activeModelSource);
+            modelSources.TryGetValue(activeCopModel?.Id ?? 0, out var activeCopModelSource);
             checks.Add(Check("shadow-duration", "Shadow har körts i minst 21 dagar", shadowStartedUtc is { } shadowStart && now - shadowStart >= TimeSpan.FromDays(21), "Låt Shadow fortsätta tills 21 hela dygn har samlats."));
             checks.Add(Check("single-active-installation", "Ingen annan installation äger aktiv LWT-styrning", !anotherActiveInstallation, "Återställ den andra installationen till Legacy eller Shadow innan LWT aktiveras."));
             checks.Add(Check("telemetry-coverage", "Minst 98 % av femminuterstelemetrin är komplett under 21 dagar", telemetryCoverage >= 0.98, $"Aktuell komplett täckning är {telemetryCoverage:P1}; åtgärda luckor eller ogiltiga kritiska sensorer."));
@@ -115,13 +131,9 @@ public sealed class ThermalReadinessService
             checks.Add(Check("shadow-plans", "Shadowplaneringen har minst 98 % täckning och p95 under 15 sekunder", planCoverage >= 0.98 && p95SolverMs is <= 15_000, $"Plantäckning {planCoverage:P1}, p95 {(p95SolverMs is null ? "saknas" : $"{p95SolverMs / 1000d:0.0} s")}."));
             checks.Add(Check("shadow-comfort", "Inga simulerade kritiska komfortbrott finns under shadowperioden", !simulatedComfortBreach, "Granska planerna, komfortbandet och modellen innan aktivering."));
             checks.Add(Check("weather-curve", "Grundkurvan är verifierad med uppmätt avvikelse noll", site?.WeatherCurveVerified == true && heating.ZeroDeviationDays >= 7, $"{heating.ZeroDeviationDays}/7 verifierade uppvärmningsdygn med giltig nollavvikelse och bibehållen kritisk rumskomfort. Mappa avvikelsens återkoppling, samla data och bekräfta grundkurvan manuellt."));
-            var modelEvidence = ThermalModelEvidence.Assess(activeModel, now);
+            var modelEvidence = ThermalModelEvidence.AssessCurrent(activeModel, activeModelSource, now);
             checks.Add(Check("model", "En validerad 2R2C-modell är aktiv", modelEvidence.Passed, modelEvidence.Reason));
-            var activeCopModel = await _db.ThermalModelVersions.AsNoTracking()
-                .Where(x => x.UserId == userId && x.ModelType == "COP" && x.IsActive)
-                .OrderByDescending(x => x.CreatedAtUtc).ThenByDescending(x => x.Id)
-                .FirstOrDefaultAsync(cancellationToken);
-            var copEvidence = ThermalModelEvidence.Assess(activeCopModel, now);
+            var copEvidence = ThermalModelEvidence.AssessCurrent(activeCopModel, activeCopModelSource, now);
             checks.Add(Check("power-sign", "Shelly-tecken, CT-riktning och fasmappning är verifierade", site?.HeatPumpPowerSignVerified == true, "Verifiera mätningen under känd kompressordrift före kostnadsoptimering."));
             checks.Add(Check("cop-model", "En separat validerad COP-modell är aktiv", copEvidence.Passed, copEvidence.Reason));
             checks.Add(Check(

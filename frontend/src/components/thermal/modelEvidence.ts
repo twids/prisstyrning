@@ -23,17 +23,29 @@ export function modelEvidence(model: ThermalModelVersion | undefined, now: numbe
   const metricsValid = model?.modelType === '2R2C'
     ? twoHour != null && twoHour >= 0 && day != null && day >= 0 && count(value?.twoHourValidationWindows) && count(value?.dayValidationWindows)
     : model?.modelType === 'COP' && cop != null && cop >= 0;
-  const sourceVerified = validProvenance(model);
+  const provenanceVerified = validProvenance(model);
+  const source = model?.sourceValidation;
+  const sourceChecked = Date.parse(source?.checkedAtUtc ?? '');
+  const sourceCurrent = Number.isFinite(sourceChecked) && sourceChecked <= now && now - sourceChecked <= 5 * 60_000;
+  const sourceVerified = provenanceVerified && sourceCurrent && source?.passed === true && source.status === 'Current';
+  const sourceStatus = !provenanceVerified ? 'missing'
+    : source?.status === 'Changed' ? 'changed'
+      : sourceVerified ? 'current' : 'unverified';
   const scored = current && metricsValid && sourceVerified && (value?.status === 'Validated' || value?.status === 'ThresholdExceeded');
   const passed = scored && value?.passed === true && value.status === 'Validated' &&
     (model?.modelType === '2R2C' ? twoHour! <= .3 && day! <= .6 : cop! <= .5);
-  const knownBlocked = current && ['Missing', 'Invalid', 'Unproven', 'Insufficient', 'ThresholdExceeded'].includes(value?.status ?? '');
-  const reason = !sourceVerified && model
+  const knownBlocked = current && ['Missing', 'Invalid', 'Unproven', 'Insufficient', 'ThresholdExceeded', 'SourceChanged'].includes(value?.status ?? '');
+  const reason = sourceStatus === 'missing' && model
     ? 'Modellens exakta träningsurval eller kodversion kan inte verifieras. Träna om modellen innan den används.'
+    : sourceStatus === 'changed' && typeof source?.reason === 'string' && source.reason
+      ? source.reason
+      : sourceStatus === 'unverified' && model
+        ? 'Modellens historiska källunderlag har inte omverifierats nyligen. Hämta underlaget igen; träna om modellen om kontrollen fortsätter att misslyckas.'
     : (passed || knownBlocked) && typeof value?.reason === 'string' && value.reason
       ? value.reason : 'Valideringsunderlaget saknas, är för gammalt eller kan inte verifieras. Hämta det igen; äldre modeller kan behöva tränas om.';
   return { passed, scored, reason, twoHour: scored ? twoHour : null, day: scored ? day : null, cop: scored ? cop : null,
-    twoHourWindows: scored ? value?.twoHourValidationWindows : null, dayWindows: scored ? value?.dayValidationWindows : null, sourceVerified };
+    twoHourWindows: scored ? value?.twoHourValidationWindows : null, dayWindows: scored ? value?.dayValidationWindows : null,
+    sourceVerified, sourceStatus };
 }
 
 function validProvenance(model: ThermalModelVersion | undefined) {

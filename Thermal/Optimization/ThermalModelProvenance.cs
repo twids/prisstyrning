@@ -1,7 +1,10 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Prisstyrning.Data;
 using Prisstyrning.Data.Entities;
+using Prisstyrning.Thermal.Jobs;
 using static Prisstyrning.Thermal.Data.ThermalEvidenceJson;
 
 namespace Prisstyrning.Thermal.Optimization;
@@ -29,6 +32,12 @@ public sealed record ThermalModelProvenanceSummary(
     int? ObservationCount,
     int? TrainingSamples,
     int? ValidationSamples);
+
+public sealed record ThermalModelSourceValidation(
+    bool Passed,
+    string Status,
+    string Reason,
+    DateTimeOffset CheckedAtUtc);
 
 internal static class ThermalModelProvenance
 {
@@ -139,6 +148,84 @@ internal static class ThermalModelProvenance
                 evidence.ValidationSamples);
     }
 
+    internal static async Task<IReadOnlyDictionary<long, ThermalModelSourceValidation>> VerifyCurrentAsync(
+        PrisstyrningDbContext db,
+        string userId,
+        IReadOnlyCollection<ThermalModelVersion> models,
+        IReadOnlyCollection<ThermalRoomConfig> enabledRooms,
+        IReadOnlyCollection<ThermalEntityConfig> enabledEntities,
+        bool heatPumpPowerSignVerified,
+        DateTimeOffset checkedAtUtc,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(userId)) throw new ArgumentException("An account is required.", nameof(userId));
+        if (models.Select(x => x.Id).Any(x => x <= 0) || models.Select(x => x.Id).Distinct().Count() != models.Count)
+            throw new ArgumentException("Persisted model versions must have unique positive identifiers.", nameof(models));
+
+        var result = new Dictionary<long, ThermalModelSourceValidation>();
+        var candidates = new List<(ThermalModelVersion Model, ThermalModelSourceEvidence Source)>();
+        foreach (var model in models)
+        {
+            if (model.UserId != userId)
+            {
+                result[model.Id] = Block("Invalid", "Modellversionen tillhör inte det verifierade kontot.", checkedAtUtc);
+                continue;
+            }
+            var source = Read(model);
+            if (source is null)
+            {
+                result[model.Id] = Block("Unproven", "Modellen saknar ett läsbart, versionsbundet källbevis. Träna om modellen.", checkedAtUtc);
+                continue;
+            }
+            candidates.Add((model, source));
+        }
+
+        if (candidates.Count == 0) return result;
+        var selectionFromUtc = candidates.Min(x => x.Source.SelectionFromUtc);
+        var selectionToUtc = candidates.Max(x => x.Source.SelectionToUtc);
+        var samples = await db.ThermalTelemetrySamples.AsNoTracking()
+            .Where(x => x.UserId == userId && x.TimestampUtc >= selectionFromUtc && x.TimestampUtc <= selectionToUtc)
+            .OrderBy(x => x.TimestampUtc)
+            .ThenBy(x => x.Id)
+            .ToListAsync(cancellationToken);
+
+        foreach (var (model, source) in candidates)
+        {
+            try
+            {
+                var selectedSamples = model.ModelType switch
+                {
+                    "2R2C" => ThermalModelTrainingData.SelectThermal(
+                        samples, userId, source.SelectionFromUtc, source.SelectionToUtc, enabledRooms, enabledEntities)
+                        .Select(x => x.Sample).ToArray(),
+                    "COP" => ThermalModelTrainingData.SelectCop(
+                        samples, userId, source.SelectionFromUtc, source.SelectionToUtc, enabledEntities)
+                        .Select(x => x.Sample).ToArray(),
+                    _ => []
+                };
+                var current = Create(
+                    userId,
+                    model.ModelType,
+                    source.SelectionFromUtc,
+                    source.SelectionToUtc,
+                    selectedSamples,
+                    enabledRooms,
+                    enabledEntities,
+                    source.TrainingSamples,
+                    source.ValidationSamples,
+                    heatPumpPowerSignVerified);
+                result[model.Id] = current == source
+                    ? new(true, "Current", "Exakt historiskt urval och konfiguration matchar modellens sparade källbevis.", checkedAtUtc)
+                    : Block("Changed", "Historiska mätningar eller konfiguration har ändrats sedan modellen tränades. Träna en ny version.", checkedAtUtc);
+            }
+            catch (ArgumentException)
+            {
+                result[model.Id] = Block("Changed", "Modellens historiska urval kan inte längre återskapas säkert. Kontrollera konfigurationen och träna om modellen.", checkedAtUtc);
+            }
+        }
+        return result;
+    }
+
     private static string SampleFingerprint(
         string userId,
         string modelType,
@@ -238,4 +325,7 @@ internal static class ThermalModelProvenance
     private static bool IsSha256(string? value) =>
         value is { Length: 64 } && value.All(character =>
             character is >= '0' and <= '9' or >= 'A' and <= 'F');
+
+    private static ThermalModelSourceValidation Block(string status, string reason, DateTimeOffset checkedAtUtc) =>
+        new(false, status, reason, checkedAtUtc);
 }

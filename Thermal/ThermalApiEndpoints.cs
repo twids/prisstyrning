@@ -292,24 +292,45 @@ public static class ThermalApiEndpoints
     private static async Task<IResult> GetModelsAsync(
         HttpContext context, PrisstyrningDbContext db, CancellationToken cancellationToken)
     {
+        var userId = UserId(context);
         var models = await db.ThermalModelVersions.AsNoTracking()
-            .Where(x => x.UserId == UserId(context)).OrderByDescending(x => x.CreatedAtUtc)
+            .Where(x => x.UserId == userId).OrderByDescending(x => x.CreatedAtUtc)
             .Take(100).ToListAsync(cancellationToken);
+        var site = await db.ThermalSiteConfigs.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
+        var rooms = await db.ThermalRoomConfigs.AsNoTracking()
+            .Where(x => x.UserId == userId && x.Enabled).OrderBy(x => x.Id).ToListAsync(cancellationToken);
+        var entities = await db.ThermalEntityConfigs.AsNoTracking()
+            .Where(x => x.UserId == userId && x.Enabled).OrderBy(x => x.Id).ToListAsync(cancellationToken);
         var now = DateTimeOffset.UtcNow;
+        var sourceValidations = await ThermalModelProvenance.VerifyCurrentAsync(
+            db,
+            userId,
+            models,
+            rooms,
+            entities,
+            site?.HeatPumpPowerSignVerified == true,
+            now,
+            cancellationToken);
         // Existing fields keep their meaning; this read-only assessment neither
         // edits the stored active marker nor approves a mode transition.
-        return Results.Ok(models.Select(model => new
+        return Results.Ok(models.Select(model =>
         {
-            model.Id,
-            model.ModelType,
-            model.CreatedAtUtc,
-            model.TrainingFromUtc,
-            model.TrainingToUtc,
-            model.IsActive,
-            model.ParametersJson,
-            model.MetricsJson,
-            provenance = ThermalModelProvenance.Summary(model),
-            validation = ThermalModelEvidence.Assess(model, now)
+            sourceValidations.TryGetValue(model.Id, out var sourceValidation);
+            return new
+            {
+                model.Id,
+                model.ModelType,
+                model.CreatedAtUtc,
+                model.TrainingFromUtc,
+                model.TrainingToUtc,
+                model.IsActive,
+                model.ParametersJson,
+                model.MetricsJson,
+                provenance = ThermalModelProvenance.Summary(model),
+                sourceValidation,
+                validation = ThermalModelEvidence.AssessCurrent(model, sourceValidation, now)
+            };
         }));
     }
 
