@@ -36,6 +36,7 @@ public sealed record EmhassOptimizationRequest(
     double CapacityCostPerKw = 0)
 {
     public ThermalPlanningModelEvidence? ModelEvidence { get; init; }
+    public ThermalPlanningInputEvidence? InputEvidence { get; init; }
     public DateTimeOffset? HorizonStartUtc { get; init; }
 }
 

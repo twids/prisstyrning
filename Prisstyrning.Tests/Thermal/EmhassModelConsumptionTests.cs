@@ -14,7 +14,10 @@ public sealed class EmhassModelConsumptionTests
 {
     [Theory]
     [InlineData("missing-evidence")]
+    [InlineData("missing-input-evidence")]
     [InlineData("wrong-fingerprint")]
+    [InlineData("wrong-telemetry-fingerprint")]
+    [InlineData("wrong-price-fingerprint")]
     [InlineData("wrong-account")]
     [InlineData("revoked-model")]
     [InlineData("rollback")]
@@ -26,7 +29,10 @@ public sealed class EmhassModelConsumptionTests
         await fixture.ReplanAsync();
         var request = fixture.Dispatcher.Request!;
         if (fault == "missing-evidence") request = request with { ModelEvidence = null };
+        if (fault == "missing-input-evidence") request = request with { InputEvidence = null };
         if (fault == "wrong-fingerprint") request = request with { ModelEvidence = request.ModelEvidence! with { Fingerprint = "wrong" } };
+        if (fault == "wrong-telemetry-fingerprint") request = request with { InputEvidence = request.InputEvidence! with { TelemetryFingerprint = "wrong" } };
+        if (fault == "wrong-price-fingerprint") request = request with { InputEvidence = request.InputEvidence! with { PriceFingerprint = "wrong" } };
         if (fault == "stale-telemetry") request = request with { ModelEvidence = request.ModelEvidence! with { TelemetryTimestampUtc = DateTimeOffset.UtcNow.AddMinutes(-11) } };
         await fixture.ChangeAsync(async db =>
         {
@@ -48,6 +54,9 @@ public sealed class EmhassModelConsumptionTests
     [InlineData("settings")]
     [InlineData("entity")]
     [InlineData("rollback")]
+    [InlineData("telemetry")]
+    [InlineData("price")]
+    [InlineData("zone")]
     public async Task Worker_DiscardsResultWhenEvidenceChangesDuringSolve(string change)
     {
         await using var fixture = await JointPlanModelConsumptionTests.Fixture.CreateAsync();
@@ -61,6 +70,9 @@ public sealed class EmhassModelConsumptionTests
             if (change == "settings") (await db.ThermalSiteConfigs.SingleAsync()).LowerComfortBandC = .2;
             if (change == "entity") db.ThermalEntityConfigs.Add(new ThermalEntityConfig { UserId = "account-a", EntityId = "sensor.new_outside", Role = "outside_temperature" });
             if (change == "rollback") (await db.ThermalSiteConfigs.SingleAsync()).ControlMode = "Legacy";
+            if (change == "telemetry") (await db.ThermalTelemetrySamples.SingleAsync()).PropertyPowerKw += .1;
+            if (change == "price") (await db.PriceSnapshots.SingleAsync()).TomorrowPricesJson = "[]";
+            if (change == "zone") (await db.UserSettings.SingleAsync()).Zone = "SE2";
         });
 
         await Assert.ThrowsAsync<ThermalPlanningEvidenceException>(() => worker.ProcessClaimAsync(claim, CancellationToken.None));
@@ -78,6 +90,7 @@ public sealed class EmhassModelConsumptionTests
         var request = fixture.Dispatcher.Request!;
         var claim = await EnqueueAsync(queue, request);
         Assert.Equal(request.ModelEvidence, queue.DeserializeRequest(claim).ModelEvidence);
+        Assert.Equal(request.InputEvidence, queue.DeserializeRequest(claim).InputEvidence);
         using var worker = CreateWorker(fixture, queue);
         fixture.Solver.BeforeReturn = () => fixture.ChangeAsync(db =>
         {
@@ -130,7 +143,7 @@ public sealed class EmhassModelConsumptionTests
         Assert.Equal(ThermalOptimizationJobStatuses.Running, job.Status);
         Assert.Null(job.ResultJson);
         Assert.Single(await db.ThermalPlans.ToListAsync()); // Only the fixture's initial shadow plan.
-        Assert.Empty(await db.DhwCycles.ToListAsync());
+        Assert.Single(await db.DhwCycles.ToListAsync()); // Only the fixture's initial shadow DHW proposal.
         Assert.Empty(await db.ThermalControlCommands.ToListAsync());
         Assert.Equal("Legacy", (await db.ThermalSiteConfigs.SingleAsync()).DhwWriter);
     });

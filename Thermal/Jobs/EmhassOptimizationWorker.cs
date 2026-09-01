@@ -95,9 +95,11 @@ public sealed class EmhassOptimizationWorker : BackgroundService
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
         await ThermalPlanningModels.EnsureCurrentAsync(db, claimed.UserId, request.ModelEvidence, DateTimeOffset.UtcNow, cancellationToken);
+        await ThermalPlanningInputs.EnsureCurrentAsync(db, claimed.UserId, request.InputEvidence, DateTimeOffset.UtcNow, cancellationToken);
         var client = scope.ServiceProvider.GetRequiredService<IEmhassClient>();
         var result = await client.OptimizeAsync(request, cancellationToken);
         await ThermalPlanningModels.EnsureCurrentAsync(db, claimed.UserId, request.ModelEvidence, DateTimeOffset.UtcNow, cancellationToken);
+        await ThermalPlanningInputs.EnsureCurrentAsync(db, claimed.UserId, request.InputEvidence, DateTimeOffset.UtcNow, cancellationToken);
         EmhassOptimizationValidation.ValidateResult(request, result, _emhassOptions.OptimizationTimeStepMinutes);
         await _queue.CompleteAsync(claimed, result, cancellationToken);
     }

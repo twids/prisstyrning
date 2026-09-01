@@ -11,6 +11,7 @@ internal sealed record ValidatedThermalPlan(
     ThermalPlan Plan,
     ThermalPlanStep CurrentStep,
     ThermalPlanningModelEvidence ModelEvidence,
+    ThermalPlanningInputEvidence InputEvidence,
     string Fingerprint);
 
 internal static class ThermalPlanConsumption
@@ -36,7 +37,10 @@ internal static class ThermalPlanConsumption
             throw new ThermalPlanningEvidenceException("Den aktuella planen har ogiltig status eller metadata.");
 
         var evidence = ReadEvidence(plan.InputSnapshotJson);
+        var inputEvidence = ReadInputEvidence(plan.InputSnapshotJson);
         var models = await ThermalPlanningModels.EnsureStoredPlanCurrentAsync(db, userId, evidence, now, cancellationToken);
+        await ThermalPlanningInputs.EnsureCurrentAsync(
+            db, userId, inputEvidence, now, cancellationToken, requireFreshTelemetry: false);
         var duration = plan.ValidUntilUtc - plan.ValidFromUtc;
         if (duration.Ticks % StepDuration.Ticks != 0)
             throw new ThermalPlanningEvidenceException("Planens tidsaxel följer inte 15-minutersgränser.");
@@ -50,7 +54,7 @@ internal static class ThermalPlanConsumption
         var current = ordered.Where(x => x.StartUtc <= now && x.EndUtc > now).ToArray();
         if (current.Length != 1)
             throw new ThermalPlanningEvidenceException("Planen saknar ett entydigt aktuellt steg.");
-        return new(plan, current[0], evidence, Fingerprint(userId, plan, ordered));
+        return new(plan, current[0], evidence, inputEvidence, Fingerprint(userId, plan, ordered));
     }
 
     internal static async Task EnsureStillCurrentAsync(
@@ -61,6 +65,8 @@ internal static class ThermalPlanConsumption
         CancellationToken cancellationToken)
     {
         await ThermalPlanningModels.EnsureStoredPlanCurrentAsync(db, userId, validated.ModelEvidence, now, cancellationToken);
+        await ThermalPlanningInputs.EnsureCurrentAsync(
+            db, userId, validated.InputEvidence, now, cancellationToken, requireFreshTelemetry: false);
         var current = await db.ThermalPlans.AsNoTracking().Include(x => x.Steps)
             .SingleOrDefaultAsync(x => x.Id == validated.Plan.Id && x.UserId == userId, cancellationToken);
         var currentSteps = current?.Steps.Where(x => x.StartUtc <= now && x.EndUtc > now).ToArray() ?? [];
@@ -87,6 +93,26 @@ internal static class ThermalPlanConsumption
         catch (JsonException)
         {
             throw new ThermalPlanningEvidenceException("Planens modellunderlag kan inte läsas säkert.");
+        }
+    }
+
+    private static ThermalPlanningInputEvidence ReadInputEvidence(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+                throw new JsonException();
+            var matches = document.RootElement.EnumerateObject()
+                .Where(x => x.Name.Equals("inputEvidence", StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (matches.Length != 1 || matches[0].Value.ValueKind != JsonValueKind.Object)
+                throw new JsonException();
+            return matches[0].Value.Deserialize<ThermalPlanningInputEvidence>(JsonSerializerOptions.Web)
+                   ?? throw new JsonException();
+        }
+        catch (JsonException)
+        {
+            throw new ThermalPlanningEvidenceException("Planens telemetri- och prisunderlag kan inte läsas säkert.");
         }
     }
 

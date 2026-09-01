@@ -151,7 +151,7 @@ public class EmhassClientTests
     }
 
     [Fact]
-    public void RuntimePayload_KeepsAccountModelEvidenceInsideOrchestrator()
+    public void RuntimePayload_KeepsAccountModelAndInputEvidenceInsideOrchestrator()
     {
         using var resultFile = new TemporaryResultFile();
         var client = CreateClient(new StubHandler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK))), resultFile.Path);
@@ -159,6 +159,7 @@ public class EmhassClientTests
         var withEvidence = request with
         {
             ModelEvidence = new(10, 11, "Shadow", DateTimeOffset.UtcNow, "local-fingerprint"),
+            InputEvidence = new(12, DateTimeOffset.UtcNow, "telemetry-fingerprint", 13, "SE3", DateTimeOffset.UtcNow, "price-fingerprint"),
             HorizonStartUtc = DateTimeOffset.UtcNow
         };
 
@@ -167,6 +168,8 @@ public class EmhassClientTests
 
         Assert.Equal(original, actual);
         Assert.DoesNotContain("local-fingerprint", actual);
+        Assert.DoesNotContain("telemetry-fingerprint", actual);
+        Assert.DoesNotContain("price-fingerprint", actual);
     }
 
     [Fact]

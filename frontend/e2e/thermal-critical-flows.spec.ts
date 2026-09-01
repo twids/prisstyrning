@@ -26,6 +26,9 @@ test('översikt leder till en förklarad shadowplan', async ({ page }, testInfo)
   await expect(page.getByText('Shadow – prickad markör')).toBeVisible();
   await expect(page.getByText('Varför just nu?')).toBeVisible();
   await expect(page.getByRole('heading', { name: /EMHASS minimerar kostnaden inom komfortbandet/ })).toBeVisible();
+  await expect(page.getByText('Planens konfidens')).toBeVisible();
+  await expect(page.getByText(/Pris 75 % · väder 50 % verifierad täckning/)).toBeVisible();
+  await expect(page.getByText(/48 uppskattade prissteg och 96 uppskattade vädersteg à 15 minuter/)).toBeVisible();
 });
 
 test('driftlägesguiden blockerar LWT när ett krav saknas', async ({ page }, testInfo) => {

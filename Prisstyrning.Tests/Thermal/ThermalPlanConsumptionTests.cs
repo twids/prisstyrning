@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json.Nodes;
 using Prisstyrning.Data.Entities;
 using Prisstyrning.Thermal.Optimization;
 
@@ -10,6 +11,7 @@ public sealed class ThermalPlanConsumptionTests
     [InlineData("rejected")]
     [InlineData("shadow")]
     [InlineData("missing-evidence")]
+    [InlineData("missing-input-evidence")]
     [InlineData("revoked-model")]
     [InlineData("changed-settings")]
     [InlineData("rollback")]
@@ -22,6 +24,9 @@ public sealed class ThermalPlanConsumptionTests
     [InlineData("bad-room-json")]
     [InlineData("bad-reason-json")]
     [InlineData("bad-confidence")]
+    [InlineData("changed-telemetry")]
+    [InlineData("changed-price")]
+    [InlineData("changed-zone")]
     public async Task ActiveConsumer_RejectsPlanThatIsNotCompleteCurrentAndProven(string fault)
     {
         await using var fixture = await ActiveFixtureAsync();
@@ -31,6 +36,12 @@ public sealed class ThermalPlanConsumptionTests
             if (fault == "rejected") plan.Status = "Rejected";
             if (fault == "shadow") plan.IsShadow = true;
             if (fault == "missing-evidence") plan.InputSnapshotJson = "{}";
+            if (fault == "missing-input-evidence")
+            {
+                var input = JsonNode.Parse(plan.InputSnapshotJson)!.AsObject();
+                input.Remove("inputEvidence");
+                plan.InputSnapshotJson = input.ToJsonString();
+            }
             if (fault == "revoked-model") (await db.ThermalModelVersions.FirstAsync(x => x.ModelType == "COP")).IsActive = false;
             if (fault == "changed-settings") (await db.ThermalSiteConfigs.SingleAsync()).UpperComfortBandC += .1;
             if (fault == "rollback") (await db.ThermalSiteConfigs.SingleAsync()).ControlMode = "Legacy";
@@ -43,6 +54,9 @@ public sealed class ThermalPlanConsumptionTests
             if (fault == "bad-room-json") plan.Steps[0].ExpectedRoomsJson = "{}";
             if (fault == "bad-reason-json") plan.Steps[0].DecisionReasonJson = "{}";
             if (fault == "bad-confidence") plan.Steps[0].Confidence = 2;
+            if (fault == "changed-telemetry") (await db.ThermalTelemetrySamples.SingleAsync()).HeatPumpPowerKw += .1;
+            if (fault == "changed-price") (await db.PriceSnapshots.SingleAsync()).SavedAtUtc = DateTimeOffset.UtcNow.AddSeconds(1);
+            if (fault == "changed-zone") (await db.UserSettings.SingleAsync()).Zone = "SE2";
         });
 
         await Assert.ThrowsAsync<ThermalPlanningEvidenceException>(() => ReadAsync(fixture, DateTimeOffset.UtcNow));
@@ -73,6 +87,8 @@ public sealed class ThermalPlanConsumptionTests
     [InlineData("status")]
     [InlineData("step")]
     [InlineData("settings")]
+    [InlineData("telemetry")]
+    [InlineData("price")]
     public async Task WriteBoundary_RejectsPlanOrConfigurationChangedAfterInitialRead(string change)
     {
         await using var fixture = await ActiveFixtureAsync();
@@ -82,6 +98,8 @@ public sealed class ThermalPlanConsumptionTests
             if (change == "status") (await db.ThermalPlans.SingleAsync()).Status = "Rejected";
             if (change == "step") (await db.ThermalPlanSteps.OrderBy(x => x.StartUtc).FirstAsync()).DesiredLwtDeviationC = .5;
             if (change == "settings") (await db.ThermalSiteConfigs.SingleAsync()).LowerComfortBandC += .1;
+            if (change == "telemetry") (await db.ThermalTelemetrySamples.SingleAsync()).PropertyPowerKw += .1;
+            if (change == "price") (await db.PriceSnapshots.SingleAsync()).TomorrowPricesJson = "[]";
         });
 
         await Assert.ThrowsAsync<ThermalPlanningEvidenceException>(() => EnsureStillCurrentAsync(fixture, validated!));
@@ -122,7 +140,7 @@ public sealed class ThermalPlanConsumptionTests
         {
             var site = await db.ThermalSiteConfigs.SingleAsync();
             site.ControlMode = "LwtActive";
-            site.UpdatedAtUtc = DateTimeOffset.UtcNow;
+            site.UpdatedAtUtc = (await db.ThermalTelemetrySamples.SingleAsync()).TimestampUtc.AddSeconds(-1);
         });
         await fixture.ReplanAsync();
         return fixture;

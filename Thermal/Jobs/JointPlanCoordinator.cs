@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Collections.Concurrent;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Prisstyrning.Data;
@@ -113,27 +112,36 @@ public sealed class JointPlanCoordinator : BackgroundService
         var telemetry = await db.ThermalTelemetrySamples.AsNoTracking().Where(x => x.UserId == userId)
             .OrderByDescending(x => x.TimestampUtc).FirstOrDefaultAsync(cancellationToken)
             ?? throw new InvalidOperationException("No thermal telemetry is available.");
-        var models = await ThermalPlanningModels.ReadAsync(db, userId, telemetry.TimestampUtc, DateTimeOffset.UtcNow, cancellationToken);
+        var planningStartedUtc = DateTimeOffset.UtcNow;
+        var models = await ThermalPlanningModels.ReadAsync(db, userId, telemetry.TimestampUtc, planningStartedUtc, cancellationToken);
         site = models.Site;
         mode = ThermalEnumParser.ControlModeOrLegacy(site.ControlMode);
-        var horizonStart = FloorToQuarter(DateTimeOffset.UtcNow);
+        var planningTelemetry = await ThermalPlanningInputs.ReadTelemetryAsync(
+            db, userId, telemetry, site, planningStartedUtc, cancellationToken);
+        var horizonStart = FloorToQuarter(planningStartedUtc);
         var horizonSteps = _options.HorizonHours * 60 / _options.OptimizationTimeStepMinutes;
-        var prices = await LoadPriceForecastAsync(db, userId, horizonStart, horizonSteps, site, cancellationToken);
+        var prices = await LoadPriceForecastAsync(
+            db, userId, horizonStart, horizonSteps, site, planningStartedUtc, cancellationToken);
+        var inputEvidence = ThermalPlanningInputs.Evidence(planningTelemetry, prices.Snapshot, prices.Zone);
         var parameters = models.Thermal;
+        var roomTemperature = planningTelemetry.RepresentativeRoomTemperatureC;
+        var phaseEstimatedCopInput = planningTelemetry.DhwActive;
+        var copLwtC = phaseEstimatedCopInput
+            ? Math.Clamp(parameters.BaseCurveInterceptC + parameters.BaseCurveSlope * planningTelemetry.OutsideTemperatureC, 20, 60)
+            : planningTelemetry.LeavingWaterTemperatureC;
+        var copHeatOutputKw = phaseEstimatedCopInput
+            ? Math.Clamp(parameters.EnvelopeConductanceKwPerC * Math.Max(0, roomTemperature - planningTelemetry.OutsideTemperatureC), .5, 20)
+            : planningTelemetry.HeatOutputKw;
         var copModel = scope.ServiceProvider.GetRequiredService<CopModel>();
         var estimatedCop = copModel.Predict(models.Cop,
-            RequireFiniteInput(telemetry.BrineInC, "Köldbärartemperatur"),
-            RequireFiniteInput(telemetry.LeavingWaterTemperatureC, "Framledningstemperatur"),
-            RequireFiniteInput(telemetry.HeatOutputKw, "Avgiven värmeeffekt"));
-        var roomTemperature = AverageRoomTemperature(telemetry.RoomTemperaturesJson) ?? site.BaseRoomTargetC;
-        var outside = telemetry.OutsideTemperatureC ?? 0;
+            planningTelemetry.BrineInC,
+            copLwtC,
+            copHeatOutputKw);
         var weather = BuildWeatherForecast(
             telemetry.OutsideTemperatureForecastJson,
             horizonStart,
             horizonSteps,
-            _options.OptimizationTimeStepMinutes,
-            outside,
-            telemetry.WindSpeedMps ?? 0);
+            _options.OptimizationTimeStepMinutes);
 
         var dhw = await PlanDhwAsync(
             scope,
@@ -171,7 +179,7 @@ public sealed class JointPlanCoordinator : BackgroundService
             var solarGainKw = parameters.SolarGainKwPerWm2 * Math.Max(0, weather.SolarIrradianceWm2[index]);
             return effectiveConductance > 0.001 ? temperature + solarGainKw / effectiveConductance : temperature;
         }).ToArray();
-        var baseLoadW = Enumerable.Repeat(Math.Max(0, ((telemetry.PropertyPowerKw ?? 0) - (telemetry.HeatPumpPowerKw ?? 0)) * 1000), horizonSteps).ToArray();
+        var baseLoadW = Enumerable.Repeat(Math.Max(0, (planningTelemetry.PropertyPowerKw - planningTelemetry.HeatPumpPowerKw) * 1000), horizonSteps).ToArray();
         var thermal = new EmhassThermalConfig(
             Math.Clamp(2.5 * estimatedCop * parameters.HeatingGain / parameters.AirCapacityKwhPerC, 0.1, 10),
             Math.Clamp(effectiveConductance / parameters.AirCapacityKwhPerC, 0.001, 1),
@@ -189,12 +197,14 @@ public sealed class JointPlanCoordinator : BackgroundService
             2500,
             dhw?.Profile.PowerSteps.Max(x => x.ElectricPowerKw) * 1000 ?? 2500,
             site.TariffEnabled,
-            CapacityCost(site.TariffDefinitionJson))
+            CapacityCost(site.TariffDefinitionJson, site.TariffEnabled))
         {
             ModelEvidence = models.Evidence,
+            InputEvidence = inputEvidence,
             HorizonStartUtc = horizonStart
         };
         await ThermalPlanningModels.EnsureCurrentAsync(db, userId, models.Evidence, DateTimeOffset.UtcNow, cancellationToken);
+        await ThermalPlanningInputs.EnsureCurrentAsync(db, userId, inputEvidence, DateTimeOffset.UtcNow, cancellationToken);
         var optimizer = scope.ServiceProvider.GetRequiredService<IEmhassOptimizationDispatcher>();
         var optimized = await optimizer.EnqueueAndWaitAsync(
             userId,
@@ -204,7 +214,11 @@ public sealed class JointPlanCoordinator : BackgroundService
         // A rollback, retraining or settings change during the asynchronous solver
         // must not be turned into a newly valid plan or a DHW schedule update.
         await ThermalPlanningModels.EnsureCurrentAsync(db, userId, models.Evidence, DateTimeOffset.UtcNow, cancellationToken);
+        await ThermalPlanningInputs.EnsureCurrentAsync(db, userId, inputEvidence, DateTimeOffset.UtcNow, cancellationToken);
         EmhassOptimizationValidation.ValidateResult(request, optimized, _options.OptimizationTimeStepMinutes);
+
+        var inputCoverage = Math.Min(prices.ActualCoverage, weather.ActualCoverage) * (phaseEstimatedCopInput ? .9 : 1);
+        var planConfidence = Math.Round(Math.Clamp(.85 * (.5 + .5 * inputCoverage), 0, .85), 3);
 
         var plan = new ThermalPlan
         {
@@ -216,7 +230,7 @@ public sealed class JointPlanCoordinator : BackgroundService
             IsShadow = mode == ControlMode.Shadow,
             SolverDurationMs = optimized.SolverDurationMs,
             ObjectiveCost = optimized.ObjectiveCost + (dhw?.Selected?.TotalCostSek ?? 0),
-            Confidence = 0.85,
+            Confidence = planConfidence,
             Summary = dhw?.Result.Reason.MainReason ?? "Husvärme optimerad utan DHW-reservation.",
             InputSnapshotJson = JsonSerializer.Serialize(new
             {
@@ -224,10 +238,27 @@ public sealed class JointPlanCoordinator : BackgroundService
                 modelVersionId = models.Evidence.ThermalModelVersionId,
                 copModelVersionId = models.Evidence.CopModelVersionId,
                 modelEvidence = models.Evidence,
+                inputEvidence,
                 estimatedCop,
+                copInput = phaseEstimatedCopInput
+                    ? new { source = "weatherCurveEstimateDuringDhw", leavingWaterTemperatureC = copLwtC, heatOutputKw = copHeatOutputKw }
+                    : new { source = "verifiedLiveSpaceHeating", leavingWaterTemperatureC = copLwtC, heatOutputKw = copHeatOutputKw },
                 dhw = dhw?.Selected,
-                priceForecast = prices.ActualCoverage,
-                weatherForecast = weather.ActualCoverage
+                priceForecast = new
+                {
+                    actualCoverage = prices.ActualCoverage,
+                    actualSteps = prices.ActualSteps,
+                    estimatedSteps = prices.EstimatedSteps,
+                    estimation = "Föregående dygns motsvarande kvart, annars medel av verifierade priser."
+                },
+                weatherForecast = new
+                {
+                    actualCoverage = weather.ActualCoverage,
+                    actualSteps = weather.ActualSteps,
+                    estimatedSteps = weather.EstimatedSteps,
+                    estimation = "Senaste giltiga prognospunkt hålls konstant efter prognosens slut."
+                },
+                confidenceBasis = "0,85 modellbas multiplicerad med verifierad pris- och väderprognostäckning."
             })
         };
         foreach (var step in optimized.Steps)
@@ -269,7 +300,7 @@ public sealed class JointPlanCoordinator : BackgroundService
                 await writer.ApplyAsync(cycle.Id, cancellationToken);
             }
         }
-        memory.LastTankTemperatureC = telemetry.TankTemperatureC;
+        memory.LastTankTemperatureC = planningTelemetry.TankTemperatureC;
         memory.LastPriceSavedAtUtc = prices.SavedAtUtc;
         memory.LastFailureUtc = null;
     }
@@ -472,14 +503,23 @@ public sealed class JointPlanCoordinator : BackgroundService
         DateTimeOffset start,
         int count,
         ThermalSiteConfig site,
+        DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        var zone = await db.UserSettings.AsNoTracking().Where(x => x.UserId == userId).Select(x => x.Zone).SingleOrDefaultAsync(cancellationToken) ?? "SE3";
-        var snapshot = await db.PriceSnapshots.AsNoTracking().Where(x => x.Zone == zone).OrderByDescending(x => x.SavedAtUtc).FirstOrDefaultAsync(cancellationToken)
-            ?? throw new InvalidOperationException("No electricity prices are available.");
-        var points = ParsePricePoints(snapshot.TodayPricesJson).Concat(ParsePricePoints(snapshot.TomorrowPricesJson))
-            .GroupBy(x => x.StartUtc).Select(x => x.Last()).OrderBy(x => x.StartUtc).ToArray();
-        if (points.Length == 0) throw new InvalidOperationException("The latest price snapshot is empty.");
+        var zone = await ThermalPlanningInputs.PriceZoneAsync(db, userId, cancellationToken);
+        var snapshot = await db.PriceSnapshots.AsNoTracking().Where(x => x.Zone == zone)
+            .OrderByDescending(x => x.SavedAtUtc).ThenByDescending(x => x.Id).FirstOrDefaultAsync(cancellationToken)
+            ?? throw new ThermalPlanningEvidenceException("Det finns inget prisunderlag för kontots elområde.");
+        if (snapshot.SavedAtUtc == default || snapshot.SavedAtUtc > now.AddMinutes(2) ||
+            now - snapshot.SavedAtUtc > TimeSpan.FromHours(36))
+            throw new ThermalPlanningEvidenceException("Senaste prissnapshoten är gammal eller har en ogiltig tidsstämpel.");
+        var points = ParsePricePoints(snapshot.TodayPricesJson, "dagens")
+            .Concat(ParsePricePoints(snapshot.TomorrowPricesJson, "morgondagens"))
+            .OrderBy(x => x.StartUtc).ToArray();
+        if (points.Length == 0)
+            throw new ThermalPlanningEvidenceException("Senaste prissnapshoten är tom.");
+        if (points.GroupBy(x => x.StartUtc).Any(x => x.Count() != 1))
+            throw new ThermalPlanningEvidenceException("Prisunderlaget innehåller dubbla tidsperioder och används inte.");
         var variableCosts = VariableCosts(site.VariableCostComponentsJson);
         var average = points.Average(x => x.Price) + variableCosts;
         var stepPrices = new List<decimal>(count);
@@ -489,7 +529,11 @@ public sealed class JointPlanCoordinator : BackgroundService
             var timestamp = start.AddMinutes(index * _options.OptimizationTimeStepMinutes);
             var point = points.LastOrDefault(x => x.StartUtc <= timestamp);
             decimal price;
-            if (point is not null && NextStart(points, point.StartUtc) is { } next && timestamp < next || point is not null && timestamp - point.StartUtc < TimeSpan.FromHours(1))
+            var next = point is null ? null : NextStart(points, point.StartUtc);
+            var actualEnd = point is null
+                ? default
+                : Min(next ?? point.StartUtc.AddHours(1), point.StartUtc.AddHours(1));
+            if (point is not null && timestamp >= point.StartUtc && timestamp < actualEnd)
             {
                 price = point.Price + variableCosts;
                 actual++;
@@ -501,60 +545,116 @@ public sealed class JointPlanCoordinator : BackgroundService
             }
             stepPrices.Add(price);
         }
+        if (actual == 0)
+            throw new ThermalPlanningEvidenceException("Prisunderlaget täcker inte ens planens första kvart. Invänta nya priser.");
         var periods = stepPrices.Select((price, index) => new DhwPricePeriod(
             start.AddMinutes(index * _options.OptimizationTimeStepMinutes),
             start.AddMinutes((index + 1) * _options.OptimizationTimeStepMinutes),
             price)).ToArray();
-        return new PriceForecast(stepPrices, periods, actual / (double)count, snapshot.SavedAtUtc);
+        return new PriceForecast(
+            stepPrices,
+            periods,
+            actual / (double)Math.Max(1, count),
+            actual,
+            Math.Max(0, count - actual),
+            snapshot,
+            zone);
     }
 
-    private static IEnumerable<PricePoint> ParsePricePoints(string json)
+    private static IReadOnlyList<PricePoint> ParsePricePoints(string json, string label)
     {
-        var array = JsonNode.Parse(json) as JsonArray;
-        if (array is null) yield break;
-        foreach (var node in array.OfType<JsonObject>())
+        try
         {
-            if (!DateTimeOffset.TryParse(node["start"]?.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var start) ||
-                !decimal.TryParse(node["value"]?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var value)) continue;
-            yield return new PricePoint(start.ToUniversalTime(), value);
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+                throw new JsonException();
+            var result = new List<PricePoint>();
+            foreach (var node in document.RootElement.EnumerateArray())
+            {
+                if (node.ValueKind != JsonValueKind.Object ||
+                    !TryUniqueProperty(node, "start", out var startElement) || startElement.ValueKind != JsonValueKind.String ||
+                    !TryUniqueProperty(node, "value", out var valueElement) || valueElement.ValueKind != JsonValueKind.Number ||
+                    !valueElement.TryGetDecimal(out var value) || value is < -1000 or > 1000)
+                    throw new JsonException();
+                var raw = startElement.GetString()!;
+                var zoned = raw.EndsWith('Z') || raw.Length >= 6 && raw[^6] is '+' or '-' && raw[^3] == ':';
+                if (!zoned || !DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+                    throw new JsonException();
+                var start = parsed.ToUniversalTime();
+                if (start == default || start.Second != 0 || start.Millisecond != 0 || start.Minute % 15 != 0)
+                    throw new JsonException();
+                result.Add(new(start, value));
+            }
+            return result;
+        }
+        catch (JsonException)
+        {
+            throw new ThermalPlanningEvidenceException($"{char.ToUpperInvariant(label[0])}{label[1..]} prisunderlag kan inte verifieras som unika kvartsvärden.");
         }
     }
 
     private static DateTimeOffset? NextStart(IReadOnlyList<PricePoint> points, DateTimeOffset current) =>
         points.FirstOrDefault(x => x.StartUtc > current)?.StartUtc;
 
-    private static double RequireFiniteInput(double? value, string label)
+    private static bool TryUniqueProperty(JsonElement element, string name, out JsonElement value)
     {
-        if (value is null || !double.IsFinite(value.Value))
-            throw new ThermalPlanningEvidenceException($"{label} saknas eller är ogiltig. Invänta giltiga mätvärden innan kostnadsoptimering.");
-        return value.Value;
-    }
-
-    private static double? AverageRoomTemperature(string json)
-    {
-        try { var values = JsonSerializer.Deserialize<Dictionary<string, double>>(json); return values?.Count > 0 ? values.Values.Average() : null; }
-        catch (JsonException) { return null; }
+        value = default;
+        if (element.ValueKind != JsonValueKind.Object) return false;
+        foreach (var property in element.EnumerateObject())
+        {
+            if (!property.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) continue;
+            if (value.ValueKind != JsonValueKind.Undefined) return false;
+            value = property.Value;
+        }
+        return value.ValueKind != JsonValueKind.Undefined;
     }
 
     private static decimal VariableCosts(string json)
     {
-        try { return JsonSerializer.Deserialize<Dictionary<string, decimal>>(json)?.Values.Sum() ?? 0; }
-        catch (JsonException) { return 0; }
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                document.RootElement.EnumerateObject().Select(x => x.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() !=
+                document.RootElement.EnumerateObject().Count()) throw new JsonException();
+            decimal total = 0;
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (property.Value.ValueKind != JsonValueKind.Number || !property.Value.TryGetDecimal(out var value) || value is < -10 or > 100)
+                    throw new JsonException();
+                total += value;
+            }
+            return total;
+        }
+        catch (Exception exception) when (exception is JsonException or OverflowException)
+        {
+            throw new ThermalPlanningEvidenceException("De rörliga kostnadskomponenterna kan inte verifieras. Rätta inställningen före optimering.");
+        }
     }
 
-    private static double CapacityCost(string json)
+    private static double CapacityCost(string json, bool enabled)
     {
-        try { return JsonNode.Parse(json)?["capacityCostPerKw"]?.GetValue<double>() ?? 0; }
-        catch (JsonException) { return 0; }
+        if (!enabled) return 0;
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                !TryUniqueProperty(document.RootElement, "capacityCostPerKw", out var value) ||
+                value.ValueKind != JsonValueKind.Number || !value.TryGetDouble(out var result) ||
+                !double.IsFinite(result) || result is < 0 or > 10_000) throw new JsonException();
+            return result;
+        }
+        catch (JsonException)
+        {
+            throw new ThermalPlanningEvidenceException("Effekttariffen är aktiv men kostnadsdefinitionen kan inte verifieras.");
+        }
     }
 
     private static WeatherSeries BuildWeatherForecast(
         string json,
         DateTimeOffset start,
         int count,
-        int stepMinutes,
-        double fallbackTemperatureC,
-        double fallbackWindSpeedMps)
+        int stepMinutes)
     {
         WeatherForecastPoint[] points;
         try
@@ -566,9 +666,14 @@ public sealed class JointPlanCoordinator : BackgroundService
         }
         catch (JsonException)
         {
-            points = [];
+            throw new ThermalPlanningEvidenceException("Väderprognosen kan inte läsas säkert.");
         }
         points = points.OrderBy(x => x.TimestampUtc).ToArray();
+        if (points.Length == 0 || points.GroupBy(x => x.TimestampUtc).Any(x => x.Count() != 1) || points.Any(x =>
+                x.TimestampUtc == default || !double.IsFinite(x.TemperatureC) || x.TemperatureC is < -80 or > 60 ||
+                x.WindSpeedMps is { } wind && (!double.IsFinite(wind) || wind is < 0 or > 100) ||
+                x.SolarIrradianceWm2 is { } solar && (!double.IsFinite(solar) || solar is < 0 or > 2000)))
+            throw new ThermalPlanningEvidenceException("Väderprognosen innehåller ogiltiga eller dubbla prognospunkter.");
         var temperatures = new double[count];
         var winds = new double[count];
         var solar = new double[count];
@@ -576,14 +681,20 @@ public sealed class JointPlanCoordinator : BackgroundService
         for (var index = 0; index < count; index++)
         {
             var timestamp = start.AddMinutes(index * stepMinutes);
-            var point = points.LastOrDefault(x => x.TimestampUtc <= timestamp && timestamp - x.TimestampUtc <= TimeSpan.FromHours(3))
-                        ?? points.FirstOrDefault(x => x.TimestampUtc > timestamp && x.TimestampUtc - timestamp <= TimeSpan.FromHours(1));
-            if (point is not null) actual++;
-            temperatures[index] = point?.TemperatureC ?? fallbackTemperatureC;
-            winds[index] = point?.WindSpeedMps ?? fallbackWindSpeedMps;
-            solar[index] = point?.SolarIrradianceWm2 ?? 0;
+            var observed = points.LastOrDefault(x => x.TimestampUtc <= timestamp && timestamp - x.TimestampUtc < TimeSpan.FromHours(1));
+            if (observed is not null) actual++;
+            var point = observed ?? points.LastOrDefault(x => x.TimestampUtc <= timestamp) ?? points[0];
+            temperatures[index] = point.TemperatureC;
+            winds[index] = point.WindSpeedMps ?? 0;
+            solar[index] = point.SolarIrradianceWm2 ?? 0;
         }
-        return new WeatherSeries(temperatures, winds, solar, actual / (double)Math.Max(1, count));
+        return new WeatherSeries(
+            temperatures,
+            winds,
+            solar,
+            actual / (double)Math.Max(1, count),
+            actual,
+            Math.Max(0, count - actual));
     }
 
     private Func<DateTimeOffset, decimal> BuildDhwComfortPenalty(
@@ -666,8 +777,25 @@ public sealed class JointPlanCoordinator : BackgroundService
     private static DateTimeOffset Max(DateTimeOffset a, DateTimeOffset b) => a > b ? a : b;
 
     private sealed record PricePoint(DateTimeOffset StartUtc, decimal Price);
-    private sealed record PriceForecast(IReadOnlyList<decimal> Steps, IReadOnlyList<DhwPricePeriod> Periods, double ActualCoverage, DateTimeOffset SavedAtUtc);
-    private sealed record WeatherSeries(IReadOnlyList<double> TemperatureC, IReadOnlyList<double> WindSpeedMps, IReadOnlyList<double> SolarIrradianceWm2, double ActualCoverage);
+    private sealed record PriceForecast(
+        IReadOnlyList<decimal> Steps,
+        IReadOnlyList<DhwPricePeriod> Periods,
+        double ActualCoverage,
+        int ActualSteps,
+        int EstimatedSteps,
+        PriceSnapshot Snapshot,
+        string Zone)
+    {
+        internal DateTimeOffset SavedAtUtc => Snapshot.SavedAtUtc;
+    }
+
+    private sealed record WeatherSeries(
+        IReadOnlyList<double> TemperatureC,
+        IReadOnlyList<double> WindSpeedMps,
+        IReadOnlyList<double> SolarIrradianceWm2,
+        double ActualCoverage,
+        int ActualSteps,
+        int EstimatedSteps);
     private sealed record PlannedDhw(string Kind, double TargetTemperatureC, DhwCycleProfile Profile, DhwPlanResult Result, DhwCandidate Selected, DhwCycle? InitialCycle)
     {
         public DhwCycle? Cycle { get; set; } = InitialCycle;
