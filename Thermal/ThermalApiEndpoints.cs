@@ -290,7 +290,10 @@ public static class ThermalApiEndpoints
     }
 
     private static async Task<IResult> GetModelsAsync(
-        HttpContext context, PrisstyrningDbContext db, CancellationToken cancellationToken)
+        HttpContext context,
+        PrisstyrningDbContext db,
+        RuntimeBuildProvenance build,
+        CancellationToken cancellationToken)
     {
         var userId = UserId(context);
         var models = await db.ThermalModelVersions.AsNoTracking()
@@ -311,7 +314,8 @@ public static class ThermalApiEndpoints
             entities,
             site?.HeatPumpPowerSignVerified == true,
             now,
-            cancellationToken);
+            cancellationToken,
+            build);
         // Existing fields keep their meaning; this read-only assessment neither
         // edits the stored active marker nor approves a mode transition.
         return Results.Ok(models.Select(model =>
@@ -338,6 +342,7 @@ public static class ThermalApiEndpoints
         HttpContext context,
         PrisstyrningDbContext db,
         EmhassHealthState emhass,
+        RuntimeBuildProvenance build,
         CancellationToken cancellationToken)
     {
         var userId = UserId(context);
@@ -357,7 +362,7 @@ public static class ThermalApiEndpoints
         {
             try
             {
-                plan = (await ThermalPlanConsumption.ReadCurrentAsync(db, userId, now, cancellationToken))?.Plan;
+                plan = (await ThermalPlanConsumption.ReadCurrentAsync(db, userId, now, build, cancellationToken))?.Plan;
             }
             catch (ThermalPlanningEvidenceException)
             {

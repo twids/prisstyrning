@@ -15,15 +15,18 @@ public sealed class ThermalReadinessService
     private readonly PrisstyrningDbContext _db;
     private readonly IHomeAssistantStateCache _cache;
     private readonly HomeAssistantConnectionService _connections;
+    private readonly RuntimeBuildProvenance _build;
 
     public ThermalReadinessService(
         PrisstyrningDbContext db,
         IHomeAssistantStateCache cache,
-        HomeAssistantConnectionService connections)
+        HomeAssistantConnectionService connections,
+        RuntimeBuildProvenance build)
     {
         _db = db;
         _cache = cache;
         _connections = connections;
+        _build = build;
     }
 
     public async Task<IReadOnlyList<ReadinessCheck>> EvaluateAsync(
@@ -62,6 +65,11 @@ public sealed class ThermalReadinessService
 
         if (targetMode is ControlMode.LwtActive or ControlMode.FullActive)
         {
+            checks.Add(Check(
+                "build-provenance",
+                "Körande binär har en inbakad källkodsrevision",
+                _build.HasRevision,
+                "Använd en revisionsmärkt build. Imagesignatur och digest måste dessutom verifieras separat före driftsättning."));
             var controlTelemetry = ThermalControlTelemetry.Assess(latest, rooms, entities, site, now);
             checks.Add(Check(
                 "lwt-safety-inputs",
@@ -119,7 +127,8 @@ public sealed class ThermalReadinessService
                 entities,
                 site?.HeatPumpPowerSignVerified == true,
                 now,
-                cancellationToken);
+                cancellationToken,
+                _build);
             modelSources.TryGetValue(activeModel?.Id ?? 0, out var activeModelSource);
             modelSources.TryGetValue(activeCopModel?.Id ?? 0, out var activeCopModelSource);
             checks.Add(Check("shadow-duration", "Shadow har körts i minst 21 dagar", shadowStartedUtc is { } shadowStart && now - shadowStart >= TimeSpan.FromDays(21), "Låt Shadow fortsätta tills 21 hela dygn har samlats."));

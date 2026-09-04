@@ -44,6 +44,6 @@ Test-fixtures för planering använde tidigare syntetiska SHA-256-värden utan m
 
 - Verklig frågetid, indexanvändning och samtidiga skrivkonflikter är inte mätta mot driftlik PostgreSQL. En guarded, reproducerbar testharness är nu implementerad i [PostgreSQL-acceptansrapporten](2026-09-01-postgresql-thermal-acceptance.md), men dess databasstödda körning är fortfarande blockerad lokalt och får inte räknas som godkänd före en faktisk passering.
 - När retentionen har rensat någon rad som en gammal modell hänvisar till blir versionen avsiktligt `Changed` och måste ersättas. Nattlig träning förväntas hålla den valda modellen betydligt yngre än rådataretentionen.
-- Logiska algoritmversioner är fortfarande inte bundna till signerad container- eller commitdigest.
+- Uppföljningen [byggproveniens 2026-09-04](2026-09-04-thermal-build-provenance-verification.md) binder nu modellbeviset till binärens exakta källkodsrevision. Containerworkflowen är förberedd för signerad attestering, men publicerad image, signatur och digest är ännu inte releaseverifierade. Den lokala assemblystämpeln är inte ett signaturbevis.
 - Den sista planomläsningen minskar men kan inte göra PostgreSQL-läsning och en fysisk HA/P1P2-skrivning atomiska. Writer-lease, safe-zero och återkopplingsverifiering kvarstår som skydd; verkliga nätverks-/konfliktgränser ska provas separat.
 - Verklig kontoägd HA-historik, Shadow-period, representativt väder, grundkurva, komfort, DHW-/hygiencykler och normaliserad kostnadsjämförelse återstår. Denna leverans är kodverifiering, inte aktiveringsgodkännande.

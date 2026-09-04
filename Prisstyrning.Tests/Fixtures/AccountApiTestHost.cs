@@ -14,6 +14,7 @@ using Microsoft.Extensions.Logging;
 using Prisstyrning.Data;
 using Prisstyrning.Data.Repositories;
 using Prisstyrning.Security;
+using Prisstyrning.Tests.Thermal;
 using Prisstyrning.Thermal;
 using Prisstyrning.Thermal.Data;
 using Prisstyrning.Thermal.HomeAssistant;
@@ -79,6 +80,8 @@ internal sealed class AccountApiTestHost : IAsyncDisposable
                         {
                             services.AddScoped<ThermalInstallationRegistry>();
                             services.AddSingleton<EmhassHealthState>();
+                            services.AddSingleton(RuntimeBuildProvenance.FromRevision(
+                                ThermalCurrentModelTestData.BuildRevision));
                         }
                         if (includeHomeAssistantEntities)
                         {

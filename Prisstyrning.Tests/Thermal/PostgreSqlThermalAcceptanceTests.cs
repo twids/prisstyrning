@@ -65,7 +65,8 @@ public sealed class PostgreSqlThermalAcceptanceTests
         {
             var stopwatch = Stopwatch.StartNew();
             var validation = await ThermalModelProvenance.VerifyCurrentAsync(
-                db, Account, models, rooms, entities, true, now, CancellationToken.None);
+                db, Account, models, rooms, entities, true, now, CancellationToken.None,
+                ThermalCurrentModelTestData.Build);
             stopwatch.Stop();
             Assert.All(validation.Values, value =>
             {
@@ -106,7 +107,8 @@ public sealed class PostgreSqlThermalAcceptanceTests
         }
 
         var validation = await ThermalModelProvenance.VerifyCurrentAsync(
-            db, Account, models, rooms, entities, true, now, CancellationToken.None);
+            db, Account, models, rooms, entities, true, now, CancellationToken.None,
+            ThermalCurrentModelTestData.Build);
         Assert.False(validation[models.Single(x => x.ModelType == "2R2C").Id].Passed);
         Assert.Equal("Changed", validation[models.Single(x => x.ModelType == "2R2C").Id].Status);
         Assert.True(validation[models.Single(x => x.ModelType == "COP").Id].Passed);
@@ -208,10 +210,11 @@ public sealed class PostgreSqlThermalAcceptanceTests
         {
             Model("2R2C", thermal, ThermalModelProvenance.Create(
                 Account, "2R2C", from, to, thermal, rooms, entities,
-                thermal.Length - FiveMinuteSamplesPerDay, FiveMinuteSamplesPerDay, true), to),
+                thermal.Length - FiveMinuteSamplesPerDay, FiveMinuteSamplesPerDay, true,
+                ThermalCurrentModelTestData.BuildRevision), to),
             Model("COP", cop, ThermalModelProvenance.Create(
                 Account, "COP", from, to, cop, rooms, entities,
-                cop.Length - 100, 100, true), to)
+                cop.Length - 100, 100, true, ThermalCurrentModelTestData.BuildRevision), to)
         };
         db.ThermalModelVersions.AddRange(models);
         await db.SaveChangesAsync();

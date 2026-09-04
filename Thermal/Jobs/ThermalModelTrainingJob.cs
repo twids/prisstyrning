@@ -11,11 +11,16 @@ public sealed class ThermalModelTrainingJob
 {
     private readonly PrisstyrningDbContext _db;
     private readonly GreyBoxThermalModel _model;
+    private readonly RuntimeBuildProvenance _build;
 
-    public ThermalModelTrainingJob(PrisstyrningDbContext db, GreyBoxThermalModel model)
+    public ThermalModelTrainingJob(
+        PrisstyrningDbContext db,
+        GreyBoxThermalModel model,
+        RuntimeBuildProvenance build)
     {
         _db = db;
         _model = model;
+        _build = build;
     }
 
     [DisableConcurrentExecution(1800)]
@@ -56,7 +61,8 @@ public sealed class ThermalModelTrainingJob
             entities,
             result.Metrics.TrainingSamples,
             result.Metrics.ValidationSamples,
-            heatPumpPowerSignVerified: false);
+            heatPumpPowerSignVerified: false,
+            _build.RequireRevision());
         var previous = await _db.ThermalModelVersions
             .Where(x => x.UserId == userId && x.ModelType == "2R2C" && x.IsActive)
             .OrderByDescending(x => x.CreatedAtUtc).FirstOrDefaultAsync(cancellationToken);

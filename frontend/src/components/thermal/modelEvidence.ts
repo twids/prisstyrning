@@ -30,15 +30,18 @@ export function modelEvidence(model: ThermalModelVersion | undefined, now: numbe
   const sourceVerified = provenanceVerified && sourceCurrent && source?.passed === true && source.status === 'Current';
   const sourceStatus = !provenanceVerified ? 'missing'
     : source?.status === 'Changed' ? 'changed'
+      : source?.status === 'BuildChanged' ? 'build-changed'
       : sourceVerified ? 'current' : 'unverified';
   const scored = current && metricsValid && sourceVerified && (value?.status === 'Validated' || value?.status === 'ThresholdExceeded');
   const passed = scored && value?.passed === true && value.status === 'Validated' &&
     (model?.modelType === '2R2C' ? twoHour! <= .3 && day! <= .6 : cop! <= .5);
-  const knownBlocked = current && ['Missing', 'Invalid', 'Unproven', 'Insufficient', 'ThresholdExceeded', 'SourceChanged'].includes(value?.status ?? '');
+  const knownBlocked = current && ['Missing', 'Invalid', 'Unproven', 'Insufficient', 'ThresholdExceeded', 'SourceChanged', 'BuildChanged'].includes(value?.status ?? '');
   const reason = sourceStatus === 'missing' && model
     ? 'Modellens exakta träningsurval eller kodversion kan inte verifieras. Träna om modellen innan den används.'
     : sourceStatus === 'changed' && typeof source?.reason === 'string' && source.reason
       ? source.reason
+      : sourceStatus === 'build-changed' && typeof source?.reason === 'string' && source.reason
+        ? source.reason
       : sourceStatus === 'unverified' && model
         ? 'Modellens historiska källunderlag har inte omverifierats nyligen. Hämta underlaget igen; träna om modellen om kontrollen fortsätter att misslyckas.'
     : (passed || knownBlocked) && typeof value?.reason === 'string' && value.reason
@@ -60,7 +63,9 @@ function validProvenance(model: ThermalModelVersion | undefined) {
   const trainingTo = Date.parse(model.trainingToUtc);
   const created = Date.parse(model.createdAtUtc);
   const positiveCount = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+  const buildRevision = typeof source.buildRevision === 'string' ? source.buildRevision : '';
   return source.algorithmVersion === expected[0] && source.selectionVersion === expected[1] &&
+    (/^[0-9a-f]{40}$/.test(buildRevision) || /^[0-9a-f]{64}$/.test(buildRevision)) && !/^0+$/.test(buildRevision) &&
     [selectionFrom, selectionTo, trainingFrom, trainingTo, created].every(Number.isFinite) &&
     selectionFrom < selectionTo && selectionFrom <= trainingFrom && trainingTo <= selectionTo && selectionTo <= created &&
     positiveCount(source.observationCount) && positiveCount(source.trainingSamples) && positiveCount(source.validationSamples) &&

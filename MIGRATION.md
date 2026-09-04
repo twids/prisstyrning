@@ -2,6 +2,18 @@
 
 This document describes breaking changes and migration steps for upgrading Prisstyrning.
 
+## Unreleased - revision-bound thermal model evidence
+
+This source-only change does not remove or reinterpret legacy schedules, settings, ONECTA payloads or tables. Keep `ControlMode=Legacy`, `DhwWriter=Legacy` and active-control feature flags disabled during any separately approved upgrade.
+
+- New 2R2C/COP `SourceEvidenceJson` uses schema version 2 and includes the immutable assembly source revision. It uses the existing JSON column; no additional EF migration is introduced by this increment.
+- Existing schema-1 model rows remain stored, but are unproven until retrained. A later change to any source commit also revokes old model approval conservatively, even when only non-thermal code changed. Do not edit stored evidence or active markers to bypass retraining.
+- Docker builds now require `--build-arg SOURCE_REVISION=<full-commit-id>`. Release/PR workflows pass their checked-out `github.sha`; ordinary unstamped local .NET builds remain possible for Legacy development, but thermal training and active readiness cannot approve models.
+- Signed container build attestations and exact-digest verification are separate from the assembly stamp. The new workflow must be exercised and its output verified before it is release evidence; no current production image is claimed to have the new attestation.
+- Roll back only through the existing Dockhand stack and preserved digest/Compose backup. Keep additive data and credential keys; do not restore an old database merely to roll back an image. Source evidence for the wrong build remains unproven.
+
+See the [verification record](plans/2026-09-04-thermal-build-provenance-verification.md) and [safe deployment guidance](README.md#safe-thermal-deployment). The older version-specific instructions below are historical, not authorization to replace the running stack or change its legacy behavior.
+
 ## Version 2.0 - ECO Mode Removal & Frontend Rewrite
 
 **Release Date:** TBD  

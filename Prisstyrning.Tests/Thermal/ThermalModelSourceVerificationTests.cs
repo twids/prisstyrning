@@ -97,12 +97,35 @@ public sealed class ThermalModelSourceVerificationTests
         var checkedAt = DateTimeOffset.UtcNow;
 
         var result = await ThermalModelProvenance.VerifyCurrentAsync(
-            db, "account-a", [model], [], [], false, checkedAt, CancellationToken.None);
+            db, "account-a", [model], [], [], false, checkedAt, CancellationToken.None,
+            ThermalCurrentModelTestData.Build);
 
         var validation = result[model.Id];
         Assert.False(validation.Passed);
         Assert.Equal("Unproven", validation.Status);
         Assert.DoesNotContain("hash", validation.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("changed", "BuildChanged")]
+    [InlineData("missing", "Unproven")]
+    public async Task VerifyCurrent_RunningBuildMustMatchTheTrainingBuild(string fault, string expectedStatus)
+    {
+        await using var fixture = await FixtureAsync("2R2C");
+        var running = fault == "changed"
+            ? RuntimeBuildProvenance.FromRevision("fedcba9876543210fedcba9876543210fedcba98")
+            : RuntimeBuildProvenance.FromRevision(null);
+        var rooms = await fixture.Db.ThermalRoomConfigs.AsNoTracking().Where(x => x.Enabled).ToListAsync();
+        var entities = await fixture.Db.ThermalEntityConfigs.AsNoTracking().Where(x => x.Enabled).ToListAsync();
+
+        var result = await ThermalModelProvenance.VerifyCurrentAsync(
+            fixture.Db, "account-a", fixture.Models, rooms, entities, true, fixture.Now,
+            CancellationToken.None, running);
+
+        var validation = Assert.Single(result.Values);
+        Assert.False(validation.Passed);
+        Assert.Equal(expectedStatus, validation.Status);
+        Assert.Contains("revision", validation.Reason, StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<Fixture> FixtureAsync(params string[] modelTypes)
@@ -141,7 +164,8 @@ public sealed class ThermalModelSourceVerificationTests
             entities,
             heatPumpPowerSignVerified,
             now,
-            CancellationToken.None);
+            CancellationToken.None,
+            ThermalCurrentModelTestData.Build);
     }
 
     private static PrisstyrningDbContext Database() => new(

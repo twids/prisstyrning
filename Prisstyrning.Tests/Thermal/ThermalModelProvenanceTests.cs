@@ -31,6 +31,7 @@ public sealed class ThermalModelProvenanceTests
         Assert.NotEqual(baseline.ConfigurationFingerprint, accountChange.ConfigurationFingerprint);
         Assert.Matches("^[0-9A-F]{64}$", baseline.SampleFingerprint);
         Assert.Matches("^[0-9A-F]{64}$", baseline.ConfigurationFingerprint);
+        Assert.Equal(ThermalCurrentModelTestData.BuildRevision, baseline.BuildRevision);
     }
 
     [Theory]
@@ -54,7 +55,8 @@ public sealed class ThermalModelProvenanceTests
 
         Assert.Throws<ArgumentException>(() => ThermalModelProvenance.Create(
             "account-a", "2R2C", From, To, samples, Rooms("account-a"), entities,
-            fault == "incomplete-split" ? 3 : 2, 1, heatPumpPowerSignVerified: false));
+            fault == "incomplete-split" ? 3 : 2, 1, heatPumpPowerSignVerified: false,
+            ThermalCurrentModelTestData.BuildRevision));
     }
 
     [Fact]
@@ -66,13 +68,15 @@ public sealed class ThermalModelProvenanceTests
 
         Assert.True(valid.Verifiable);
         Assert.Equal(ThermalModelProvenance.CopAlgorithmVersion, valid.AlgorithmVersion);
+        Assert.Equal(ThermalCurrentModelTestData.BuildRevision, valid.BuildRevision);
         Assert.Equal(600, valid.ObservationCount);
 
-        model.SourceEvidenceJson = ThermalModelProvenance.Serialize(source with { SchemaVersion = 2 });
+        model.SourceEvidenceJson = ThermalModelProvenance.Serialize(source with { SchemaVersion = 3 });
         var unknown = ThermalModelProvenance.Summary(model);
 
         Assert.False(unknown.Verifiable);
         Assert.Null(unknown.AlgorithmVersion);
+        Assert.Null(unknown.BuildRevision);
         Assert.Null(unknown.ObservationCount);
     }
 
@@ -81,7 +85,8 @@ public sealed class ThermalModelProvenanceTests
         ThermalTelemetrySample[] samples,
         ThermalRoomConfig[] rooms,
         ThermalEntityConfig[] entities) =>
-        ThermalModelProvenance.Create(userId, "2R2C", From, To, samples, rooms, entities, 2, 1, heatPumpPowerSignVerified: false);
+        ThermalModelProvenance.Create(userId, "2R2C", From, To, samples, rooms, entities, 2, 1,
+            heatPumpPowerSignVerified: false, ThermalCurrentModelTestData.BuildRevision);
 
     private static ThermalTelemetrySample[] Samples(string userId) =>
     [

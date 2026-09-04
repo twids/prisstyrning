@@ -114,12 +114,14 @@ function date(value: string) { return Number.isFinite(Date.parse(value)) ? forma
 function sourceSummary(model: ThermalModelVersion, status: string) {
   if (status === 'current') return `Träningsunderlag: omverifierat mot ${integer(model.provenance!.observationCount!)} valda mätpunkter.`;
   if (status === 'changed') return 'Träningsunderlag: historik eller inställningar har ändrats sedan träningen. Träna en ny modellversion.';
+  if (status === 'build-changed') return 'Träningsunderlag: modellen hör till en annan kodrevision än den som körs. Träna en ny modellversion.';
   if (status === 'unverified') return 'Träningsunderlag: har inte kunnat omverifieras nyligen. Hämta underlaget igen.';
   return 'Träningsunderlag: saknar verifierbart källbevis. En ny nattlig träning krävs.';
 }
 function sourceListLabel(model: ThermalModelVersion, status: string) {
   if (status === 'current') return `Omverifierat källurval · ${integer(model.provenance!.observationCount!)} mätpunkter`;
   if (status === 'changed') return 'Källunderlaget har ändrats · träna om modellen';
+  if (status === 'build-changed') return 'Kodrevisionen har ändrats · träna om modellen';
   if (status === 'unverified') return 'Källunderlaget är inte omverifierat';
   return 'Källbevis saknas · modellen måste tränas om';
 }
@@ -129,9 +131,11 @@ function SourceDetails({ model, verified }: { model: ThermalModelVersion | undef
     <Typography fontWeight={700}>Versionsbundet träningsunderlag</Typography>
     <Typography variant="body2">Källurval: {date(model.provenance.selectionFromUtc!)} – {date(model.provenance.selectionToUtc!)}</Typography>
     <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>Algoritm: {model.provenance.algorithmVersion} · urvalsregel: {model.provenance.selectionVersion}</Typography>
+    <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>Byggrevision: {shortRevision(model.provenance.buildRevision)}</Typography>
     <Typography variant="body2">{integer(model.provenance.trainingSamples!)} träningspunkter · {integer(model.provenance.validationSamples!)} valideringspunkter</Typography>
   </Box>;
 }
+function shortRevision(value: string | null) { return value && /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(value) ? value.slice(0, 12) : 'Ej verifierad'; }
 function Parameter({ label, value, unit }: { label: string; value: unknown; unit: string }) {
   const number = finite(value);
   return <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" gap={.5}><Typography color="text.secondary">{label}</Typography><Typography fontWeight={700}>{number == null ? '–' : decimal(number, 3)} {unit}</Typography></Stack>;

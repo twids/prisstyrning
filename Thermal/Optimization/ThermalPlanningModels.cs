@@ -18,12 +18,12 @@ internal sealed record ThermalPlanningModels(
 {
     internal static async Task<ThermalPlanningModels> ReadAsync(
         PrisstyrningDbContext db, string userId, DateTimeOffset telemetryTimestampUtc,
-        DateTimeOffset now, CancellationToken cancellationToken)
-        => await ReadCoreAsync(db, userId, telemetryTimestampUtc, now, requireFreshTelemetry: true, cancellationToken);
+        DateTimeOffset now, RuntimeBuildProvenance build, CancellationToken cancellationToken)
+        => await ReadCoreAsync(db, userId, telemetryTimestampUtc, now, requireFreshTelemetry: true, build, cancellationToken);
 
     private static async Task<ThermalPlanningModels> ReadCoreAsync(
         PrisstyrningDbContext db, string userId, DateTimeOffset telemetryTimestampUtc,
-        DateTimeOffset now, bool requireFreshTelemetry, CancellationToken cancellationToken)
+        DateTimeOffset now, bool requireFreshTelemetry, RuntimeBuildProvenance build, CancellationToken cancellationToken)
     {
         var site = await db.ThermalSiteConfigs.AsNoTracking().SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
         if (site is null || ThermalEnumParser.ControlModeOrLegacy(site.ControlMode) == Domain.ControlMode.Legacy)
@@ -49,7 +49,8 @@ internal sealed record ThermalPlanningModels(
             entities.Where(x => x.Enabled).ToArray(),
             site.HeatPumpPowerSignVerified,
             now,
-            cancellationToken);
+            cancellationToken,
+            build);
         var thermal = RequireModel(thermalCandidate, SourceFor(thermalCandidate, sourceValidations), "Husmodellen", now);
         var cop = RequireModel(copCandidate, SourceFor(copCandidate, sourceValidations), "COP-modellen", now);
         // Never serialize credentials, URLs or connection objects into the evidence.
@@ -81,22 +82,22 @@ internal sealed record ThermalPlanningModels(
 
     internal static async Task EnsureCurrentAsync(
         PrisstyrningDbContext db, string userId, ThermalPlanningModelEvidence? evidence,
-        DateTimeOffset now, CancellationToken cancellationToken)
+        DateTimeOffset now, RuntimeBuildProvenance build, CancellationToken cancellationToken)
     {
         if (evidence is null)
             throw new ThermalPlanningEvidenceException("Beräkningen saknar verifierbart modellunderlag och behöver skapas om.");
-        var current = await ReadAsync(db, userId, evidence.TelemetryTimestampUtc, now, cancellationToken);
+        var current = await ReadAsync(db, userId, evidence.TelemetryTimestampUtc, now, build, cancellationToken);
         if (current.Evidence != evidence)
             throw new ThermalPlanningEvidenceException("Modell, driftläge eller inställningar ändrades under beräkningen. Resultatet används inte; en ny plan behövs.");
     }
 
     internal static async Task<ThermalPlanningModels> EnsureStoredPlanCurrentAsync(
         PrisstyrningDbContext db, string userId, ThermalPlanningModelEvidence? evidence,
-        DateTimeOffset now, CancellationToken cancellationToken)
+        DateTimeOffset now, RuntimeBuildProvenance build, CancellationToken cancellationToken)
     {
         if (evidence is null)
             throw new ThermalPlanningEvidenceException("Planen saknar verifierbart modellunderlag och får inte styra LWT.");
-        var current = await ReadCoreAsync(db, userId, evidence.TelemetryTimestampUtc, now, requireFreshTelemetry: false, cancellationToken);
+        var current = await ReadCoreAsync(db, userId, evidence.TelemetryTimestampUtc, now, requireFreshTelemetry: false, build, cancellationToken);
         if (current.Evidence != evidence)
             throw new ThermalPlanningEvidenceException("Planens modell, driftläge eller inställningar gäller inte längre.");
         return current;

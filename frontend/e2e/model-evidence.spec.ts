@@ -5,16 +5,17 @@ test('modellvyn skiljer modellbevis från aktiv styrning och återhämtar sig s�
   if (testInfo.project.name === 'mobile') await page.setViewportSize({ width: 320, height: 860 });
   const mutations: string[] = [];
   page.on('request', request => { if (new URL(request.url()).pathname.startsWith('/api/') && request.method() !== 'GET') mutations.push(request.method()); });
-  let state: 'changed' | 'valid' | 'error' = 'changed';
+  let state: 'changed' | 'build-changed' | 'valid' | 'error' = 'changed';
   await page.route('**/api/thermal/models', async route => {
     if (state === 'error') { await route.fulfill({ status: 503, json: { error: 'private-model-detail' } }); return; }
     await route.fulfill({ json: [{ id: 4, modelType: '2R2C', isActive: true, createdAtUtc: '2026-08-30T20:00:00Z', trainingFromUtc: '2026-08-01T00:00:00Z', trainingToUtc: '2026-08-30T00:00:00Z', parametersJson: '{}', metricsJson: '{}',
       provenance: { verifiable: true, algorithmVersion: 'grey-box-2r2c-v1', selectionVersion: 'thermal-validated-history-v1',
+        buildRevision: '0123456789abcdef0123456789abcdef01234567',
         selectionFromUtc: '2026-07-01T00:00:00Z', selectionToUtc: '2026-08-30T00:00:00Z', observationCount: 2000, trainingSamples: 1600, validationSamples: 400 },
-      sourceValidation: { passed: state === 'valid', status: state === 'valid' ? 'Current' : 'Changed',
-        reason: state === 'valid' ? 'Exakt historiskt urval matchar.' : 'Historiska mätningar har ändrats. Träna en ny version.', checkedAtUtc: new Date().toISOString() },
-      validation: { passed: state === 'valid', status: state === 'valid' ? 'Validated' : 'SourceChanged',
-        reason: state === 'valid' ? 'Hela tvåtimmars- och dygnsfönster på undanhållen data klarar kraven.' : 'Historiska mätningar har ändrats. Träna en ny version.',
+      sourceValidation: { passed: state === 'valid', status: state === 'valid' ? 'Current' : state === 'build-changed' ? 'BuildChanged' : 'Changed',
+        reason: state === 'valid' ? 'Exakt historiskt urval matchar.' : state === 'build-changed' ? 'Kodrevisionen har ändrats. Träna en ny version.' : 'Historiska mätningar har ändrats. Träna en ny version.', checkedAtUtc: new Date().toISOString() },
+      validation: { passed: state === 'valid', status: state === 'valid' ? 'Validated' : state === 'build-changed' ? 'BuildChanged' : 'SourceChanged',
+        reason: state === 'valid' ? 'Hela tvåtimmars- och dygnsfönster på undanhållen data klarar kraven.' : state === 'build-changed' ? 'Kodrevisionen har ändrats. Träna en ny version.' : 'Historiska mätningar har ändrats. Träna en ny version.',
         checkedAtUtc: new Date().toISOString(), twoHourMaeC: state === 'valid' ? .1 : null, dayMaeC: state === 'valid' ? .2 : null,
         copMae: null, twoHourValidationWindows: state === 'valid' ? 126 : null, dayValidationWindows: state === 'valid' ? 4 : null } }] });
   });
@@ -38,8 +39,21 @@ test('modellvyn skiljer modellbevis från aktiv styrning och återhämtar sig s�
   await page.getByRole('button', { name: /Avancerat: husmodell och rumskalibrering/ }).click();
   await expect(page.getByText('Versionsbundet träningsunderlag')).toBeVisible();
   await expect(page.getByText(/Algoritm: grey-box-2r2c-v1/)).toBeVisible();
+  await expect(page.getByText('Byggrevision: 0123456789ab')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => window.innerWidth));
+  await page.evaluate(() => window.scrollTo(0, 0));
   await testInfo.attach('model-validerat-underlag', { body: await page.screenshot({ path: testInfo.outputPath('model-validerat-underlag.png'), fullPage: true }), contentType: 'image/png' });
+
+  state = 'build-changed';
+  await page.getByRole('button', { name: 'Hämta underlag igen' }).click();
+  await expect(page.getByText('Husmodell: ej verifierad')).toBeVisible();
+  await expect(page.getByText('Kodrevisionen har ändrats · träna om modellen')).toBeVisible();
+  await expect(page.getByText('Husmodell: validerad')).toHaveCount(0);
+  await expect(page.getByText('0,20 °C')).toHaveCount(0);
+  await expect(page.getByText('Versionsbundet träningsunderlag')).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => window.innerWidth));
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await testInfo.attach('model-kodrevision-andrad', { body: await page.screenshot({ path: testInfo.outputPath('model-kodrevision-andrad.png'), fullPage: true }), contentType: 'image/png' });
 
   state = 'error';
   await page.getByRole('button', { name: 'Hämta underlag igen' }).click();

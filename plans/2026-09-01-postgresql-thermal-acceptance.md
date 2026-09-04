@@ -45,6 +45,7 @@ Docker Desktop 4.55 på arbetsstationen kraschar före engine-start på en gamma
 
 ## Kvarvarande gränser
 
+- Uppföljning 2026-09-04: den lokala `desktop-linux`-kontexten pekar på Docker Desktops namngivna pipe, men pipe/engine är otillgänglig. Inga engine-/containerstarter eller reparationer gjordes och det verkliga databasprovet är fortfarande inte kört. Det är en aktuell tillgänglighetskontroll, inte en upprepad diagnos av kraschen ovan. Se [byggproveniensrapporten](2026-09-04-thermal-build-provenance-verification.md).
 - Källomvalideringens faktiska p95, indexplan och PostgreSQLs serializable-konflikt är ännu inte uppmätta; de får inte beskrivas som godkända förrän harnessen passerar.
 - Harnessen provar en enskild appinstans mot en isolerad databas. Horisontell skalning, delad solver/resultatfil och instansöverskridande cache-/revisionsbeteende behöver separata tester.
 - PostgreSQL kan inte göra intervallet mellan en committad plan och ett fysiskt HA/P1P2-/ONECTA-anrop atomiskt. Writer-lease, slutlig evidenskontroll, safe-zero och återkopplingsverifiering är fortsatt nödvändiga.

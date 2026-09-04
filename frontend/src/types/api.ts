@@ -390,6 +390,7 @@ export interface ThermalModelProvenance {
   verifiable: boolean;
   algorithmVersion: string | null;
   selectionVersion: string | null;
+  buildRevision: string | null;
   selectionFromUtc: string | null;
   selectionToUtc: string | null;
   observationCount: number | null;
@@ -399,7 +400,7 @@ export interface ThermalModelProvenance {
 
 export interface ThermalModelValidation {
   passed: boolean;
-  status: 'Missing' | 'Invalid' | 'Unproven' | 'Insufficient' | 'Validated' | 'ThresholdExceeded' | 'SourceChanged';
+  status: 'Missing' | 'Invalid' | 'Unproven' | 'Insufficient' | 'Validated' | 'ThresholdExceeded' | 'SourceChanged' | 'BuildChanged';
   reason: string;
   checkedAtUtc: string;
   twoHourMaeC: number | null;
@@ -411,7 +412,7 @@ export interface ThermalModelValidation {
 
 export interface ThermalModelSourceValidation {
   passed: boolean;
-  status: 'Current' | 'Changed' | 'Invalid' | 'Unproven';
+  status: 'Current' | 'Changed' | 'BuildChanged' | 'Invalid' | 'Unproven';
   reason: string;
   checkedAtUtc: string;
 }

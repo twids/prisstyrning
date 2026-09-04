@@ -27,7 +27,15 @@ internal static class ThermalModelEvidence
         var reason = string.IsNullOrWhiteSpace(source.Reason)
             ? "Modellens historiska källunderlag kan inte verifieras. Hämta underlaget igen eller träna om modellen."
             : source.Reason;
-        return new(false, !source.Passed && source.Status == "Changed" ? "SourceChanged" : "Unproven", reason, now);
+        var status = !source.Passed
+            ? source.Status switch
+            {
+                "Changed" => "SourceChanged",
+                "BuildChanged" => "BuildChanged",
+                _ => "Unproven"
+            }
+            : "Unproven";
+        return new(false, status, reason, now);
     }
 
     internal static ThermalModelValidation Assess(ThermalModelVersion? model, DateTimeOffset now)
@@ -51,7 +59,7 @@ internal static class ThermalModelEvidence
             return Block("Invalid", "Antalet mätpunkter stämmer inte med träningsperioden. Träna en ny modellversion.");
         var provenance = ThermalModelProvenance.Read(model);
         if (provenance is null)
-            return Block("Unproven", "Modellversionen saknar ett verifierbart fingeravtryck för exakt träningsurval och kodversion. Träna om modellen.");
+            return Block("Unproven", "Modellversionen saknar ett verifierbart fingeravtryck för exakt träningsurval och byggrevision. Träna om modellen.");
         if (provenance.TrainingSamples != training || provenance.ValidationSamples != validation ||
             provenance.ObservationCount > capacity)
             return Block("Invalid", "Modellens källbevis stämmer inte med träningsperioden eller valideringsmåtten. Träna en ny version.");
@@ -71,7 +79,7 @@ internal static class ThermalModelEvidence
                 return Block("Invalid", "Modellens prognosfel måste vara ändliga, icke-negativa tal. Träna en ny version.");
             var passed = twoHour <= .3 && day <= .6;
             return new(passed, passed ? "Validated" : "ThresholdExceeded", passed
-                ? "Hela tvåtimmars- och dygnsfönster på undanhållen data klarar MAE-kraven. Källurval och träningskod är versionsbundna; detta godkänner inte aktiv styrning."
+                ? "Hela tvåtimmars- och dygnsfönster på undanhållen data klarar MAE-kraven. Källurval och tränande byggrevision är bundna; detta godkänner inte aktiv styrning."
                 : "Prognosfelet överskrider 0,30 °C för två timmar eller 0,60 °C för ett dygn. Fortsätt i Shadow och granska modellen.",
                 now, twoHour, day, TwoHourValidationWindows: twoHourWindows, DayValidationWindows: dayWindows);
         }

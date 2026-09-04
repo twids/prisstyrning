@@ -96,6 +96,9 @@ public sealed class ThermalModelEvidenceTests
     [Theory]
     [InlineData("missing", "Unproven")]
     [InlineData("algorithm", "Unproven")]
+    [InlineData("old-schema", "Unproven")]
+    [InlineData("missing-build", "Unproven")]
+    [InlineData("invalid-build", "Unproven")]
     [InlineData("fingerprint", "Unproven")]
     [InlineData("sample-count", "Invalid")]
     public void Assess_MissingOrInconsistentSourceEvidenceFailsClosed(string fault, string expectedStatus)
@@ -106,6 +109,9 @@ public sealed class ThermalModelEvidenceTests
         {
             "missing" => "{}",
             "algorithm" => ThermalModelProvenance.Serialize(source with { AlgorithmVersion = "grey-box-2r2c-v0" }),
+            "old-schema" => ThermalModelProvenance.Serialize(source with { SchemaVersion = 1 }),
+            "missing-build" => Replace(model.SourceEvidenceJson, "buildRevision", "null"),
+            "invalid-build" => ThermalModelProvenance.Serialize(source with { BuildRevision = new string('0', 40) }),
             "fingerprint" => ThermalModelProvenance.Serialize(source with { SampleFingerprint = "not-a-sha256" }),
             "sample-count" => ThermalModelProvenance.Serialize(source with { TrainingSamples = source.TrainingSamples - 1 }),
             _ => throw new InvalidOperationException()
@@ -123,6 +129,7 @@ public sealed class ThermalModelEvidenceTests
     [InlineData("stale", "Unproven")]
     [InlineData("future", "Unproven")]
     [InlineData("changed", "SourceChanged")]
+    [InlineData("build-changed", "BuildChanged")]
     [InlineData("contradictory", "Unproven")]
     public void AssessCurrent_RequiresFreshConsistentSuccessfulSourceRevalidation(
         string fault,
@@ -134,6 +141,7 @@ public sealed class ThermalModelEvidenceTests
         if (fault == "stale") source = source! with { CheckedAtUtc = Now.AddMinutes(-6) };
         if (fault == "future") source = source! with { CheckedAtUtc = Now.AddSeconds(1) };
         if (fault == "changed") source = new(false, "Changed", "Historiken har ändrats.", Now);
+        if (fault == "build-changed") source = new(false, "BuildChanged", "Kodrevisionen har ändrats.", Now);
         if (fault == "contradictory") source = source! with { Status = "Changed" };
 
         var result = ThermalModelEvidence.AssessCurrent(model, source, Now);
@@ -151,6 +159,7 @@ public sealed class ThermalModelEvidenceTests
             ThermalModelProvenance.SchemaVersion,
             type == "COP" ? ThermalModelProvenance.CopAlgorithmVersion : ThermalModelProvenance.ThermalAlgorithmVersion,
             type == "COP" ? ThermalModelProvenance.CopSelectionVersion : ThermalModelProvenance.ThermalSelectionVersion,
+            ThermalCurrentModelTestData.BuildRevision,
             now.AddDays(-31),
             now.AddMinutes(-2),
             training + validation,

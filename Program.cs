@@ -144,6 +144,7 @@ builder.Services.AddHostedService<JsonMigrationService>();
 builder.Services.Configure<EmhassOptions>(builder.Configuration.GetSection(EmhassOptions.SectionName));
 builder.Services.Configure<ThermalOptimizationQueueOptions>(
     builder.Configuration.GetSection(ThermalOptimizationQueueOptions.SectionName));
+builder.Services.AddSingleton(RuntimeBuildProvenance.FromAssembly(typeof(RuntimeBuildProvenance).Assembly));
 builder.Services.AddSingleton<IHomeAssistantStateCache, HomeAssistantStateCache>();
 builder.Services.AddSingleton<HomeAssistantConnectionChanges>();
 builder.Services.AddSingleton<IHomeAssistantWebSocketFactory, HomeAssistantWebSocketFactory>();
@@ -318,7 +319,8 @@ app.MapGet("/api/user/schedule-history", async (HttpContext ctx, ScheduleHistory
 {
     var userId = GetUserId(ctx) ?? "default";
     var entries = await historyRepo.LoadAsync(userId);
-    var result = entries.Select(e => new {
+    var result = entries.Select(e => new
+    {
         timestamp = e.Timestamp.ToString("o"),
         date = e.Timestamp.ToString("yyyy-MM-dd"),
         schedule = (JsonNode?)JsonNode.Parse(e.SchedulePayloadJson)
@@ -329,10 +331,11 @@ app.MapGet("/api/user/settings", async (HttpContext ctx, UserSettingsRepository 
 {
     var userId = GetUserId(ctx) ?? "default";
     var entity = await settingsRepo.GetOrCreateAsync(userId);
-    return Results.Json(new { 
-        ComfortHours = entity.ComfortHours, 
-        TurnOffPercentile = entity.TurnOffPercentile, 
-        AutoApplySchedule = entity.AutoApplySchedule, 
+    return Results.Json(new
+    {
+        ComfortHours = entity.ComfortHours,
+        TurnOffPercentile = entity.TurnOffPercentile,
+        AutoApplySchedule = entity.AutoApplySchedule,
         MaxComfortGapHours = entity.MaxComfortGapHours,
         SchedulingMode = entity.SchedulingMode,
         EcoIntervalHours = entity.EcoIntervalHours,
@@ -413,7 +416,7 @@ app.MapGet("/api/user/flexible-state", async (HttpContext ctx, FlexibleScheduleS
     var userId = GetUserId(ctx) ?? "default";
     var state = await flexRepo.GetOrCreateAsync(userId);
     var settings = await settingsRepo.GetOrCreateAsync(userId);
-    
+
     // Compute window info
     var now = DateTimeOffset.UtcNow;
     DateTimeOffset? ecoWindowStart = null, ecoWindowEnd = null;
@@ -609,11 +612,14 @@ pricesGroup.MapGet("/memory", () =>
     return Results.Json(new { updated, today, tomorrow });
 });
 // Per-user zone get/set
-pricesGroup.MapGet("/zone", async (HttpContext c, UserSettingsRepository settingsRepo) => {
+pricesGroup.MapGet("/zone", async (HttpContext c, UserSettingsRepository settingsRepo) =>
+{
     var userId = GetUserId(c); var zone = await settingsRepo.GetUserZoneAsync(userId); return Results.Json(new { zone });
 });
-pricesGroup.MapPost("/zone", async (HttpContext c, UserSettingsRepository settingsRepo) => {
-    try {
+pricesGroup.MapPost("/zone", async (HttpContext c, UserSettingsRepository settingsRepo) =>
+{
+    try
+    {
         using var doc = await JsonDocument.ParseAsync(c.Request.Body);
         if (!doc.RootElement.TryGetProperty("zone", out var zEl)) return Results.BadRequest(new { error = "Missing zone" });
         var zone = zEl.GetString();
@@ -621,10 +627,12 @@ pricesGroup.MapPost("/zone", async (HttpContext c, UserSettingsRepository settin
         var userId = GetUserId(c);
         await settingsRepo.SetUserZoneAsync(userId, zone!);
         return Results.Ok(new { saved = true, zone });
-    } catch (Exception ex) { Console.WriteLine($"[API Error] {ex}"); return Results.BadRequest(new { error = "An internal error occurred" }); }
+    }
+    catch (Exception ex) { Console.WriteLine($"[API Error] {ex}"); return Results.BadRequest(new { error = "An internal error occurred" }); }
 });
 // Get latest persisted Nordpool snapshot for zone
-pricesGroup.MapGet("/nordpool/latest", async (HttpContext c, IConfiguration cfg, UserSettingsRepository settingsRepo, PriceRepository priceRepo, string? zone) => {
+pricesGroup.MapGet("/nordpool/latest", async (HttpContext c, IConfiguration cfg, UserSettingsRepository settingsRepo, PriceRepository priceRepo, string? zone) =>
+{
     zone ??= settingsRepo.GetUserZone(GetUserId(c));
     var snapshot = await priceRepo.GetLatestAsync(zone);
     if (snapshot == null) return Results.NotFound(new { error = "No snapshot" });
@@ -651,8 +659,8 @@ pricesGroup.MapGet("/timeseries", async (HttpContext ctx, PriceRepository priceR
                     tomorrow = JsonSerializer.Deserialize<JsonArray>(snapshot.TomorrowPricesJson);
             }
         }
-        catch (Exception ex) 
-        { 
+        catch (Exception ex)
+        {
             Console.WriteLine($"[Timeseries] Failed to read price data from DB: {ex.Message}");
         }
     }
@@ -828,7 +836,8 @@ daikinAuthGroup.MapGet("/callback", async (
     Console.WriteLine($"[DaikinOAuth][Callback] Redirecting verifiedAccount={result.UserId is not null} success={ok} to={dest}");
     return Results.Redirect(dest, false);
 });
-daikinAuthGroup.MapGet("/status", async (DaikinOAuthService daikinOAuth, HttpContext c) => {
+daikinAuthGroup.MapGet("/status", async (DaikinOAuthService daikinOAuth, HttpContext c) =>
+{
     var userId = GetUserId(c);
     var raw = await daikinOAuth.StatusAsync(userId); // anonymous object { authorized, expiresAtUtc, ... }
     try
@@ -855,14 +864,15 @@ daikinAuthGroup.MapGet("/introspect", async (DaikinOAuthService daikinOAuth, Htt
 
 // Schedule preview/apply
 var scheduleGroup = app.MapGroup("/api/schedule").WithTags("Schedule");
-scheduleGroup.MapGet("/preview", async (HttpContext c, UserSettingsRepository settingsRepo, BatchRunner batchRunner, IServiceScopeFactory scopeFactory) => {
+scheduleGroup.MapGet("/preview", async (HttpContext c, UserSettingsRepository settingsRepo, BatchRunner batchRunner, IServiceScopeFactory scopeFactory) =>
+{
     var cfg = (IConfiguration)builder.Configuration;
     var userId = GetUserId(c);
-    
+
     // Preview should NOT persist to history - only apply should persist
     var (generated, schedulePayload, message) = await batchRunner.RunBatchAsync(cfg, userId, applySchedule: false, persist: false, scopeFactory);
     var zone = await settingsRepo.GetUserZoneAsync(userId);
-    
+
     return Results.Json(new { schedulePayload, generated, message, zone });
 });
 scheduleGroup.MapPost("/apply", async (BatchRunner batchRunner, HttpContext ctx, IServiceScopeFactory scopeFactory) => await HandleApplyScheduleAsync(batchRunner, ctx, builder.Configuration, scopeFactory));
@@ -934,7 +944,7 @@ daikinGroup.MapGet("/installation", async (
     DaikinInstallationService installations,
     CancellationToken cancellationToken) =>
 {
-    var installation = await installations.GetAsync(GetUserId(context)! , cancellationToken);
+    var installation = await installations.GetAsync(GetUserId(context)!, cancellationToken);
     return installation is null ? Results.NoContent() : Results.Ok(installation);
 });
 daikinGroup.MapPost("/installation/discover", async (
@@ -970,11 +980,11 @@ daikinGroup.MapGet("/sites", async (IHttpClientFactory httpClientFactory, Daikin
     if (token == null) return Results.BadRequest(new { error = "Not authorized" });
     try
     {
-    bool log = (cfg["Daikin:Http:Log"] ?? cfg["Daikin:HttpLog"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
-    bool logBody = (cfg["Daikin:Http:LogBody"] ?? cfg["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
-    int.TryParse(cfg["Daikin:Http:BodySnippetLength"], out var bodyLen);
-    var baseApi = cfg["Daikin:ApiBaseUrl"];
-    var client = new DaikinApiClient(httpClientFactory.CreateClient("Daikin"), token, log, logBody, bodyLen == 0 ? null : bodyLen, baseApi);
+        bool log = (cfg["Daikin:Http:Log"] ?? cfg["Daikin:HttpLog"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
+        bool logBody = (cfg["Daikin:Http:LogBody"] ?? cfg["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
+        int.TryParse(cfg["Daikin:Http:BodySnippetLength"], out var bodyLen);
+        var baseApi = cfg["Daikin:ApiBaseUrl"];
+        var client = new DaikinApiClient(httpClientFactory.CreateClient("Daikin"), token, log, logBody, bodyLen == 0 ? null : bodyLen, baseApi);
         var sitesJson = await client.GetSitesAsync();
         return Results.Content(sitesJson, "application/json");
     }
@@ -993,22 +1003,22 @@ daikinGroup.MapGet("/gateway/schedule", async (IHttpClientFactory httpClientFact
     var userId = GetUserId(ctx);
     var (token, _) = await daikinOAuth.TryGetValidAccessTokenAsync(userId);
     token ??= await daikinOAuth.RefreshIfNeededAsync(userId);
-    if (token == null) return Results.Json(new { status="unauthorized", error="Not authorized" });
+    if (token == null) return Results.Json(new { status = "unauthorized", error = "Not authorized" });
     try
     {
-    var baseApi = cfg["Daikin:ApiBaseUrl"];
-    var client = new DaikinApiClient(httpClientFactory.CreateClient("Daikin"), token, log:true, baseApiOverride:baseApi);
-    var json = await client.GetDevicesCachedAsync("_ignored", TimeSpan.FromSeconds(10));
-        if (string.IsNullOrWhiteSpace(json)) return Results.Json(new { status="error", error="Empty gateway-devices" });
+        var baseApi = cfg["Daikin:ApiBaseUrl"];
+        var client = new DaikinApiClient(httpClientFactory.CreateClient("Daikin"), token, log: true, baseApiOverride: baseApi);
+        var json = await client.GetDevicesCachedAsync("_ignored", TimeSpan.FromSeconds(10));
+        if (string.IsNullOrWhiteSpace(json)) return Results.Json(new { status = "error", error = "Empty gateway-devices" });
         using var doc = JsonDocument.Parse(json);
-        if (doc.RootElement.ValueKind != JsonValueKind.Array) return Results.Json(new { status="error", error="Unexpected root" });
+        if (doc.RootElement.ValueKind != JsonValueKind.Array) return Results.Json(new { status = "error", error = "Unexpected root" });
         JsonElement? dev = null;
         foreach (var d in doc.RootElement.EnumerateArray())
         {
             if (deviceId == null) { dev = d; break; }
             if (d.TryGetProperty("id", out var idEl) && idEl.GetString() == deviceId) { dev = d; break; }
         }
-        if (dev == null) return Results.Json(new { status="error", error="Device not found", requestedDeviceId=deviceId });
+        if (dev == null) return Results.Json(new { status = "error", error = "Device not found", requestedDeviceId = deviceId });
 
         // Helper to extract schedule container and metadata from a schedule node (supports DHW schedule.value nesting)
         (bool ok, JsonElement container, string? detectedMode, string? currentScheduleId) Extract(JsonElement scheduleNode)
@@ -1016,25 +1026,25 @@ daikinGroup.MapGet("/gateway/schedule", async (IHttpClientFactory httpClientFact
             string? curId = null; string? mode = null; JsonElement container = default;
             if (scheduleNode.ValueKind != JsonValueKind.Object) return (false, container, null, null);
             // If node has a 'value' object (DHW often wraps data) prefer descending once
-            if (scheduleNode.TryGetProperty("value", out var valueNode) && valueNode.ValueKind==JsonValueKind.Object)
+            if (scheduleNode.TryGetProperty("value", out var valueNode) && valueNode.ValueKind == JsonValueKind.Object)
             {
                 scheduleNode = valueNode;
             }
             // Primary: modes collection
-            if (scheduleNode.TryGetProperty("modes", out var modesRoot) && modesRoot.ValueKind==JsonValueKind.Object)
+            if (scheduleNode.TryGetProperty("modes", out var modesRoot) && modesRoot.ValueKind == JsonValueKind.Object)
             {
                 foreach (var mProp in modesRoot.EnumerateObject())
                 {
                     var mVal = mProp.Value;
-                    if (mode==null && mVal.TryGetProperty("schedules", out var schTest) && schTest.ValueKind==JsonValueKind.Object)
+                    if (mode == null && mVal.TryGetProperty("schedules", out var schTest) && schTest.ValueKind == JsonValueKind.Object)
                     { mode = mProp.Name; container = schTest; }
                     if (mVal.TryGetProperty("currentSchedule", out var curObj) && curObj.TryGetProperty("value", out var curValEl))
                     { curId = curValEl.GetString(); }
                 }
-                if (mode!=null) return (true, container, mode, curId);
+                if (mode != null) return (true, container, mode, curId);
             }
             // Direct schedules property
-            if (scheduleNode.TryGetProperty("schedules", out var direct) && direct.ValueKind==JsonValueKind.Object)
+            if (scheduleNode.TryGetProperty("schedules", out var direct) && direct.ValueKind == JsonValueKind.Object)
             {
                 return (true, direct, mode ?? "heating", curId);
             }
@@ -1042,7 +1052,7 @@ daikinGroup.MapGet("/gateway/schedule", async (IHttpClientFactory httpClientFact
             foreach (var prop in scheduleNode.EnumerateObject())
             {
                 var pVal = prop.Value;
-                if (pVal.ValueKind==JsonValueKind.Object && pVal.TryGetProperty("schedules", out var scheds) && scheds.ValueKind==JsonValueKind.Object)
+                if (pVal.ValueKind == JsonValueKind.Object && pVal.TryGetProperty("schedules", out var scheds) && scheds.ValueKind == JsonValueKind.Object)
                 {
                     // detect currentSchedule if present
                     if (pVal.TryGetProperty("currentSchedule", out var curObj) && curObj.TryGetProperty("value", out var curValEl))
@@ -1054,81 +1064,82 @@ daikinGroup.MapGet("/gateway/schedule", async (IHttpClientFactory httpClientFact
             return (false, container, null, null);
         }
 
-        string? embeddedId=null; string? mpType=null; JsonElement schedulesContainer=default; string? detectedMode=null; string? currentScheduleId=null; List<string> candidateEmbeddedIds=new();
-        if (dev.Value.TryGetProperty("managementPoints", out var mps) && mps.ValueKind==JsonValueKind.Array)
+        string? embeddedId = null; string? mpType = null; JsonElement schedulesContainer = default; string? detectedMode = null; string? currentScheduleId = null; List<string> candidateEmbeddedIds = new();
+        if (dev.Value.TryGetProperty("managementPoints", out var mps) && mps.ValueKind == JsonValueKind.Array)
         {
             var mpList = mps.EnumerateArray().ToList();
             foreach (var mp in mpList)
             {
-                if (mp.TryGetProperty("embeddedId", out var embElAll)) { var v=embElAll.GetString(); if (v!=null) candidateEmbeddedIds.Add(v); }
+                if (mp.TryGetProperty("embeddedId", out var embElAll)) { var v = embElAll.GetString(); if (v != null) candidateEmbeddedIds.Add(v); }
             }
-            Func<IEnumerable<JsonElement>, (string? emb,string? type, JsonElement container,string? mode,string? cur)> tryPick = (source) =>
+            Func<IEnumerable<JsonElement>, (string? emb, string? type, JsonElement container, string? mode, string? cur)> tryPick = (source) =>
             {
                 foreach (var mp in source)
                 {
                     if (!mp.TryGetProperty("embeddedId", out var embEl)) continue; var embVal = embEl.GetString();
-                    if (embeddedIdQuery!=null && embVal != embeddedIdQuery) continue;
+                    if (embeddedIdQuery != null && embVal != embeddedIdQuery) continue;
                     if (!mp.TryGetProperty("managementPointType", out var typeEl)) continue; var typeStr = typeEl.GetString();
                     if (!mp.TryGetProperty("schedule", out var scheduleNode)) continue;
                     var ex = Extract(scheduleNode);
                     if (!ex.ok) continue;
                     return (embVal, typeStr, ex.container, ex.detectedMode, ex.currentScheduleId);
                 }
-                return (null,null,default(JsonElement),null,null);
+                return (null, null, default(JsonElement), null, null);
             };
             // Priority order: requested embeddedId -> domesticHotWaterTank -> climateControl -> anything with schedule
-            (embeddedId, mpType, schedulesContainer, detectedMode, currentScheduleId) = tryPick(mpList.Where(mp=>mp.TryGetProperty("managementPointType", out var t1) && t1.GetString()=="domesticHotWaterTank"));
-            if (embeddedId==null)
-                (embeddedId, mpType, schedulesContainer, detectedMode, currentScheduleId) = tryPick(mpList.Where(mp=>mp.TryGetProperty("managementPointType", out var t1) && t1.GetString()=="climateControl"));
-            if (embeddedId==null)
+            (embeddedId, mpType, schedulesContainer, detectedMode, currentScheduleId) = tryPick(mpList.Where(mp => mp.TryGetProperty("managementPointType", out var t1) && t1.GetString() == "domesticHotWaterTank"));
+            if (embeddedId == null)
+                (embeddedId, mpType, schedulesContainer, detectedMode, currentScheduleId) = tryPick(mpList.Where(mp => mp.TryGetProperty("managementPointType", out var t1) && t1.GetString() == "climateControl"));
+            if (embeddedId == null)
                 (embeddedId, mpType, schedulesContainer, detectedMode, currentScheduleId) = tryPick(mpList);
             // If user explicitly requested embeddedId but we picked different, try forcing exact
-            if (embeddedIdQuery!=null && embeddedId!=embeddedIdQuery)
+            if (embeddedIdQuery != null && embeddedId != embeddedIdQuery)
             {
-                (embeddedId, mpType, schedulesContainer, detectedMode, currentScheduleId) = tryPick(mpList.Where(mp=> mp.TryGetProperty("embeddedId", out var e2) && e2.GetString()==embeddedIdQuery));
+                (embeddedId, mpType, schedulesContainer, detectedMode, currentScheduleId) = tryPick(mpList.Where(mp => mp.TryGetProperty("embeddedId", out var e2) && e2.GetString() == embeddedIdQuery));
             }
         }
-        if (embeddedId==null)
+        if (embeddedId == null)
         {
-            return Results.Json(new { status="error", error="No schedule", requestedEmbeddedId=embeddedIdQuery, candidateEmbeddedIds });
+            return Results.Json(new { status = "error", error = "No schedule", requestedEmbeddedId = embeddedIdQuery, candidateEmbeddedIds });
         }
-        if (schedulesContainer.ValueKind!=JsonValueKind.Object)
+        if (schedulesContainer.ValueKind != JsonValueKind.Object)
         {
             // Include raw schedule node (first few chars) for debugging if present
             string? scheduleRaw = null;
             try
             {
-                if (dev.Value.TryGetProperty("managementPoints", out var mps2) && mps2.ValueKind==JsonValueKind.Array)
+                if (dev.Value.TryGetProperty("managementPoints", out var mps2) && mps2.ValueKind == JsonValueKind.Array)
                 {
                     foreach (var mp in mps2.EnumerateArray())
                     {
-                        if (mp.TryGetProperty("embeddedId", out var eId) && eId.GetString()==(embeddedIdQuery??embeddedId))
+                        if (mp.TryGetProperty("embeddedId", out var eId) && eId.GetString() == (embeddedIdQuery ?? embeddedId))
                         {
                             if (mp.TryGetProperty("schedule", out var sNode)) scheduleRaw = sNode.GetRawText();
                             break;
                         }
                     }
                 }
-            } catch {}
-            if (scheduleRaw!=null && scheduleRaw.Length > MaxScheduleRawDisplayLength) 
-                scheduleRaw = scheduleRaw.Substring(0, MaxScheduleRawDisplayLength)+"...";
-            return Results.Json(new { status="error", error="No schedules container", embeddedId, requestedEmbeddedId=embeddedIdQuery, candidateEmbeddedIds, scheduleRaw });
+            }
+            catch { }
+            if (scheduleRaw != null && scheduleRaw.Length > MaxScheduleRawDisplayLength)
+                scheduleRaw = scheduleRaw.Substring(0, MaxScheduleRawDisplayLength) + "...";
+            return Results.Json(new { status = "error", error = "No schedules container", embeddedId, requestedEmbeddedId = embeddedIdQuery, candidateEmbeddedIds, scheduleRaw });
         }
-        string? chosen = currentScheduleId; Dictionary<string, JsonElement> dict=new();
-        foreach (var p in schedulesContainer.EnumerateObject()) { dict[p.Name]=p.Value; if (chosen==null) chosen=p.Name; }
-        JsonObject? payload=null;
-        if (chosen!=null && dict.TryGetValue(chosen, out var sch) && sch.TryGetProperty("actions", out var acts))
+        string? chosen = currentScheduleId; Dictionary<string, JsonElement> dict = new();
+        foreach (var p in schedulesContainer.EnumerateObject()) { dict[p.Name] = p.Value; if (chosen == null) chosen = p.Name; }
+        JsonObject? payload = null;
+        if (chosen != null && dict.TryGetValue(chosen, out var sch) && sch.TryGetProperty("actions", out var acts))
         {
-            var root=new JsonObject(); var sObj=new JsonObject(); sObj["actions"]=JsonNode.Parse(acts.GetRawText()); root[chosen]=sObj; payload=root;
+            var root = new JsonObject(); var sObj = new JsonObject(); sObj["actions"] = JsonNode.Parse(acts.GetRawText()); root[chosen] = sObj; payload = root;
         }
-        var id = dev.Value.TryGetProperty("id", out var idEl2)? idEl2.GetString():null;
+        var id = dev.Value.TryGetProperty("id", out var idEl2) ? idEl2.GetString() : null;
         Console.WriteLine($"[GatewaySchedule] ok deviceId={id} embeddedId={embeddedId} chosen={chosen} detectedMode={detectedMode}");
-        return Results.Json(new { status=payload==null?"warning":"ok", deviceId=id, embeddedId, mpType, currentScheduleId, chosenScheduleId=chosen, schedulePayload=payload, schedules=dict.Keys, detectedMode, requestedEmbeddedId=embeddedIdQuery, candidateEmbeddedIds });
+        return Results.Json(new { status = payload == null ? "warning" : "ok", deviceId = id, embeddedId, mpType, currentScheduleId, chosenScheduleId = chosen, schedulePayload = payload, schedules = dict.Keys, detectedMode, requestedEmbeddedId = embeddedIdQuery, candidateEmbeddedIds });
     }
     catch (Exception ex)
     {
         Console.WriteLine($"[GatewaySchedule][Exception] {ex}");
-        return Results.Json(new { status="error", error="An internal error occurred" });
+        return Results.Json(new { status = "error", error = "An internal error occurred" });
     }
 });
 daikinGroup.MapGet("/devices", async (IHttpClientFactory httpClientFactory, DaikinOAuthService daikinOAuth, IConfiguration cfg, HttpContext c, string? siteId) =>
@@ -1139,11 +1150,11 @@ daikinGroup.MapGet("/devices", async (IHttpClientFactory httpClientFactory, Daik
     if (token == null) return Results.BadRequest(new { error = "Not authorized" });
     try
     {
-    bool log = (cfg["Daikin:Http:Log"] ?? cfg["Daikin:HttpLog"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
-    bool logBody = (cfg["Daikin:Http:LogBody"] ?? cfg["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
-    int.TryParse(cfg["Daikin:Http:BodySnippetLength"], out var bodyLen);
-    var baseApi = cfg["Daikin:ApiBaseUrl"];
-    var client = new DaikinApiClient(httpClientFactory.CreateClient("Daikin"), token, log, logBody, bodyLen == 0 ? null : bodyLen, baseApi);
+        bool log = (cfg["Daikin:Http:Log"] ?? cfg["Daikin:HttpLog"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
+        bool logBody = (cfg["Daikin:Http:LogBody"] ?? cfg["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
+        int.TryParse(cfg["Daikin:Http:BodySnippetLength"], out var bodyLen);
+        var baseApi = cfg["Daikin:ApiBaseUrl"];
+        var client = new DaikinApiClient(httpClientFactory.CreateClient("Daikin"), token, log, logBody, bodyLen == 0 ? null : bodyLen, baseApi);
         if (string.IsNullOrWhiteSpace(siteId))
         {
             var sitesJson = await client.GetSitesAsync();
@@ -1165,11 +1176,11 @@ daikinGroup.MapGet("/gateway", async (IHttpClientFactory httpClientFactory, Daik
     if (token == null) return Results.BadRequest(new { error = "Not authorized" });
     try
     {
-    bool log = (cfg["Daikin:Http:Log"] ?? cfg["Daikin:HttpLog"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
-    bool logBody = (cfg["Daikin:Http:LogBody"] ?? cfg["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
-    int.TryParse(cfg["Daikin:Http:BodySnippetLength"], out var bodyLen);
-    var baseApi = cfg["Daikin:ApiBaseUrl"];
-    var client = new DaikinApiClient(httpClientFactory.CreateClient("Daikin"), token, log, logBody, bodyLen == 0 ? null : bodyLen, baseApi);
+        bool log = (cfg["Daikin:Http:Log"] ?? cfg["Daikin:HttpLog"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
+        bool logBody = (cfg["Daikin:Http:LogBody"] ?? cfg["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
+        int.TryParse(cfg["Daikin:Http:BodySnippetLength"], out var bodyLen);
+        var baseApi = cfg["Daikin:ApiBaseUrl"];
+        var client = new DaikinApiClient(httpClientFactory.CreateClient("Daikin"), token, log, logBody, bodyLen == 0 ? null : bodyLen, baseApi);
         var devicesJson = await client.GetDevicesAsync("_ignored");
         return Results.Content(devicesJson, "application/json");
     }
@@ -1195,7 +1206,7 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IHttpClientFactory httpClien
         if (body == null) return Results.BadRequest(new { error = "Missing body" });
         string? gatewayDeviceId = body["gatewayDeviceId"]?.ToString();
         string? embeddedId = body["embeddedId"]?.ToString();
-    string requestedMode = body["mode"]?.ToString() ?? "auto"; // 'auto' triggers detection
+        string requestedMode = body["mode"]?.ToString() ?? "auto"; // 'auto' triggers detection
         JsonNode? schedulePayloadNode = body["schedulePayload"];
         string? activateScheduleId = body["activateScheduleId"]?.ToString();
         if (schedulePayloadNode == null)
@@ -1204,11 +1215,11 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IHttpClientFactory httpClien
         // Serialize schedule payload exactly as provided
         var schedulePayloadJson = schedulePayloadNode.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
 
-    bool log = (cfg["Daikin:Http:Log"] ?? cfg["Daikin:HttpLog"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
-    bool logBody = (cfg["Daikin:Http:LogBody"] ?? cfg["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
-    int.TryParse(cfg["Daikin:Http:BodySnippetLength"], out var bodyLen);
-    var baseApi = cfg["Daikin:ApiBaseUrl"];
-    var client = new DaikinApiClient(httpClientFactory.CreateClient("Daikin"), token, log, logBody, bodyLen == 0 ? null : bodyLen, baseApi);
+        bool log = (cfg["Daikin:Http:Log"] ?? cfg["Daikin:HttpLog"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
+        bool logBody = (cfg["Daikin:Http:LogBody"] ?? cfg["Daikin:HttpLogBody"])?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
+        int.TryParse(cfg["Daikin:Http:BodySnippetLength"], out var bodyLen);
+        var baseApi = cfg["Daikin:ApiBaseUrl"];
+        var client = new DaikinApiClient(httpClientFactory.CreateClient("Daikin"), token, log, logBody, bodyLen == 0 ? null : bodyLen, baseApi);
         var accountInstallation = await installations.GetAsync(userId!);
 
         // Auto-detect device IDs if not provided
@@ -1298,17 +1309,17 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IHttpClientFactory httpClien
             {
                 var devicesJson = siteId != null ? await client.GetDevicesAsync(siteId) : "[]";
                 using var doc = JsonDocument.Parse(devicesJson);
-                if (doc.RootElement.ValueKind==JsonValueKind.Array)
+                if (doc.RootElement.ValueKind == JsonValueKind.Array)
                 {
                     foreach (var d in doc.RootElement.EnumerateArray())
                     {
-                        if (d.TryGetProperty("id", out var idEl) && idEl.GetString()==gatewayDeviceId)
+                        if (d.TryGetProperty("id", out var idEl) && idEl.GetString() == gatewayDeviceId)
                         {
-                            if (d.TryGetProperty("managementPoints", out var mps) && mps.ValueKind==JsonValueKind.Array)
+                            if (d.TryGetProperty("managementPoints", out var mps) && mps.ValueKind == JsonValueKind.Array)
                             {
                                 foreach (var mp in mps.EnumerateArray())
                                 {
-                                    if (mp.TryGetProperty("embeddedId", out var emb2) && emb2.GetString()==embeddedId)
+                                    if (mp.TryGetProperty("embeddedId", out var emb2) && emb2.GetString() == embeddedId)
                                     {
                                         if (mp.TryGetProperty("schedule", out var schNode))
                                         {
@@ -1316,13 +1327,13 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IHttpClientFactory httpClien
                                             var schTarget = schNode;
                                             if (schTarget.TryGetProperty("value", out var schValue) && schValue.ValueKind == JsonValueKind.Object)
                                                 schTarget = schValue;
-                                            if (schTarget.TryGetProperty("modes", out var modesNode) && modesNode.ValueKind==JsonValueKind.Object)
+                                            if (schTarget.TryGetProperty("modes", out var modesNode) && modesNode.ValueKind == JsonValueKind.Object)
                                             {
                                                 // prefer heating, waterHeating, cooling order
-                                                string[] pref = new[]{"heating","waterHeating","cooling","dhw","domesticHotWaterHeating"};
-                                                var available = modesNode.EnumerateObject().Select(o=>o.Name).ToList();
-                                                var picked = pref.FirstOrDefault(p=>available.Contains(p)) ?? available.FirstOrDefault();
-                                                if (picked!=null) modeUsed = picked; else modeUsed = "heating";
+                                                string[] pref = new[] { "heating", "waterHeating", "cooling", "dhw", "domesticHotWaterHeating" };
+                                                var available = modesNode.EnumerateObject().Select(o => o.Name).ToList();
+                                                var picked = pref.FirstOrDefault(p => available.Contains(p)) ?? available.FirstOrDefault();
+                                                if (picked != null) modeUsed = picked; else modeUsed = "heating";
                                             }
                                             else if (schTarget.TryGetProperty("schedules", out _))
                                             {
@@ -1353,23 +1364,23 @@ daikinGroup.MapPost("/gateway/schedule/put", async (IHttpClientFactory httpClien
 
         Console.WriteLine($"[SchedulePut] PUT device={gatewayDeviceId} embedded={embeddedId} mode={modeUsed}");
         await client.PutSchedulesAsync(gatewayDeviceId, embeddedId, modeUsed, schedulePayloadJson);
-    
-    // Save to schedule history
-    if (schedulePayloadNode is JsonObject scheduleObj && !string.IsNullOrWhiteSpace(userId))
-    {
-        try
+
+        // Save to schedule history
+        if (schedulePayloadNode is JsonObject scheduleObj && !string.IsNullOrWhiteSpace(userId))
         {
-            await historyRepo.SaveAsync(userId, scheduleObj, DateTimeOffset.UtcNow);
-            Console.WriteLine($"[SchedulePut] Saved schedule to history for user {userId}");
+            try
+            {
+                await historyRepo.SaveAsync(userId, scheduleObj, DateTimeOffset.UtcNow);
+                Console.WriteLine($"[SchedulePut] Saved schedule to history for user {userId}");
+            }
+            catch (Exception exHist)
+            {
+                Console.WriteLine($"[SchedulePut] Failed to save history for user {userId}: {exHist.Message}");
+            }
         }
-        catch (Exception exHist)
-        {
-            Console.WriteLine($"[SchedulePut] Failed to save history for user {userId}: {exHist.Message}");
-        }
-    }
-    
-    // Activation step removed: only PUT schedule, do not activate
-    return Results.Ok(new { put = true, activateScheduleId, modeUsed, requestedMode });
+
+        // Activation step removed: only PUT schedule, do not activate
+        return Results.Ok(new { put = true, activateScheduleId, modeUsed, requestedMode });
     }
     catch (Exception ex)
     {
@@ -1384,9 +1395,9 @@ app.MapThermalApi();
 app.MapFallback(async (HttpContext ctx) =>
 {
     var path = ctx.Request.Path.Value ?? "";
-    
+
     // Don't intercept API or auth endpoints
-    if (path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase) || 
+    if (path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase) ||
         path.StartsWith("/auth/", StringComparison.OrdinalIgnoreCase) ||
         path.StartsWith("/hangfire", StringComparison.OrdinalIgnoreCase))
     {
@@ -1394,7 +1405,7 @@ app.MapFallback(async (HttpContext ctx) =>
         await ctx.Response.WriteAsync("Not Found");
         return;
     }
-    
+
     // Serve index.html for SPA routes like /settings, /history, etc.
     var indexPath = Path.Combine(app.Environment.WebRootPath ?? "wwwroot", "index.html");
     if (File.Exists(indexPath))

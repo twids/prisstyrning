@@ -9,6 +9,8 @@ namespace Prisstyrning.Tests.Thermal;
 
 internal static class ThermalCurrentModelTestData
 {
+    internal const string BuildRevision = "0123456789abcdef0123456789abcdef01234567";
+    internal static RuntimeBuildProvenance Build { get; } = RuntimeBuildProvenance.FromRevision(BuildRevision);
     private const int ThermalValidationSamples = 289;
     private const int CopValidationSamples = 20;
 
@@ -82,7 +84,8 @@ internal static class ThermalCurrentModelTestData
             entities,
             trainingSamples,
             validationSamples,
-            heatPumpPowerSignVerified: true);
+            heatPumpPowerSignVerified: true,
+            BuildRevision);
         var version = new ThermalModelVersion
         {
             UserId = userId,

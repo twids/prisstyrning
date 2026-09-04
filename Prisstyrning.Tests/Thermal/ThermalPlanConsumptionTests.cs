@@ -105,6 +105,7 @@ public sealed class ThermalPlanConsumptionTests
     [InlineData("status")]
     [InlineData("step")]
     [InlineData("settings")]
+    [InlineData("build")]
     [InlineData("telemetry")]
     [InlineData("price")]
     [InlineData("dhw-cycle")]
@@ -118,6 +119,13 @@ public sealed class ThermalPlanConsumptionTests
             if (change == "status") (await db.ThermalPlans.SingleAsync()).Status = "Rejected";
             if (change == "step") (await db.ThermalPlanSteps.OrderBy(x => x.StartUtc).FirstAsync()).DesiredLwtDeviationC = .5;
             if (change == "settings") (await db.ThermalSiteConfigs.SingleAsync()).LowerComfortBandC += .1;
+            if (change == "build")
+            {
+                var version = await db.ThermalModelVersions.FirstAsync(x => x.ModelType == "COP");
+                var source = ThermalModelProvenance.Read(version)!;
+                version.SourceEvidenceJson = ThermalModelProvenance.Serialize(source with
+                { BuildRevision = "fedcba9876543210fedcba9876543210fedcba98" });
+            }
             if (change == "telemetry") (await ThermalCurrentModelTestData.LatestTelemetryAsync(db)).PropertyPowerKw += .1;
             if (change == "price") (await db.PriceSnapshots.SingleAsync()).TomorrowPricesJson = "[]";
             if (change == "dhw-cycle") (await db.DhwCycles.SingleAsync()).ReservedDurationMinutes += 5;
@@ -176,7 +184,8 @@ public sealed class ThermalPlanConsumptionTests
         JointPlanModelConsumptionTests.Fixture fixture, DateTimeOffset now)
     {
         ValidatedThermalPlan? result = null;
-        await fixture.ChangeAsync(async db => result = await ThermalPlanConsumption.ReadCurrentAsync(db, "account-a", now, CancellationToken.None));
+        await fixture.ChangeAsync(async db => result = await ThermalPlanConsumption.ReadCurrentAsync(
+            db, "account-a", now, ThermalCurrentModelTestData.Build, CancellationToken.None));
         return result;
     }
 
@@ -184,7 +193,8 @@ public sealed class ThermalPlanConsumptionTests
         JointPlanModelConsumptionTests.Fixture fixture, ValidatedThermalPlan validated, DateTimeOffset? now = null)
     {
         await fixture.ChangeAsync(db => ThermalPlanConsumption.EnsureStillCurrentAsync(
-            db, "account-a", validated, now ?? DateTimeOffset.UtcNow, CancellationToken.None));
+            db, "account-a", validated, now ?? DateTimeOffset.UtcNow,
+            ThermalCurrentModelTestData.Build, CancellationToken.None));
     }
 
     private static ThermalPlanStep Copy(ThermalPlanStep value) => new()

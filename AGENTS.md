@@ -56,11 +56,11 @@ The frontend `build` script runs TypeScript checking (`tsc`) before Vite. `npm t
 Optional container commands documented by the repository are:
 
 ```text
-docker build -t prisstyrning:local .
+docker build --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" -t prisstyrning:local .
 docker compose -f docker-compose.example.yml up -d
 ```
 
-The Compose command starts persistent services and the container build can require network access; run them only when the task calls for container/runtime validation.
+Use a clean checkout for revision-stamped builds. `SOURCE_REVISION` is required by Docker; ordinary local `dotnet build` remains unstamped unless `-p:PrisstyrningSourceRevision=<full-commit-id>` is supplied. Unstamped builds cannot approve thermal models, but leave Legacy available. A manually supplied revision is not a verified image signature. The Compose command starts persistent services and the container build can require network access; run them only when the task calls for container/runtime validation.
 
 ## Verification sequence
 

@@ -25,7 +25,8 @@ public sealed class ThermalModelTrainingJobTests
         db.ThermalTelemetrySamples.AddRange(samples);
         await db.SaveChangesAsync();
 
-        await new ThermalModelTrainingJob(db, new GreyBoxThermalModel()).TrainUserAsync("account-a", CancellationToken.None);
+        await new ThermalModelTrainingJob(db, new GreyBoxThermalModel(), ThermalCurrentModelTestData.Build)
+            .TrainUserAsync("account-a", CancellationToken.None);
 
         var version = await db.ThermalModelVersions.SingleAsync();
         Assert.True(version.IsActive);
@@ -53,7 +54,8 @@ public sealed class ThermalModelTrainingJobTests
         db.ThermalModelVersions.Add(old);
         await db.SaveChangesAsync();
 
-        await new CopModelTrainingJob(db, new CopModel()).TrainUserAsync("account-a", CancellationToken.None);
+        await new CopModelTrainingJob(db, new CopModel(), ThermalCurrentModelTestData.Build)
+            .TrainUserAsync("account-a", CancellationToken.None);
 
         var versions = await db.ThermalModelVersions.ToListAsync();
         Assert.Equal(verified ? 2 : 1, versions.Count);
@@ -84,7 +86,8 @@ public sealed class ThermalModelTrainingJobTests
         db.ThermalModelVersions.Add(ThermalModelEvidenceTests.ValidModel("COP", end));
         await db.SaveChangesAsync();
 
-        await new CopModelTrainingJob(db, new CopModel()).TrainUserAsync("account-a", CancellationToken.None);
+        await new CopModelTrainingJob(db, new CopModel(), ThermalCurrentModelTestData.Build)
+            .TrainUserAsync("account-a", CancellationToken.None);
 
         Assert.True((await db.ThermalModelVersions.SingleAsync()).IsActive);
         await AssertLegacyAsync(db);

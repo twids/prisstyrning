@@ -61,6 +61,7 @@ public sealed class LwtControlWorker : BackgroundService
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+        var build = scope.ServiceProvider.GetRequiredService<RuntimeBuildProvenance>();
         var site = await db.ThermalSiteConfigs.SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
         var mode = ThermalEnumParser.ControlModeOrLegacy(site?.ControlMode);
         if (mode is not (ControlMode.LwtActive or ControlMode.FullActive)) return;
@@ -70,7 +71,7 @@ public sealed class LwtControlWorker : BackgroundService
         string? invalidPlanReason = null;
         try
         {
-            validatedPlan = await ThermalPlanConsumption.ReadCurrentAsync(db, userId, now, cancellationToken);
+            validatedPlan = await ThermalPlanConsumption.ReadCurrentAsync(db, userId, now, build, cancellationToken);
         }
         catch (ThermalPlanningEvidenceException)
         {
@@ -124,7 +125,7 @@ public sealed class LwtControlWorker : BackgroundService
             try
             {
                 await ThermalPlanConsumption.EnsureStillCurrentAsync(
-                    db, userId, validatedPlan, DateTimeOffset.UtcNow, cancellationToken);
+                    db, userId, validatedPlan, DateTimeOffset.UtcNow, build, cancellationToken);
             }
             catch (ThermalPlanningEvidenceException)
             {
@@ -226,15 +227,15 @@ public sealed class LwtControlWorker : BackgroundService
         string outcome,
         string reason,
         string? error = null) => new()
-    {
-        UserId = userId,
-        TimestampUtc = DateTimeOffset.UtcNow,
-        CommandType = "LwtDeviation",
-        Target = target,
-        RequestedValue = requested,
-        PreviousValue = previous,
-        Outcome = outcome,
-        Reason = reason.Length <= 500 ? reason : reason[..500],
-        Error = string.IsNullOrWhiteSpace(error) ? string.Empty : error.Length <= 1000 ? error : error[..1000]
-    };
+        {
+            UserId = userId,
+            TimestampUtc = DateTimeOffset.UtcNow,
+            CommandType = "LwtDeviation",
+            Target = target,
+            RequestedValue = requested,
+            PreviousValue = previous,
+            Outcome = outcome,
+            Reason = reason.Length <= 500 ? reason : reason[..500],
+            Error = string.IsNullOrWhiteSpace(error) ? string.Empty : error.Length <= 1000 ? error : error[..1000]
+        };
 }

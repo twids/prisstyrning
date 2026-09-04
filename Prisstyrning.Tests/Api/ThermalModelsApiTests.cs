@@ -73,6 +73,7 @@ public sealed class ThermalModelsApiTests
         var provenance = modelJson.GetProperty("provenance");
         Assert.True(provenance.GetProperty("verifiable").GetBoolean());
         Assert.Equal("grey-box-2r2c-v1", provenance.GetProperty("algorithmVersion").GetString());
+        Assert.Equal(ThermalCurrentModelTestData.BuildRevision, provenance.GetProperty("buildRevision").GetString());
         Assert.Equal(489, provenance.GetProperty("observationCount").GetInt32());
         Assert.False(modelJson.TryGetProperty("sourceEvidenceJson", out _));
         Assert.DoesNotContain("sampleFingerprint", content, StringComparison.OrdinalIgnoreCase);

@@ -11,11 +11,16 @@ public sealed class CopModelTrainingJob
 {
     private readonly PrisstyrningDbContext _db;
     private readonly CopModel _model;
+    private readonly RuntimeBuildProvenance _build;
 
-    public CopModelTrainingJob(PrisstyrningDbContext db, CopModel model)
+    public CopModelTrainingJob(
+        PrisstyrningDbContext db,
+        CopModel model,
+        RuntimeBuildProvenance build)
     {
         _db = db;
         _model = model;
+        _build = build;
     }
 
     [DisableConcurrentExecution(1800)]
@@ -53,7 +58,8 @@ public sealed class CopModelTrainingJob
             entities,
             result.Metrics.TrainingSamples,
             result.Metrics.ValidationSamples,
-            heatPumpPowerSignVerified: true);
+            heatPumpPowerSignVerified: true,
+            _build.RequireRevision());
         var previous = await _db.ThermalModelVersions
             .Where(x => x.UserId == userId && x.ModelType == "COP" && x.IsActive)
             .OrderByDescending(x => x.CreatedAtUtc)

@@ -158,6 +158,13 @@ De nio skipparna är befintliga tester som kräver nätverk eller saknar full HT
 - Ingen produktionsavläsning, publicering, deploy, appstart, körd migration, testsändning, konto-/credentialändring eller aktivering ingick. Den tidigare verifierade Legacy-produktionen ovan är historiskt driftbevis, inte en ny kontroll i detta pass.
 - Beständigt källbevis är nu lokalt implementerat, men automatisk återhashning av ändrad råhistorik, build-digestbindning, verklig PostgreSQL-konkurrens och fysisk Shadow-/DHW-/hygienacceptans återstår. `Legacy/Legacy` är fortsatt det enda driftgodkända läget. Den historiska punkten om automatisk återhashning slutfördes senare i [källomvalideringsrapporten](2026-09-01-thermal-model-source-revalidation.md); övriga gränser kvarstår.
 
+### Lokal kodverifiering 2026-09-04 – körande kodrevision
+
+- [Byggproveniensrapporten](2026-09-04-thermal-build-provenance-verification.md) redovisar inbakad källkodsrevision, modellbevis schema 2, `BuildChanged`-spärrar genom planering/readiness/skrivgräns och svensk omtränings-UX. Gammalt eller revisionsavvikande modellbevis kräver omträning; inga historiska rader skrivs om för att se godkända ut.
+- Slutlig lokal verifiering: **1 198 godkända backendtester/7 explicit överhoppade, 233 UI-tester och 26 tillämpliga browserflöden/6 projektexkluderingar**. Release-ombyggnad, TypeScript/Vite, avsedda revisionsbyggspärrar och `git diff --check` passerade. Sju backendundantag inkluderar den fortfarande ej körda PostgreSQL-acceptansen.
+- Container-/PR-workflowen har revisionsstämpling och containerattestering i källkoden. Ingen ny CI, publicering, signerad image eller digest verifierades; detta är inte release- eller aktiveringsbevis.
+- Ingen produktionsavläsning, push, deploy, migrationskörning, konto-/credentialändring eller testsändning ingick. Den lokala Docker Desktop-enginens pipe saknades vid skrivskyddad kontroll; ingen engine eller container startades. Befintligt historiskt driftbevis ovan är inte upprepat och `Legacy/Legacy` är fortsatt det enda driftgodkända läget.
+
 ## Rollback
 
 Vanlig rollback görs i samma Dockhand-stack utan databasåterläsning. Behåll de additiva tabellerna och krypteringsnyckeln.

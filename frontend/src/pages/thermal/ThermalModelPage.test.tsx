@@ -15,6 +15,7 @@ function model(): ThermalModelVersion {
       twoHourMaeC: .1, dayMaeC: .2, copMae: null, twoHourValidationWindows: 126, dayValidationWindows: 4 },
     sourceValidation: { passed: true, status: 'Current', reason: 'Exakt historiskt urval matchar.', checkedAtUtc: new Date(now).toISOString() },
     provenance: { verifiable: true, algorithmVersion: 'grey-box-2r2c-v1', selectionVersion: 'thermal-validated-history-v1', selectionFromUtc: '2026-07-01T00:00:00Z',
+      buildRevision: '0123456789abcdef0123456789abcdef01234567',
       selectionToUtc: '2026-08-30T00:00:00Z', observationCount: 2000, trainingSamples: 1600, validationSamples: 400 } };
 }
 const query = (data: unknown) => ({ data, isLoading: false, isError: false, isFetching: false, refetch: refresh });
@@ -66,6 +67,23 @@ describe('ThermalModelPage', () => {
     expect(screen.getByText(/historik eller inställningar har ändrats sedan träningen/)).toBeInTheDocument();
     expect(screen.getByText(/Källunderlaget har ändrats · träna om modellen/)).toBeInTheDocument();
     expect(screen.queryByText(/Källbevis saknas/)).not.toBeInTheDocument();
+  });
+
+  it('distinguishes a changed build revision and shows only a short safe commit id', async () => {
+    const version = model();
+    version.sourceValidation = { passed: false, status: 'BuildChanged', reason: 'Modellen tränades med en annan kodrevision.', checkedAtUtc: new Date(now).toISOString() };
+    version.validation = { ...version.validation!, passed: false, status: 'BuildChanged', reason: version.sourceValidation.reason };
+    hooks.models.mockReturnValue(query([version]));
+    const rendered = view();
+
+    expect(screen.getByText(/modellen hör till en annan kodrevision/)).toBeInTheDocument();
+    expect(screen.getByText(/Kodrevisionen har ändrats · träna om modellen/)).toBeInTheDocument();
+    hooks.models.mockReturnValue(query([model()]));
+    rendered.rerender(<main><ThermalModelPage /></main>);
+    const advanced = screen.getByRole('button', { name: /Avancerat: husmodell och rumskalibrering/ });
+    await userEvent.click(advanced);
+    expect(screen.getByText('Byggrevision: 0123456789ab')).toBeInTheDocument();
+    expect(screen.queryByText('0123456789abcdef0123456789abcdef01234567')).not.toBeInTheDocument();
   });
 
   it.each(['legacy', 'invalid', 'insufficient', 'expired', 'malformed-number'])('does not present %s active flags as validated', fault => {

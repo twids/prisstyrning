@@ -13,6 +13,7 @@ public sealed record ThermalModelSourceEvidence(
     int SchemaVersion,
     string AlgorithmVersion,
     string SelectionVersion,
+    string BuildRevision,
     DateTimeOffset SelectionFromUtc,
     DateTimeOffset SelectionToUtc,
     int ObservationCount,
@@ -27,6 +28,7 @@ public sealed record ThermalModelProvenanceSummary(
     bool Verifiable,
     string? AlgorithmVersion,
     string? SelectionVersion,
+    string? BuildRevision,
     DateTimeOffset? SelectionFromUtc,
     DateTimeOffset? SelectionToUtc,
     int? ObservationCount,
@@ -41,7 +43,7 @@ public sealed record ThermalModelSourceValidation(
 
 internal static class ThermalModelProvenance
 {
-    internal const int SchemaVersion = 1;
+    internal const int SchemaVersion = 2;
     internal const string ThermalAlgorithmVersion = "grey-box-2r2c-v1";
     internal const string CopAlgorithmVersion = "ridge-cop-v1";
     internal const string ThermalSelectionVersion = "thermal-validated-history-v1";
@@ -57,9 +59,13 @@ internal static class ThermalModelProvenance
         IReadOnlyCollection<ThermalEntityConfig> entities,
         int trainingSamples,
         int validationSamples,
-        bool heatPumpPowerSignVerified)
+        bool heatPumpPowerSignVerified,
+        string buildRevision)
     {
         if (string.IsNullOrWhiteSpace(userId)) throw new ArgumentException("An account is required.", nameof(userId));
+        var normalizedBuildRevision = RuntimeBuildProvenance.Normalize(buildRevision);
+        if (normalizedBuildRevision is null)
+            throw new ArgumentException("A valid 40- or 64-character build revision is required.", nameof(buildRevision));
         var (algorithmVersion, selectionVersion) = Versions(modelType);
         if (selectionFromUtc == default || selectionToUtc <= selectionFromUtc)
             throw new ArgumentException("The source selection window is invalid.", nameof(selectionFromUtc));
@@ -82,6 +88,7 @@ internal static class ThermalModelProvenance
             SchemaVersion,
             algorithmVersion,
             selectionVersion,
+            normalizedBuildRevision,
             selectionFromUtc,
             selectionToUtc,
             ordered.Length,
@@ -121,7 +128,10 @@ internal static class ThermalModelProvenance
             return null;
         }
         if (evidence.SchemaVersion != SchemaVersion || evidence.AlgorithmVersion != algorithm ||
-            evidence.SelectionVersion != selection || evidence.SelectionFromUtc == default ||
+            evidence.SelectionVersion != selection ||
+            RuntimeBuildProvenance.Normalize(evidence.BuildRevision) is null ||
+            RuntimeBuildProvenance.Normalize(evidence.BuildRevision) != evidence.BuildRevision ||
+            evidence.SelectionFromUtc == default ||
             evidence.SelectionToUtc <= evidence.SelectionFromUtc || model.TrainingFromUtc < evidence.SelectionFromUtc ||
             model.TrainingToUtc > evidence.SelectionToUtc || evidence.SelectionToUtc > model.CreatedAtUtc ||
             evidence.ObservationCount <= 0 || evidence.TrainingSamples <= 0 || evidence.ValidationSamples <= 0 ||
@@ -136,11 +146,12 @@ internal static class ThermalModelProvenance
     {
         var evidence = Read(model);
         return evidence is null
-            ? new(false, null, null, null, null, null, null, null)
+            ? new(false, null, null, null, null, null, null, null, null)
             : new(
                 true,
                 evidence.AlgorithmVersion,
                 evidence.SelectionVersion,
+                evidence.BuildRevision,
                 evidence.SelectionFromUtc,
                 evidence.SelectionToUtc,
                 evidence.ObservationCount,
@@ -156,11 +167,14 @@ internal static class ThermalModelProvenance
         IReadOnlyCollection<ThermalEntityConfig> enabledEntities,
         bool heatPumpPowerSignVerified,
         DateTimeOffset checkedAtUtc,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RuntimeBuildProvenance runningBuild)
     {
         if (string.IsNullOrWhiteSpace(userId)) throw new ArgumentException("An account is required.", nameof(userId));
         if (models.Select(x => x.Id).Any(x => x <= 0) || models.Select(x => x.Id).Distinct().Count() != models.Count)
             throw new ArgumentException("Persisted model versions must have unique positive identifiers.", nameof(models));
+        ArgumentNullException.ThrowIfNull(runningBuild);
+        var currentBuildRevision = runningBuild.Revision;
 
         var result = new Dictionary<long, ThermalModelSourceValidation>();
         var candidates = new List<(ThermalModelVersion Model, ThermalModelSourceEvidence Source)>();
@@ -174,7 +188,17 @@ internal static class ThermalModelProvenance
             var source = Read(model);
             if (source is null)
             {
-                result[model.Id] = Block("Unproven", "Modellen saknar ett läsbart, versionsbundet källbevis. Träna om modellen.", checkedAtUtc);
+                result[model.Id] = Block("Unproven", "Modellen saknar ett läsbart källbevis med exakt träningsurval och byggrevision. Träna om modellen.", checkedAtUtc);
+                continue;
+            }
+            if (currentBuildRevision is null)
+            {
+                result[model.Id] = Block("Unproven", "Den körande programversionen saknar en inbakad källkodsrevision. Använd en revisionsmärkt build; imagesignatur kontrolleras separat före driftsättning.", checkedAtUtc);
+                continue;
+            }
+            if (!string.Equals(source.BuildRevision, currentBuildRevision, StringComparison.Ordinal))
+            {
+                result[model.Id] = Block("BuildChanged", "Modellen tränades med en annan kodrevision än den som körs nu. Träna en ny modellversion med den aktuella programversionen.", checkedAtUtc);
                 continue;
             }
             candidates.Add((model, source));
@@ -213,9 +237,10 @@ internal static class ThermalModelProvenance
                     enabledEntities,
                     source.TrainingSamples,
                     source.ValidationSamples,
-                    heatPumpPowerSignVerified);
+                    heatPumpPowerSignVerified,
+                    currentBuildRevision!);
                 result[model.Id] = current == source
-                    ? new(true, "Current", "Exakt historiskt urval och konfiguration matchar modellens sparade källbevis.", checkedAtUtc)
+                    ? new(true, "Current", "Exakt historiskt urval, konfiguration och körande kodrevision matchar modellens sparade källbevis.", checkedAtUtc)
                     : Block("Changed", "Historiska mätningar eller konfiguration har ändrats sedan modellen tränades. Träna en ny version.", checkedAtUtc);
             }
             catch (ArgumentException)

@@ -253,7 +253,8 @@ public sealed class HomeAssistantCollectorValidationTests
             using var scope = Services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
             var connection = new HomeAssistantConnectionService(db, TestSecretProtector.Instance, new UnusedValidator(), Cache, new HomeAssistantConnectionChanges());
-            return await new ThermalReadinessService(db, Cache, connection).EvaluateAsync("account-a", ControlMode.Shadow);
+            return await new ThermalReadinessService(db, Cache, connection, ThermalCurrentModelTestData.Build)
+                .EvaluateAsync("account-a", ControlMode.Shadow);
         }
 
         internal async Task AssertLegacyAsync()

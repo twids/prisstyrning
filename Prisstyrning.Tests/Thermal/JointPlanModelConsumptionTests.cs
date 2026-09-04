@@ -276,6 +276,7 @@ public sealed class JointPlanModelConsumptionTests
     [Theory]
     [InlineData("deactivated-model")]
     [InlineData("changed-metrics")]
+    [InlineData("changed-build")]
     [InlineData("changed-settings")]
     [InlineData("rollback")]
     [InlineData("room-change")]
@@ -294,6 +295,13 @@ public sealed class JointPlanModelConsumptionTests
         {
             if (change == "deactivated-model") (await db.ThermalModelVersions.FirstAsync(x => x.ModelType == "2R2C")).IsActive = false;
             if (change == "changed-metrics") (await db.ThermalModelVersions.FirstAsync(x => x.ModelType == "COP")).MetricsJson = "{}";
+            if (change == "changed-build")
+            {
+                var version = await db.ThermalModelVersions.FirstAsync(x => x.ModelType == "2R2C");
+                var source = ThermalModelProvenance.Read(version)!;
+                version.SourceEvidenceJson = ThermalModelProvenance.Serialize(source with
+                { BuildRevision = "fedcba9876543210fedcba9876543210fedcba98" });
+            }
             if (change == "changed-settings") (await db.ThermalSiteConfigs.SingleAsync()).UpdatedAtUtc = DateTimeOffset.UtcNow;
             if (change == "rollback") (await db.ThermalSiteConfigs.SingleAsync()).ControlMode = "Legacy";
             if (change == "room-change") db.ThermalRoomConfigs.Add(new ThermalRoomConfig { UserId = "account-a", EntityId = "sensor.new_room" });
@@ -440,6 +448,7 @@ public sealed class JointPlanModelConsumptionTests
             var database = $"model-consumption-{Guid.NewGuid():N}";
             Services = new ServiceCollection().AddDbContext<PrisstyrningDbContext>(options => options.UseInMemoryDatabase(database))
                 .AddSingleton<CopModel>().AddScoped<DhwProfileEstimator>().AddSingleton<DhwCyclePlanner>()
+                .AddSingleton(ThermalCurrentModelTestData.Build)
                 .AddSingleton<IEmhassOptimizationDispatcher>(Dispatcher)
                 .AddSingleton<IEmhassClient>(Solver).BuildServiceProvider();
             Coordinator = new(Services.GetRequiredService<IServiceScopeFactory>(), Options.Create(new EmhassOptions { Enabled = true }),

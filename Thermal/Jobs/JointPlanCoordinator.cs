@@ -107,6 +107,7 @@ public sealed class JointPlanCoordinator : BackgroundService
         memory.LastAttemptUtc = DateTimeOffset.UtcNow;
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+        var build = scope.ServiceProvider.GetRequiredService<RuntimeBuildProvenance>();
         var site = await db.ThermalSiteConfigs.AsNoTracking().SingleAsync(x => x.UserId == userId, cancellationToken);
         var mode = ThermalEnumParser.ControlModeOrLegacy(site.ControlMode);
         if (mode == ControlMode.Legacy) return;
@@ -114,7 +115,7 @@ public sealed class JointPlanCoordinator : BackgroundService
             .OrderByDescending(x => x.TimestampUtc).FirstOrDefaultAsync(cancellationToken)
             ?? throw new InvalidOperationException("No thermal telemetry is available.");
         var planningStartedUtc = DateTimeOffset.UtcNow;
-        var models = await ThermalPlanningModels.ReadAsync(db, userId, telemetry.TimestampUtc, planningStartedUtc, cancellationToken);
+        var models = await ThermalPlanningModels.ReadAsync(db, userId, telemetry.TimestampUtc, planningStartedUtc, build, cancellationToken);
         site = models.Site;
         mode = ThermalEnumParser.ControlModeOrLegacy(site.ControlMode);
         var planningTelemetry = await ThermalPlanningInputs.ReadTelemetryAsync(
@@ -213,7 +214,7 @@ public sealed class JointPlanCoordinator : BackgroundService
             InputEvidence = inputEvidence,
             HorizonStartUtc = horizonStart
         };
-        await ThermalPlanningModels.EnsureCurrentAsync(db, userId, models.Evidence, DateTimeOffset.UtcNow, cancellationToken);
+        await ThermalPlanningModels.EnsureCurrentAsync(db, userId, models.Evidence, DateTimeOffset.UtcNow, build, cancellationToken);
         await ThermalPlanningInputs.EnsureCurrentAsync(db, userId, inputEvidence, DateTimeOffset.UtcNow, cancellationToken);
         var optimizer = scope.ServiceProvider.GetRequiredService<IEmhassOptimizationDispatcher>();
         var optimized = await optimizer.EnqueueAndWaitAsync(
@@ -228,7 +229,7 @@ public sealed class JointPlanCoordinator : BackgroundService
                 : null;
             // A rollback, retraining or settings change during the asynchronous solver
             // must not be turned into a newly valid plan or a DHW schedule update.
-            await ThermalPlanningModels.EnsureCurrentAsync(db, userId, models.Evidence, DateTimeOffset.UtcNow, cancellationToken);
+            await ThermalPlanningModels.EnsureCurrentAsync(db, userId, models.Evidence, DateTimeOffset.UtcNow, build, cancellationToken);
             await ThermalPlanningInputs.EnsureCurrentAsync(db, userId, inputEvidence, DateTimeOffset.UtcNow, cancellationToken);
             EmhassOptimizationValidation.ValidateResult(request, optimized, _options.OptimizationTimeStepMinutes);
 

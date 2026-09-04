@@ -98,6 +98,21 @@ public sealed class ThermalReadinessEvidenceTests
     }
 
     [Fact]
+    public async Task Readiness_MissingRuntimeBuildRevisionBlocksActiveModesWithoutChangingLegacy()
+    {
+        await using var fixture = new Fixture();
+        await fixture.Db.SaveChangesAsync();
+
+        var check = (await fixture.EvaluateAsync(
+            ControlMode.LwtActive,
+            RuntimeBuildProvenance.FromRevision(null))).Single(x => x.Key == "build-provenance");
+
+        Assert.False(check.Passed);
+        Assert.Contains("revisionsmärkt", check.Action, StringComparison.OrdinalIgnoreCase);
+        await fixture.AssertLegacyAsync();
+    }
+
+    [Fact]
     public async Task Readiness_ShadowCanCollectTrainingDataBeforeCopOrPowerSignIsProven()
     {
         await using var fixture = new Fixture();
@@ -353,10 +368,13 @@ public sealed class ThermalReadinessEvidenceTests
             Db.ThermalRoomConfigs.Add(new ThermalRoomConfig { UserId = "account-a", EntityId = "sensor.room", IsCritical = true });
         }
 
-        internal Task<IReadOnlyList<ReadinessCheck>> EvaluateAsync(ControlMode mode = ControlMode.LwtActive)
+        internal Task<IReadOnlyList<ReadinessCheck>> EvaluateAsync(
+            ControlMode mode = ControlMode.LwtActive,
+            RuntimeBuildProvenance? build = null)
         {
             var connections = new HomeAssistantConnectionService(Db, TestSecretProtector.Instance, new UnusedValidator(), _cache, new HomeAssistantConnectionChanges());
-            return new ThermalReadinessService(Db, _cache, connections).EvaluateAsync("account-a", mode);
+            return new ThermalReadinessService(Db, _cache, connections, build ?? ThermalCurrentModelTestData.Build)
+                .EvaluateAsync("account-a", mode);
         }
 
         internal async Task AssertLegacyAsync()

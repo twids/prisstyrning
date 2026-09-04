@@ -31,12 +31,17 @@ COPY --from=frontend-build /wwwroot ./wwwroot
 
 # Publish backend (framework-dependent)
 ARG BUILD_CONFIG=Release
-RUN --mount=type=cache,target=/root/.nuget/packages dotnet publish Prisstyrning.csproj -c $BUILD_CONFIG -o /app/publish
+ARG SOURCE_REVISION
+RUN --mount=type=cache,target=/root/.nuget/packages dotnet publish Prisstyrning.csproj -c "$BUILD_CONFIG" -o /app/publish \
+    -p:PrisstyrningSourceRevision="$SOURCE_REVISION" \
+    -p:PrisstyrningRequireSourceRevision=true
 
 # Stage 3: Final runtime image
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
+ARG SOURCE_REVISION
 ENV ASPNETCORE_URLS=http://+:5000
+LABEL org.opencontainers.image.revision=$SOURCE_REVISION
 EXPOSE 5000
 COPY --from=backend-build /app/publish .
 ENTRYPOINT ["dotnet", "Prisstyrning.dll"]

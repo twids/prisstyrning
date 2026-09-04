@@ -22,6 +22,7 @@ internal static class ThermalPlanConsumption
         PrisstyrningDbContext db,
         string userId,
         DateTimeOffset now,
+        RuntimeBuildProvenance build,
         CancellationToken cancellationToken)
     {
         var plan = await db.ThermalPlans.AsNoTracking().Include(x => x.Steps)
@@ -38,7 +39,7 @@ internal static class ThermalPlanConsumption
 
         var evidence = ReadEvidence(plan.InputSnapshotJson);
         var inputEvidence = ReadInputEvidence(plan.InputSnapshotJson);
-        var models = await ThermalPlanningModels.EnsureStoredPlanCurrentAsync(db, userId, evidence, now, cancellationToken);
+        var models = await ThermalPlanningModels.EnsureStoredPlanCurrentAsync(db, userId, evidence, now, build, cancellationToken);
         await ThermalPlanningInputs.EnsureCurrentAsync(
             db, userId, inputEvidence, now, cancellationToken, requireFreshTelemetry: false);
         var duration = plan.ValidUntilUtc - plan.ValidFromUtc;
@@ -62,9 +63,10 @@ internal static class ThermalPlanConsumption
         string userId,
         ValidatedThermalPlan validated,
         DateTimeOffset now,
+        RuntimeBuildProvenance build,
         CancellationToken cancellationToken)
     {
-        await ThermalPlanningModels.EnsureStoredPlanCurrentAsync(db, userId, validated.ModelEvidence, now, cancellationToken);
+        await ThermalPlanningModels.EnsureStoredPlanCurrentAsync(db, userId, validated.ModelEvidence, now, build, cancellationToken);
         await ThermalPlanningInputs.EnsureCurrentAsync(
             db, userId, validated.InputEvidence, now, cancellationToken, requireFreshTelemetry: false);
         var current = await db.ThermalPlans.AsNoTracking().Include(x => x.Steps)
@@ -176,9 +178,17 @@ internal static class ThermalPlanConsumption
             plan.InputSnapshotJson,
             steps = steps.Select(x => new
             {
-                x.Id, x.StartUtc, x.EndUtc, x.DesiredHeatOutputKw, x.DesiredLwtDeviationC,
-                x.DhwReserved, x.DhwMode, x.IncrementalCost, x.Confidence,
-                x.ExpectedRoomsJson, x.DecisionReasonJson
+                x.Id,
+                x.StartUtc,
+                x.EndUtc,
+                x.DesiredHeatOutputKw,
+                x.DesiredLwtDeviationC,
+                x.DhwReserved,
+                x.DhwMode,
+                x.IncrementalCost,
+                x.Confidence,
+                x.ExpectedRoomsJson,
+                x.DecisionReasonJson
             })
         }, JsonSerializerOptions.Web);
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));

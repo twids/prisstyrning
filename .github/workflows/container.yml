@@ -10,6 +10,7 @@ permissions:
   contents: read
   packages: write
   id-token: write
+  attestations: write
 
 env:
   IMAGE_NAME: prisstyrning
@@ -48,6 +49,7 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -55,12 +57,24 @@ jobs:
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            SOURCE_REVISION=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Attest container build provenance
+        uses: actions/attest@v4
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+
       - name: Publish dotnet artifact (optional)
         run: |
-          dotnet publish -c Release -o artifact
+          dotnet publish -c Release -o artifact \
+            -p:PrisstyrningSourceRevision=${{ github.sha }} \
+            -p:PrisstyrningRequireSourceRevision=true
         if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Upload artifact
