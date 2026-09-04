@@ -253,7 +253,9 @@ EF Core migrations are applied automatically on startup.
 
 ### Testing
 * Backend: `dotnet test --verbosity normal`
-* Isolated PostgreSQL 17 acceptance: `powershell -File scripts/test-postgres-acceptance.ps1` (requires a working local Docker engine; never point it at an existing database)
+* PostgreSQL harness safety without Docker: `pwsh -NoProfile -File scripts/test-postgres-harness-safety.ps1`
+* PostgreSQL harness endpoint preflight without contacting an engine: `pwsh -NoProfile -File scripts/test-postgres-acceptance.ps1 -SafetyCheckOnly`
+* Isolated PostgreSQL 17 acceptance: `pwsh -NoProfile -File scripts/test-postgres-acceptance.ps1` (defaults to the local Docker Desktop Linux pipe; requires a working local engine and the configured .NET SDK, never an existing database). For native Linux Docker, pass `-DockerEndpoint unix:///var/run/docker.sock`. Only explicitly allowlisted local sockets are accepted; remove `DOCKER_CONTEXT`/`DOCKER_HOST` overrides from the test process. Every operation, including cleanup, uses the pinned socket without changing the user's selected context.
 * Frontend unit/accessibility: `cd frontend && npm test`
 * Frontend production build: `cd frontend && npm run build`
 * Critical browser flows: `cd frontend && npm run test:e2e`

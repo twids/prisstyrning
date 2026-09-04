@@ -12,6 +12,8 @@ The subsequent source-only [thermal-model source revalidation](2026-09-01-therma
 
 The latest source-only [runtime build provenance](2026-09-04-thermal-build-provenance-verification.md) increment binds schema-2 model evidence to the exact source revision embedded in the running assembly. Missing or different revisions block model approval and the Swedish UI explains retraining. Container attestation is configured in the workflow but no new CI, signed image, digest or production state was verified in this increment.
 
+The following tooling-only [PostgreSQL harness safety](2026-09-04-postgresql-harness-safety.md) follow-up pins every Docker operation to an explicitly allowed local socket and rejects environment overrides before engine contact. Its 51 endpoint, disclosure and command-routing checks passed without Docker and are added to the PR workflow. Application/backend/frontend sources are unchanged from the preceding verified increment; actual PostgreSQL and CI execution remain open.
+
 ## Delivered
 
 - Additive EF Core storage for site/room/entity configuration, five-minute telemetry, hourly aggregates, model versions, plans/steps, DHW cycles, control state, writer leases, command audit and fallback events.

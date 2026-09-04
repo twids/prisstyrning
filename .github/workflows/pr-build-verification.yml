@@ -47,6 +47,10 @@ jobs:
             --collect:"XPlat Code Coverage" \
             --results-directory ./coverage \
             --logger "trx;LogFileName=test-results.trx"
+
+      - name: Verify PostgreSQL harness safety without Docker
+        shell: pwsh
+        run: ./scripts/test-postgres-harness-safety.ps1
       
       - name: Generate coverage report
         if: always()

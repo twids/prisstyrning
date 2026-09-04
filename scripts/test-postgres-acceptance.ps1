@@ -1,20 +1,53 @@
 [CmdletBinding()]
-param()
+param(
+    [string] $DockerEndpoint = 'npipe:////./pipe/dockerDesktopLinuxEngine',
+    [switch] $SafetyCheckOnly
+)
 
 $ErrorActionPreference = 'Stop'
+$allowedEndpoints = @(
+    'npipe:////./pipe/dockerDesktopLinuxEngine',
+    'npipe:////./pipe/docker_engine',
+    'unix:///var/run/docker.sock',
+    'unix:///run/docker.sock'
+)
+if ($allowedEndpoints -cnotcontains $DockerEndpoint) {
+    throw 'PostgreSQL acceptance requires an explicitly allowed local Docker socket. TCP, SSH, remote pipes and custom endpoints are not permitted.'
+}
+if (-not [string]::IsNullOrEmpty($env:DOCKER_CONTEXT) -or
+    -not [string]::IsNullOrEmpty($env:DOCKER_HOST)) {
+    throw 'Remove DOCKER_CONTEXT and DOCKER_HOST overrides from this test process before running PostgreSQL acceptance. Their values are not logged.'
+}
+
+# Pin every operation, including cleanup, to the checked socket. Never depend
+# on a mutable selected context or inherit an environment-selected remote host.
+$dockerArguments = @('--host', $DockerEndpoint)
+if ($SafetyCheckOnly) {
+    [pscustomobject]@{
+        Endpoint = $DockerEndpoint
+        DockerArguments = $dockerArguments
+        EngineContacted = $false
+    }
+    return
+}
+
+$dockerPath = (Get-Command docker -CommandType Application -ErrorAction Stop |
+        Select-Object -First 1).Source
 $suffix = [Guid]::NewGuid().ToString('N').Substring(0, 12)
 $containerName = "prisstyrning-pg-acceptance-$suffix"
 $databaseName = "prisstyrning_acceptance_$suffix"
 $started = $false
 
 function Assert-DockerReady {
-    $dockerPath = (Get-Command docker -CommandType Application -ErrorAction Stop |
-            Select-Object -First 1).Source
-    $process = Start-Process `
-        -FilePath $dockerPath `
-        -ArgumentList @('version', '--format', '{{.Server.Version}}') `
-        -WindowStyle Hidden `
-        -PassThru
+    $startParameters = @{
+        FilePath = $dockerPath
+        ArgumentList = $dockerArguments + @('version', '--format', '{{.Server.Version}}')
+        PassThru = $true
+    }
+    if ($PSVersionTable.PSEdition -eq 'Desktop' -or $IsWindows) {
+        $startParameters.WindowStyle = 'Hidden'
+    }
+    $process = Start-Process @startParameters
     try {
         if (-not $process.WaitForExit(15000)) {
             $process.Kill($true)
@@ -33,7 +66,7 @@ function Assert-DockerReady {
 try {
     Assert-DockerReady
 
-    docker run --detach --rm `
+    & $dockerPath @dockerArguments run --detach --rm `
         --name $containerName `
         --publish '127.0.0.1::5432' `
         --env POSTGRES_HOST_AUTH_METHOD=trust `
@@ -50,7 +83,7 @@ try {
 
     $deadline = (Get-Date).AddSeconds(45)
     do {
-        $health = docker inspect --format '{{.State.Health.Status}}' $containerName
+        $health = & $dockerPath @dockerArguments inspect --format '{{.State.Health.Status}}' $containerName
         if ($LASTEXITCODE -ne 0) {
             throw 'Could not read the isolated PostgreSQL container health.'
         }
@@ -63,7 +96,7 @@ try {
         Start-Sleep -Milliseconds 500
     } while ($true)
 
-    $portMapping = docker port $containerName 5432/tcp
+    $portMapping = & $dockerPath @dockerArguments port $containerName 5432/tcp
     if ($LASTEXITCODE -ne 0 -or $portMapping -notmatch ':(\d+)$') {
         throw 'Could not read the random local PostgreSQL port.'
     }
@@ -82,6 +115,6 @@ try {
 finally {
     Remove-Item Env:\PRISSTYRNING_TEST_POSTGRES -ErrorAction SilentlyContinue
     if ($started) {
-        docker stop --time 10 $containerName | Out-Null
+        & $dockerPath @dockerArguments stop --time 10 $containerName | Out-Null
     }
 }

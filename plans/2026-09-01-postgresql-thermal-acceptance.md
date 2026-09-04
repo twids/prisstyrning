@@ -16,6 +16,8 @@ Ingen produktionsdatabas, Unraid-/Dockhand-stack, migration i drift, app, worker
 - containern körs med `--rm` och stoppas i `finally` även när testet misslyckas;
 - anslutningen saknar applikations-, HA- och Daikin-hemligheter.
 
+Uppföljningen [låst lokal Docker-endpoint](2026-09-04-postgresql-harness-safety.md) stänger nu även en lucka före databasanslutningen: ett implicit valt Docker-context kunde annars rikta själva containerstarten mot en annan värd. Harnessen tillåter endast namngivna lokala sockets, avvisar `DOCKER_CONTEXT`/`DOCKER_HOST` och använder explicit `--host` även för readiness och städning. Den ändrar inget globalt context. `-SafetyCheckOnly` och den fristående säkerhetssviten kan köras utan en Docker-engine; det är inte PostgreSQL-acceptans.
+
 Själva testet kontrollerar på nytt loopback-host, namn-prefix, tomt `public`-schema och PostgreSQL 17 eller senare innan migrationerna körs. Ett befintligt schema gör att testet stoppar utan att radera någonting.
 
 ## Acceptanskriterier
