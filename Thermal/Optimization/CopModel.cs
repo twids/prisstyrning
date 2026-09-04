@@ -13,7 +13,7 @@ public sealed record CopParameters(
     double LwtCoefficient,
     double LoadCoefficient);
 
-public sealed record CopModelMetrics(double Mae, int TrainingSamples, int ValidationSamples);
+public sealed record CopModelMetrics(double Mae, int TrainingSamples, int ValidationSamples, int ValidationVersion = 0);
 
 public sealed record CopTrainingResult(CopParameters Parameters, CopModelMetrics Metrics);
 
@@ -38,14 +38,23 @@ public sealed class CopModel
     public CopTrainingResult Train(IReadOnlyList<CopObservation> observations)
     {
         if (observations.Count < 100) throw new ArgumentException("At least 100 valid COP observations are required.");
+        if (observations.Any(x => !IsUsableObservation(x)))
+            throw new ArgumentException("COP observations must have finite physical values and valid timestamps.", nameof(observations));
         var ordered = observations.OrderBy(x => x.TimestampUtc).ToArray();
+        if (ordered.Select(x => x.TimestampUtc).Distinct().Count() != ordered.Length)
+            throw new ArgumentException("Duplicate COP observation timestamps are not valid training data.", nameof(observations));
         var split = Math.Clamp((int)(ordered.Length * 0.8), 80, ordered.Length - 20);
         var training = ordered[..split];
         var validation = ordered[split..];
         var parameters = Bound(SolveRidge(training) ?? ConservativeDefault);
         var mae = validation.Average(x => Math.Abs(Predict(parameters, x.BrineInC, x.LeavingWaterTemperatureC, x.HeatOutputKw) - x.Cop));
-        return new CopTrainingResult(parameters, new CopModelMetrics(mae, training.Length, validation.Length));
+        return new CopTrainingResult(parameters, new CopModelMetrics(mae, training.Length, validation.Length, ValidationVersion: 1));
     }
+
+    internal static bool IsUsableObservation(CopObservation value) => value.TimestampUtc != default &&
+        double.IsFinite(value.BrineInC) && double.IsFinite(value.LeavingWaterTemperatureC) &&
+        double.IsFinite(value.HeatOutputKw) && value.HeatOutputKw > .5 &&
+        double.IsFinite(value.Cop) && value.Cop is >= 1.2 and <= 8;
 
     private static CopParameters? SolveRidge(IReadOnlyList<CopObservation> observations)
     {

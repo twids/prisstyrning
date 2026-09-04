@@ -605,6 +605,12 @@ namespace Prisstyrning.Data.Migrations
                         .IsRequired()
                         .HasColumnType("jsonb");
 
+                    b.Property<string>("SourceEvidenceJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("{}");
+
                     b.Property<DateTimeOffset>("TrainingFromUtc")
                         .HasColumnType("timestamp with time zone");
 

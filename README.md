@@ -109,10 +109,14 @@ Double underscore `__` maps to nested sections (standard .NET config convention)
 | Root | PORT | `PRISSTYRNING_PORT` | ASP.NET listening port (defaults 5000) |
 
 ## Run locally (Docker)
-Build image:
+
+Build from a clean checkout, passing its full commit ID into the binary:
+
 ```bash
-docker build -t prisstyrning:local .
+docker build --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" -t prisstyrning:local .
 ```
+
+`SOURCE_REVISION` is a build argument, not a runtime environment setting. The Docker build rejects missing, malformed and all-zero revisions. This local stamp identifies the selected source but is not a signature; do not use a dirty checkout or a manually stamped test build as release evidence.
 
 Run container (requires a running PostgreSQL instance and a protected credential-key file):
 ```bash
@@ -140,12 +144,13 @@ docker compose -f docker-compose.example.yml up -d
 Before upgrading the existing Dockhand stack:
 
 1. Copy every currently effective ONECTA, Nord Pool, schedule, OAuth, routing and database value from the running stack. In particular, do not accidentally change `Daikin__ApplySchedule`; the legacy DHW job must keep behaving exactly as it does today.
-2. Generate one credential key outside Git (`openssl rand -base64 32`) and mount it as `/run/secrets/credential_encryption_key`. Keep a protected backup: losing it makes encrypted Daikin and HA credentials unrecoverable.
+2. Preserve the existing credential key and protected backup when upgrading. Only for a first installation, generate one key outside Git (`openssl rand -base64 32`) and mount it as `/run/secrets/credential_encryption_key`. Losing or replacing an existing key makes its encrypted Daikin and HA credentials unreadable.
 3. Keep `PreserveLegacyDaikinTokenColumns=true` for the first canary. The new image reads encrypted credentials, while the old columns remain readable by the previous image if Dockhand rolls back. After acceptance, set it to `false`; startup then clears those legacy plaintext values idempotently.
 4. Do not configure Home Assistant URL or tokens in Compose. Log in with the same Daikin account used by legacy, then save the account's HA connection in the UI. Create the separate control identity only before the later LWT stage; it is reserved for the exact P1P2 `Deviation_Heating` entity.
 5. Validate the rendered Dockhand/Compose configuration and confirm that only `prisstyrning` is attached to both networks. EMHASS must have no published port and no HA credential.
 6. Persist Data Protection keys below the existing `/data` mount. Existing unsigned browser IDs are not accepted as account identities; authenticate once through Daikin to create the signed account session.
-7. Upgrade the existing stack, but leave the database mode at `Legacy`, `EnableDhwWriterCoordination=false`, `AllowLwtActive=false`, `AllowFullActive=false` and `Emhass:Enabled=false`. This keeps the existing scheduled ONECTA write path unchanged during the first canary. The migration is additive; no legacy table or endpoint is removed.
+7. For a new release from the provenance-enabled workflow, verify its signed build attestation against the exact image digest, expected repository/workflow and reviewed source commit (see below). Keep the previously verified image digest and Compose backup for rollback; a moving tag or assembly revision alone is insufficient release evidence.
+8. Upgrade the existing stack only after approval, but leave the database mode at `Legacy`, `EnableDhwWriterCoordination=false`, `AllowLwtActive=false`, `AllowFullActive=false` and `Emhass:Enabled=false`. This keeps the existing scheduled ONECTA write path unchanged during the first canary. The migration is additive; no legacy table or endpoint is removed.
 
 `GET /health/live` checks the web process. `GET /health/ready` additionally checks PostgreSQL connectivity and that no EF migration remains pending. HA and EMHASS are deliberately excluded from Legacy readiness.
 
@@ -164,14 +169,23 @@ At any point in an active mode, use the permanently visible **Rollback** action.
 The EMHASS image requires placeholder HA fields during initialization, but [`emhass/secrets_emhass.stateless.yaml`](emhass/secrets_emhass.stateless.yaml) intentionally contains no valid HA address or credential. Do not replace it with a real token. `prisstyrning` supplies prices, load, outdoor temperature, comfort bounds and DHW reservation in each request, then validates the freshly written `opt_res_latest.csv`. It never calls `publish-data`.
 
 ## GitHub Container Registry
-Workflow (`.github/workflows/container.yml`) builds multi-arch and pushes manifest to:
+
+Workflow (`.github/workflows/container.yml`) builds `linux/amd64` and pushes to:
+
 ```
 ghcr.io/<owner>/prisstyrning
 ```
-On `master` pushes and version tags (`v*.*.*`).
+On `master` pushes, version tags (`v*.*.*`) and manual dispatch. ARM64/QEMU is not currently configured for this application image.
 
-## Multi-arch notes
-The GitHub Actions pipeline enables `linux/amd64` and `linux/arm64` with QEMU emulation. If you only need one architecture, drop the `platforms:` line for faster builds.
+The workflow embeds the checked-out `github.sha` in `Prisstyrning.dll` and the OCI revision label, and requests a signed build-provenance attestation for the resulting digest with `actions/attest`. Verify a future published artifact before an approved upgrade:
+
+```bash
+gh attestation verify oci://ghcr.io/twids/prisstyrning@sha256:IMAGE_DIGEST -R twids/prisstyrning
+```
+
+Replace `IMAGE_DIGEST` with the exact published digest and inspect the verified source commit and workflow, not just the command's exit code. Follow the [official artifact-attestation verification guidance](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations). Workflow configuration is not proof that an image has been signed: the first publish/attestation from these source-only changes still needs CI and registry verification. Earlier deployed images are not retroactively attested.
+
+New 2R2C/COP source evidence includes the binary's embedded revision. Missing revision or a different running revision makes the model unproven until retraining, including after changes outside the thermal algorithms. This conservative rule does not disable Legacy-DHW. Ordinary local `dotnet build` still works without a stamp, but cannot produce approved thermal models; use a clean checkout and `-p:PrisstyrningSourceRevision="$(git rev-parse HEAD)" -p:PrisstyrningRequireSourceRevision=true` when testing revision-bound training. See [migration implications](MIGRATION.md) and the [source-only verification record](plans/2026-09-04-thermal-build-provenance-verification.md).
 
 ## Build Verification
 All pull requests are automatically verified with GitHub Actions (`.github/workflows/pr-build-verification.yml`):
@@ -239,6 +253,9 @@ EF Core migrations are applied automatically on startup.
 
 ### Testing
 * Backend: `dotnet test --verbosity normal`
+* PostgreSQL harness safety without Docker: `pwsh -NoProfile -File scripts/test-postgres-harness-safety.ps1`
+* PostgreSQL harness endpoint preflight without contacting an engine: `pwsh -NoProfile -File scripts/test-postgres-acceptance.ps1 -SafetyCheckOnly`
+* Isolated PostgreSQL 17 acceptance: `pwsh -NoProfile -File scripts/test-postgres-acceptance.ps1` (defaults to the local Docker Desktop Linux pipe; requires a working local engine and the configured .NET SDK, never an existing database). For native Linux Docker, pass `-DockerEndpoint unix:///var/run/docker.sock`. Only explicitly allowlisted local sockets are accepted; remove `DOCKER_CONTEXT`/`DOCKER_HOST` overrides from the test process. Every operation, including cleanup, uses the pinned socket without changing the user's selected context.
 * Frontend unit/accessibility: `cd frontend && npm test`
 * Frontend production build: `cd frontend && npm run build`
 * Critical browser flows: `cd frontend && npm run test:e2e`

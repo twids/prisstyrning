@@ -1,4 +1,6 @@
 import type * as T from '../types/api';
+import { readControlMode, readDataQuality, readThermalStatus, writeControlMode } from './thermalContract';
+import type { ThermalStatusWire } from './thermalContract';
 
 class ApiClient {
   private baseUrl = ''; // Empty for same-origin requests (Vite proxy handles routing)
@@ -133,7 +135,7 @@ class ApiClient {
 
   // Intelligent thermal orchestration
   async getThermalStatus(): Promise<T.ThermalStatus> {
-    return this.get('/api/thermal/status');
+    return readThermalStatus(await this.get<ThermalStatusWire>('/api/thermal/status'));
   }
 
   async getThermalConfig(): Promise<T.ThermalConfig> {
@@ -145,11 +147,12 @@ class ApiClient {
   }
 
   async getThermalReadiness(targetMode: T.ControlMode): Promise<T.ThermalReadiness> {
-    return this.get(`/api/thermal/readiness?targetMode=${encodeURIComponent(targetMode)}`);
+    const readiness = await this.get<Omit<T.ThermalReadiness, 'targetMode'> & { targetMode: unknown }>(`/api/thermal/readiness?targetMode=${encodeURIComponent(targetMode)}`);
+    return { ...readiness, targetMode: readControlMode(readiness.targetMode) };
   }
 
   async changeThermalMode(mode: T.ControlMode): Promise<{ message: string }> {
-    return this.post('/api/thermal/mode', { mode, confirmed: true });
+    return this.post('/api/thermal/mode', { mode: writeControlMode(mode), confirmed: true });
   }
 
   async getThermalPlan(): Promise<T.ThermalPlan | null> {
@@ -199,7 +202,8 @@ class ApiClient {
   }
 
   async getHomeAssistantEntities(): Promise<T.HomeAssistantEntity[]> {
-    return this.get('/api/home-assistant/entities');
+    const entities = await this.get<(Omit<T.HomeAssistantEntity, 'quality'> & { quality: unknown })[]>('/api/home-assistant/entities');
+    return entities.map(entity => ({ ...entity, quality: readDataQuality(entity.quality) }));
   }
 
   async importHomeAssistantHistory(fromUtc: string, toUtc: string): Promise<T.HomeAssistantHistoryImportResult> {

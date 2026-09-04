@@ -11,11 +11,16 @@ public sealed class ThermalModelTrainingJob
 {
     private readonly PrisstyrningDbContext _db;
     private readonly GreyBoxThermalModel _model;
+    private readonly RuntimeBuildProvenance _build;
 
-    public ThermalModelTrainingJob(PrisstyrningDbContext db, GreyBoxThermalModel model)
+    public ThermalModelTrainingJob(
+        PrisstyrningDbContext db,
+        GreyBoxThermalModel model,
+        RuntimeBuildProvenance build)
     {
         _db = db;
         _model = model;
+        _build = build;
     }
 
     [DisableConcurrentExecution(1800)]
@@ -27,22 +32,40 @@ public sealed class ThermalModelTrainingJob
 
     internal async Task TrainUserAsync(string userId, CancellationToken cancellationToken)
     {
-        var from = DateTimeOffset.UtcNow.AddDays(-60);
-        var samples = await _db.ThermalTelemetrySamples.AsNoTracking()
-            .Where(x => x.UserId == userId && x.TimestampUtc >= from && x.DhwActive != true && x.DefrostActive != true &&
-                        x.OutsideTemperatureC != null && x.HeatOutputKw != null)
+        var now = DateTimeOffset.UtcNow;
+        var from = now.AddDays(-60);
+        var rooms = await _db.ThermalRoomConfigs.AsNoTracking().Where(x => x.UserId == userId && x.Enabled).ToListAsync(cancellationToken);
+        var entities = await _db.ThermalEntityConfigs.AsNoTracking().Where(x => x.UserId == userId && x.Enabled).ToListAsync(cancellationToken);
+        var samples = await ThermalModelTrainingData.ThermalCandidates(
+                _db.ThermalTelemetrySamples.AsNoTracking(), userId, from, now)
             .OrderBy(x => x.TimestampUtc)
             .ToListAsync(cancellationToken);
-        var observations = samples.Select(ToObservation).Where(x => x is not null).Cast<ThermalObservation>().ToArray();
+        var selected = ThermalModelTrainingData.SelectThermal(samples, userId, from, now, rooms, entities);
+        var observations = selected.Select(x => x.Observation).ToArray();
         if (observations.Length < 21 * 24 * 12 * 0.98) return;
 
         var result = _model.Train(observations);
-        var parameters = result.Parameters with { RoomAdjustments = EstimateRoomAdjustments(samples) };
-        var accepted = result.Metrics.TwoHourMaeC <= 0.3 && result.Metrics.DayMaeC <= 0.6;
+        var fittingSampleIds = selected.Take(result.Metrics.TrainingSamples).Select(x => x.Sample.Id).ToHashSet();
+        var parameters = result.Parameters with
+        {
+            RoomAdjustments = EstimateRoomAdjustments(
+                selected.Where(x => fittingSampleIds.Contains(x.Sample.Id)).Select(x => x.Sample).ToArray(), rooms)
+        };
+        var provenance = ThermalModelProvenance.Create(
+            userId,
+            "2R2C",
+            from,
+            now,
+            selected.Select(x => x.Sample).ToArray(),
+            rooms,
+            entities,
+            result.Metrics.TrainingSamples,
+            result.Metrics.ValidationSamples,
+            heatPumpPowerSignVerified: false,
+            _build.RequireRevision());
         var previous = await _db.ThermalModelVersions
             .Where(x => x.UserId == userId && x.ModelType == "2R2C" && x.IsActive)
             .OrderByDescending(x => x.CreatedAtUtc).FirstOrDefaultAsync(cancellationToken);
-        if (accepted && previous is not null) previous.IsActive = false;
         var version = new ThermalModelVersion
         {
             UserId = userId,
@@ -50,10 +73,13 @@ public sealed class ThermalModelTrainingJob
             CreatedAtUtc = DateTimeOffset.UtcNow,
             TrainingFromUtc = observations.First().TimestampUtc,
             TrainingToUtc = observations.Last().TimestampUtc,
-            IsActive = accepted,
             ParametersJson = JsonSerializer.Serialize(parameters, CamelCase),
-            MetricsJson = JsonSerializer.Serialize(result.Metrics, CamelCase)
+            MetricsJson = JsonSerializer.Serialize(result.Metrics, CamelCase),
+            SourceEvidenceJson = ThermalModelProvenance.Serialize(provenance)
         };
+        var accepted = ThermalModelEvidence.Assess(version, DateTimeOffset.UtcNow).Passed;
+        version.IsActive = accepted;
+        if (accepted && previous is not null) previous.IsActive = false;
         _db.ThermalModelVersions.Add(version);
         if (accepted && previous is not null && MateriallyChanged(previous.ParametersJson, parameters))
         {
@@ -70,17 +96,18 @@ public sealed class ThermalModelTrainingJob
     }
 
     internal static IReadOnlyDictionary<string, RoomThermalAdjustment> EstimateRoomAdjustments(
-        IReadOnlyCollection<ThermalTelemetrySample> samples)
+        IReadOnlyCollection<ThermalTelemetrySample> samples,
+        IReadOnlyCollection<ThermalRoomConfig>? configuredRooms = null)
     {
         var rows = new List<(DateTimeOffset TimestampUtc, Dictionary<string, double> Rooms, double Representative)>();
         foreach (var sample in samples.OrderBy(x => x.TimestampUtc))
         {
             try
             {
-                var rooms = JsonSerializer.Deserialize<Dictionary<string, double>>(sample.RoomTemperaturesJson);
-                var validRooms = rooms?
-                    .Where(x => ThermalDiagnosticsService.IsRoomValid(sample.QualityJson, x.Key))
-                    .ToDictionary(x => x.Key, x => x.Value, StringComparer.OrdinalIgnoreCase);
+                var validRooms = ThermalModelTrainingData.ReadRooms(sample);
+                if (configuredRooms is not null) validRooms = validRooms.Where(pair => configuredRooms.Any(room => room.Enabled &&
+                    room.EntityId.Equals(pair.Key, StringComparison.OrdinalIgnoreCase) && pair.Value >= room.MinimumValidC && pair.Value <= room.MaximumValidC))
+                    .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
                 if (validRooms is { Count: > 0 }) rows.Add((sample.TimestampUtc, validRooms, validRooms.Values.Average()));
             }
             catch (JsonException)
@@ -120,34 +147,6 @@ public sealed class ThermalModelTrainingJob
                 series.Length);
         }
         return result;
-    }
-
-    private static ThermalObservation? ToObservation(ThermalTelemetrySample sample)
-    {
-        try
-        {
-            var rooms = JsonSerializer.Deserialize<Dictionary<string, double>>(sample.RoomTemperaturesJson);
-            var validRooms = rooms?
-                .Where(x => ThermalDiagnosticsService.IsRoomValid(sample.QualityJson, x.Key))
-                .Select(x => x.Value)
-                .ToArray();
-            if (validRooms is not { Length: > 0 }) return null;
-            return new ThermalObservation(
-                sample.TimestampUtc,
-                validRooms.Average(),
-                sample.OutsideTemperatureC!.Value,
-                sample.HeatOutputKw!.Value,
-                sample.LeavingWaterTemperatureC,
-                sample.BrineInC,
-                sample.Cop,
-                sample.BackupHeaterActive == true,
-                sample.WindSpeedMps,
-                sample.SolarIrradianceWm2);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
     }
 
     private static bool MateriallyChanged(string previousJson, GreyBoxParameters current)

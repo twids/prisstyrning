@@ -3,6 +3,7 @@ import { Alert, Box, Button, CircularProgress, Paper, Stack, Typography } from '
 import LoginOutlinedIcon from '@mui/icons-material/LoginOutlined';
 import HeatPumpOutlinedIcon from '@mui/icons-material/HeatPumpOutlined';
 import ShieldOutlinedIcon from '@mui/icons-material/ShieldOutlined';
+import RefreshOutlinedIcon from '@mui/icons-material/RefreshOutlined';
 import { apiClient } from '../api/client';
 import { useSession } from '../hooks/useSession';
 
@@ -12,11 +13,32 @@ export default function SessionGate({ children }: { children: ReactNode }) {
   const [startError, setStartError] = useState<string | null>(null);
 
   if (session.isLoading) {
-    return <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><CircularProgress aria-label="Kontrollerar inloggning" /></Box>;
+    return <Box component="main" sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><CircularProgress aria-label="Kontrollerar inloggning" /></Box>;
   }
 
   if (session.isError) {
-    return <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center', p: 2 }}><Alert severity="error">Inloggningsstatus kunde inte kontrolleras. {session.error.message}</Alert></Box>;
+    return (
+      <Box component="main" sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center', p: 2 }}>
+        <Paper variant="outlined" sx={{ width: 'min(100%, 540px)', p: { xs: 3, sm: 5 }, borderRadius: 4 }}>
+          <Stack spacing={3}>
+            <Typography variant="h4" component="h1">Inloggningen kunde inte kontrolleras</Typography>
+            <Alert severity="error">Webbsidan kan inte verifiera din inloggning just nu. Inga anläggningsuppgifter visas.</Alert>
+            <Typography color="text.secondary">Försök igen när anslutningen fungerar. Kontrollen ändrar inga inställningar eller scheman.</Typography>
+            <Button
+              fullWidth
+              size="large"
+              variant="contained"
+              startIcon={session.isFetching ? <CircularProgress size={18} color="inherit" /> : <RefreshOutlinedIcon />}
+              disabled={session.isFetching}
+              aria-busy={session.isFetching}
+              onClick={() => { void session.refetch(); }}
+            >
+              {session.isFetching ? 'Kontrollerar…' : 'Försök igen'}
+            </Button>
+          </Stack>
+        </Paper>
+      </Box>
+    );
   }
 
   if (session.data?.authenticated) return children;
@@ -27,8 +49,10 @@ export default function SessionGate({ children }: { children: ReactNode }) {
     try {
       const { url } = await apiClient.startAuth();
       window.location.assign(url);
-    } catch (error) {
-      setStartError(error instanceof Error ? error.message : 'Inloggningen kunde inte startas.');
+    } catch {
+      // Proxy/identity-provider failures can contain raw HTML or server details.
+      // Do not render that response in the public login screen.
+      setStartError('Inloggningen kunde inte startas. Försök igen om en stund.');
       setStarting(false);
     }
   };

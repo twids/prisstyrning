@@ -20,6 +20,7 @@ public sealed record LwtRegulatorInput(
     DateTimeOffset? LastWriteUtc,
     double Integral,
     double DeviationLimitC,
+    string? SafetyInvalidReason = null,
     double Kp = 0.8,
     double KiPerHour = 0.08);
 
@@ -38,7 +39,7 @@ public sealed class LwtRegulator
         if (fallback is not null)
         {
             return new LwtRegulatorDecision(
-                Math.Abs(input.CurrentDeviationC) >= 0.05,
+                !double.IsFinite(input.CurrentDeviationC) || Math.Abs(input.CurrentDeviationC) >= 0.05,
                 0,
                 0,
                 true,
@@ -71,10 +72,17 @@ public sealed class LwtRegulator
     private static string? FallbackReason(LwtRegulatorInput input)
     {
         if (input.Mode is not (ControlMode.LwtActive or ControlMode.FullActive)) return "LWT-styrning är inte aktiv.";
+        if (!double.IsFinite(input.PlannedDeviationC) || !double.IsFinite(input.RepresentativeTemperatureErrorC) ||
+            !double.IsFinite(input.CurrentDeviationC) || Math.Abs(input.CurrentDeviationC) > 3.001 ||
+            !double.IsFinite(input.Integral) || !double.IsFinite(input.DeviationLimitC) || input.DeviationLimitC is < 0 or > 3 ||
+            !double.IsFinite(input.Kp) || input.Kp is < 0 or > 10 ||
+            !double.IsFinite(input.KiPerHour) || input.KiPerHour is < 0 or > 10)
+            return "Regulatorns säkerhetsunderlag är ogiltigt; LWT återgår till noll.";
         if (!input.WriterLeaseHeld) return "Writer-leasen har förlorats.";
         if (!input.P1P2Healthy) return "P1P2MQTT har rapporterat skriv- eller kommunikationsfel.";
         if (input.ManualOverride) return "Manuell override är aktiv.";
         if (input.TelemetryUtc is null || input.NowUtc - input.TelemetryUtc > TimeSpan.FromMinutes(10)) return "Telemetrin är äldre än tio minuter.";
+        if (!string.IsNullOrWhiteSpace(input.SafetyInvalidReason)) return input.SafetyInvalidReason;
         if (input.PlanCreatedUtc is null || input.NowUtc - input.PlanCreatedUtc > TimeSpan.FromMinutes(60)) return "Den senaste giltiga planen är äldre än 60 minuter.";
         if (input.FlowLitresPerMinute is not > 1) return "Flödet är för lågt för säker LWT-styrning.";
         return null;

@@ -1,5 +1,11 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Net;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Prisstyrning.Data;
+using Prisstyrning.Data.Entities;
+using Prisstyrning.Data.Repositories;
 using Prisstyrning.Tests.Fixtures;
 using Xunit;
 
@@ -224,66 +230,6 @@ public class AdminEndpointTests
     }
 
     [Fact]
-    public async Task AdminDeleteUser_RemovesData()
-    {
-        using var fs = new TempFileSystem();
-        var cfg = fs.GetTestConfig();
-        var userId = "user-to-delete";
-
-        // Create user data
-        fs.CreateUserSettings(userId, comfortHours: 5);
-
-        // Create schedule history
-        var histDir = Path.Combine(fs.HistoryDir, userId);
-        Directory.CreateDirectory(histDir);
-        await File.WriteAllTextAsync(Path.Combine(histDir, "history.json"), "[]");
-
-        // Grant admin and hangfire
-        await AdminService.GrantAdmin(cfg, userId);
-        await AdminService.GrantHangfireAccess(cfg, userId);
-
-        // Verify data exists
-        Assert.True(Directory.Exists(Path.Combine(fs.TokensDir, userId)));
-        Assert.True(Directory.Exists(histDir));
-        Assert.True(AdminService.IsAdmin(cfg, userId));
-        Assert.True(AdminService.HasHangfireAccess(cfg, userId));
-
-        // Delete the user's directories
-        Directory.Delete(Path.Combine(fs.TokensDir, userId), true);
-        Directory.Delete(histDir, true);
-        await AdminService.RevokeAdmin(cfg, userId);
-        await AdminService.RevokeHangfireAccess(cfg, userId);
-
-        // Verify everything is gone
-        Assert.False(Directory.Exists(Path.Combine(fs.TokensDir, userId)));
-        Assert.False(Directory.Exists(histDir));
-        Assert.False(AdminService.IsAdmin(cfg, userId));
-        Assert.False(AdminService.HasHangfireAccess(cfg, userId));
-    }
-
-    [Fact]
-    public void AdminDeleteUser_NonExistent_DirectoriesDontExist()
-    {
-        using var fs = new TempFileSystem();
-        var cfg = fs.GetTestConfig();
-        var userId = "nonexistent-user";
-
-        // Verify directories don't exist for non-existent user
-        Assert.False(Directory.Exists(Path.Combine(fs.TokensDir, userId)));
-        Assert.False(Directory.Exists(Path.Combine(fs.HistoryDir, userId)));
-    }
-
-    [Fact]
-    public void AdminDeleteUser_CannotDeleteSelf_Validation()
-    {
-        // Validates the business rule: currentUserId == targetUserId should be rejected
-        var currentUserId = "admin-user";
-        var targetUserId = "admin-user";
-
-        Assert.Equal(currentUserId, targetUserId); // Would be a 400 in the endpoint
-    }
-
-    [Fact]
     public async Task AdminService_ConcurrentGrants_NoDataLoss()
     {
         using var fs = new TempFileSystem();
@@ -296,30 +242,66 @@ public class AdminEndpointTests
         Assert.Equal(10, admins.Count);
     }
 
-    [Fact(Skip = "Requires HTTP integration test infrastructure (WebApplicationFactory)")]
-    public void Admin_NoAuth_Returns401()
+    [Fact]
+    public async Task Admin_NoAuth_Returns401()
     {
-        // Intended behavior:
-        // - Send HTTP request to /api/admin/users without any auth cookie or password header
-        // - Assert response status code is 401 Unauthorized
+        await using var host = await AccountApiTestHost.CreateAsync(new() { ["Admin:Password"] = "test-admin-password" });
+        using var browser = host.CreateBrowser();
+        browser.Client.DefaultRequestHeaders.Add("X-Admin-Password", "test-admin-password");
+
+        using var response = await browser.Client.GetAsync("/api/admin/users");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Null(response.Headers.Location);
     }
 
-    [Fact(Skip = "Requires HTTP integration test infrastructure (WebApplicationFactory)")]
-    public void Admin_ListUsers_ReturnsAllUsers()
+    [Fact]
+    public async Task Admin_ListUsers_ReturnsAllUsersWithoutCredentials()
     {
-        // Intended behavior:
-        // - Seed multiple users into test storage (tokens + schedule_history dirs)
-        // - Authenticate as admin via X-Admin-Password header
-        // - Call GET /api/admin/users
-        // - Assert status 200 and response body contains all seeded users
+        await using var host = await AccountApiTestHost.CreateAsync();
+        await host.WithServicesAsync(async services =>
+        {
+            var tokens = services.GetRequiredService<DaikinTokenRepository>();
+            await tokens.SaveAsync("http-admin", "synthetic-access", "synthetic-refresh", DateTimeOffset.UtcNow.AddHours(1));
+            await tokens.SaveAsync("token-user", "synthetic-access", "synthetic-refresh", DateTimeOffset.UtcNow.AddHours(1));
+            var db = services.GetRequiredService<PrisstyrningDbContext>();
+            db.UserSettings.Add(new UserSettings { UserId = "settings-only", AutoApplySchedule = true });
+            db.UserAccounts.Add(new UserAccount { UserId = "registry-only", DaikinSubjectHash = "test-subject-hash" });
+            await db.SaveChangesAsync();
+            await services.GetRequiredService<ScheduleHistoryRepository>()
+                .SaveAsync("history-only", new JsonObject(), DateTimeOffset.UtcNow);
+        });
+        await AdminService.GrantAdmin(host.Configuration, "http-admin");
+        using var browser = host.CreateBrowser();
+        await browser.SignInAsync("http-admin");
+
+        using var response = await browser.Client.GetAsync("/api/admin/users");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        using var json = JsonDocument.Parse(body);
+        var users = json.RootElement.GetProperty("users").EnumerateArray().ToArray();
+
+        Assert.Equal(new[] { "history-only", "http-admin", "registry-only", "settings-only", "token-user" },
+            users.Select(user => user.GetProperty("userId").GetString()).OrderBy(id => id).ToArray());
+        Assert.False(users.Single(user => user.GetProperty("userId").GetString() == "settings-only")
+            .GetProperty("daikinAuthorized").GetBoolean());
+        Assert.DoesNotContain("synthetic-access", body);
+        Assert.DoesNotContain("synthetic-refresh", body);
+        Assert.DoesNotContain("Ciphertext", body);
+        await host.WithServicesAsync(async services =>
+            Assert.True((await services.GetRequiredService<PrisstyrningDbContext>().UserSettings.SingleAsync()).AutoApplySchedule));
     }
 
-    [Fact(Skip = "Requires HTTP integration test infrastructure (WebApplicationFactory)")]
-    public void Admin_NoPasswordConfigured_Returns403()
+    [Fact]
+    public async Task Admin_NoPasswordConfigured_Returns403()
     {
-        // Intended behavior:
-        // - Configure the application WITHOUT an Admin:Password setting
-        // - Call POST /api/admin/login with any password header
-        // - Assert response status code is 403 Forbidden
+        await using var host = await AccountApiTestHost.CreateAsync();
+        using var browser = host.CreateBrowser();
+        await browser.SignInAsync();
+
+        using var response = await browser.MutateAsync(HttpMethod.Post, "/api/admin/login", browser.CsrfToken, "any-password");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Empty(AdminService.GetAdminUserIds(host.Configuration));
     }
 }

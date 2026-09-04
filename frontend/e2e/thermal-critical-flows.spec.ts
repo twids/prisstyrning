@@ -26,6 +26,9 @@ test('översikt leder till en förklarad shadowplan', async ({ page }, testInfo)
   await expect(page.getByText('Shadow – prickad markör')).toBeVisible();
   await expect(page.getByText('Varför just nu?')).toBeVisible();
   await expect(page.getByRole('heading', { name: /EMHASS minimerar kostnaden inom komfortbandet/ })).toBeVisible();
+  await expect(page.getByText('Planens konfidens')).toBeVisible();
+  await expect(page.getByText(/Pris 75 % · väder 50 % verifierad täckning/)).toBeVisible();
+  await expect(page.getByText(/48 uppskattade prissteg och 96 uppskattade vädersteg à 15 minuter/)).toBeVisible();
 });
 
 test('driftlägesguiden blockerar LWT när ett krav saknas', async ({ page }, testInfo) => {
@@ -45,7 +48,7 @@ test('entity-val ger dirty state och konsekvens innan sparande', async ({ page }
   test.skip(testInfo.project.name === 'mobile', 'Samma formulärflöde täcks i desktopprojektet.');
   await page.goto('/settings');
   await page.getByRole('tab', { name: 'Entities' }).click();
-  const outside = page.getByLabel('Välj utetemperatur');
+  const outside = page.getByRole('combobox', { name: 'Välj utetemperatur', exact: true });
   await outside.click();
   await page.getByRole('option', { name: /Vardagsrum.*sensor\.vardagsrum_temperature/i }).click();
   await expect(page.getByText('Osparade ändringar')).toBeVisible();
@@ -65,8 +68,15 @@ test('HA-historikimport förklarar bevarande och visar resultat', async ({ page 
 test('mobilvyn har ingen sidledes sidscroll och behåller statusnavigering', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'mobile', 'Detta är en mobil kontroll.');
   await page.goto('/');
-  await expect(page.getByRole('navigation', { name: 'Huvudnavigation' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Huvudnavigation, kompakt' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Styrsystemets status' })).toBeVisible();
   const dimensions = await page.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }));
   expect(dimensions.scroll).toBe(dimensions.client);
+  const navigation = page.getByRole('navigation', { name: 'Huvudnavigation, kompakt' });
+  const items = await navigation.getByRole('link').evaluateAll(links => links.map(link => ({
+    label: link.textContent, client: link.clientWidth, scroll: link.scrollWidth,
+  })));
+  for (const item of items) expect(item.scroll, `Navigationstexten ${item.label} ska rymmas i sin länk`).toBeLessThanOrEqual(item.client + 1);
+  await navigation.getByRole('link', { name: 'Inställningar', exact: true }).focus();
+  await expect(navigation.getByRole('link', { name: 'Inställningar', exact: true })).toBeInViewport();
 });

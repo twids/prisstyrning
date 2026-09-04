@@ -6,6 +6,7 @@ import {
   TextField,
   Button,
   Alert,
+  AlertTitle,
   Snackbar,
   Table,
   TableBody,
@@ -24,11 +25,6 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import DeleteIcon from '@mui/icons-material/Delete';
 import IconButton from '@mui/material/IconButton';
-import Dialog from '@mui/material/Dialog';
-import DialogTitle from '@mui/material/DialogTitle';
-import DialogContent from '@mui/material/DialogContent';
-import DialogContentText from '@mui/material/DialogContentText';
-import DialogActions from '@mui/material/DialogActions';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../api/client';
 import { useFormatters } from '../context/TimezoneContext';
@@ -41,14 +37,13 @@ export default function AdminPage() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'error' | 'success' }>({ open: false, message: '', severity: 'error' });
   const [pendingToggles, setPendingToggles] = useState<Set<string>>(new Set());
-  const [deleteTarget, setDeleteTarget] = useState<AdminUser | null>(null);
 
   const statusQuery = useQuery({
     queryKey: ['admin-status'],
     queryFn: () => apiClient.getAdminStatus(),
   });
 
-  const isAdmin = statusQuery.data?.isAdmin ?? false;
+  const isAdmin = statusQuery.data?.isAdmin === true && !statusQuery.isError;
 
   const usersQuery = useQuery({
     queryKey: ['admin-users'],
@@ -63,8 +58,8 @@ export default function AdminPage() {
       setPassword('');
       queryClient.invalidateQueries({ queryKey: ['admin-status'] });
     },
-    onError: (err: Error) => {
-      setLoginError(err.message || 'Login failed');
+    onError: () => {
+      setLoginError('Administratörsinloggningen misslyckades. Kontrollera lösenordet och försök igen.');
     },
   });
 
@@ -84,8 +79,8 @@ export default function AdminPage() {
       }
       queryClient.invalidateQueries({ queryKey: ['admin-users'] });
     },
-    onError: (err) => {
-      setSnackbar({ open: true, message: `Admin toggle failed: ${err.message}`, severity: 'error' });
+    onError: () => {
+      setSnackbar({ open: true, message: 'Ändringen av adminbehörighet kunde inte bekräftas. Kontrollera aktuell behörighet i användarlistan innan du försöker igen.', severity: 'error' });
     },
   });
 
@@ -105,20 +100,8 @@ export default function AdminPage() {
       }
       queryClient.invalidateQueries({ queryKey: ['admin-users'] });
     },
-    onError: (err) => {
-      setSnackbar({ open: true, message: `Hangfire toggle failed: ${err.message}`, severity: 'error' });
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (userId: string) => apiClient.deleteUser(userId),
-    onSuccess: () => {
-      setDeleteTarget(null);
-      setSnackbar({ open: true, message: 'Användare borttagen', severity: 'success' });
-      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
-    },
-    onError: (err: Error) => {
-      setSnackbar({ open: true, message: `Kunde inte ta bort: ${err.message}`, severity: 'error' });
+    onError: () => {
+      setSnackbar({ open: true, message: 'Ändringen av Hangfire-behörighet kunde inte bekräftas. Kontrollera aktuell behörighet i användarlistan innan du försöker igen.', severity: 'error' });
     },
   });
 
@@ -136,7 +119,21 @@ export default function AdminPage() {
   if (statusQuery.isLoading) {
     return (
       <Container maxWidth="lg" sx={{ py: 4, display: 'flex', justifyContent: 'center' }}>
-        <CircularProgress />
+        <CircularProgress aria-label="Kontrollerar adminbehörighet" />
+      </Container>
+    );
+  }
+
+  if (statusQuery.isError) {
+    return (
+      <Container maxWidth="sm" sx={{ py: 4 }}>
+        <Typography component="h1" variant="h4" gutterBottom>Admin</Typography>
+        <Alert severity="error" sx={{ mb: 2 }}>
+          Adminbehörigheten kunde inte kontrolleras. Användarlistan och dess åtgärder visas inte förrän kontrollen lyckas.
+        </Alert>
+        <Button variant="outlined" onClick={() => statusQuery.refetch()} disabled={statusQuery.isFetching}>
+          Försök igen
+        </Button>
       </Container>
     );
   }
@@ -146,7 +143,7 @@ export default function AdminPage() {
     return (
       <Container maxWidth="sm" sx={{ py: 4 }}>
         <Paper sx={{ p: 4 }}>
-          <Typography variant="h4" gutterBottom>
+          <Typography component="h1" variant="h4" gutterBottom>
             Admin
           </Typography>
           <form onSubmit={handleLogin}>
@@ -180,32 +177,41 @@ export default function AdminPage() {
 
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
-      <Typography variant="h4" gutterBottom sx={{ fontSize: { xs: '1.5rem', md: '2rem' } }}>
+      <Typography component="h1" variant="h4" gutterBottom sx={{ fontSize: { xs: '1.5rem', md: '2rem' } }}>
         Användare
       </Typography>
 
+      <Alert severity="info" role="note" id="account-deletion-unavailable" sx={{ mb: 2 }}>
+        <AlertTitle>Kontoradering är tillfälligt spärrad</AlertTitle>
+        Säker kontoradering måste hantera pågående styrning, inloggningar, integrationer och historik tillsammans.
+        Du kan därför inte radera konton här. Inga konton har ändrats av spärren och befintlig schemastyrning fortsätter.
+      </Alert>
+
       {usersQuery.isLoading && (
         <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-          <CircularProgress />
+          <CircularProgress aria-label="Hämtar användare" />
         </Box>
       )}
 
       {usersQuery.error && (
         <Alert severity="error" sx={{ mb: 2 }}>
-          Kunde inte hämta användare: {(usersQuery.error as Error).message}
+          Användarlistan kunde inte hämtas. Sparade uppgifter och åtgärder döljs tills listan har kunnat uppdateras.
+          <Button onClick={() => usersQuery.refetch()} disabled={usersQuery.isFetching} sx={{ ml: 1 }}>
+            Försök igen
+          </Button>
         </Alert>
       )}
 
-      {usersQuery.data && (
-        <TableContainer component={Paper}>
-          <Table size="small">
+      {usersQuery.data && !usersQuery.isError && (
+        <TableContainer component={Paper} role="region" aria-label="Användarlista" tabIndex={0}>
+          <Table size="small" aria-label="Användare och behörigheter">
             <TableHead>
               <TableRow>
                 <TableCell>Användare</TableCell>
                 <TableCell>Zon</TableCell>
                 <TableCell>Inställningar</TableCell>
                 <TableCell>Daikin</TableCell>
-                <TableCell>Daikin Subject</TableCell>
+                <TableCell>Daikin-identitet</TableCell>
                 <TableCell>Schema</TableCell>
                 <TableCell>Admin</TableCell>
                 <TableCell>Hangfire</TableCell>
@@ -234,12 +240,12 @@ export default function AdminPage() {
                   </TableCell>
                   <TableCell>
                     {user.daikinAuthorized ? (
-                      <Tooltip title={user.daikinExpiresAtUtc ? `Utgår: ${formatDateTime(user.daikinExpiresAtUtc)}` : 'Auktoriserad'}>
-                        <CheckCircleIcon color="success" fontSize="small" />
+                      <Tooltip describeChild title={user.daikinExpiresAtUtc ? `Utgår: ${formatDateTime(user.daikinExpiresAtUtc)}` : 'Auktoriserad'}>
+                        <CheckCircleIcon color="success" fontSize="small" titleAccess="Daikin-auktorisering finns" />
                       </Tooltip>
                     ) : (
-                      <Tooltip title="Ej auktoriserad">
-                        <CancelIcon color="error" fontSize="small" />
+                      <Tooltip describeChild title="Ej auktoriserad">
+                        <CancelIcon color="error" fontSize="small" titleAccess="Daikin-auktorisering saknas" />
                       </Tooltip>
                     )}
                   </TableCell>
@@ -269,8 +275,9 @@ export default function AdminPage() {
                     ) : (
                       <Switch
                         checked={user.isAdmin}
-                        disabled={user.isCurrentUser}
+                        disabled={user.isCurrentUser || usersQuery.isFetching || statusQuery.isFetching}
                         onChange={() => toggleAdminMutation.mutate(user)}
+                        slotProps={{ input: { role: 'switch', 'aria-label': `Adminbehörighet för ${user.userId}` } }}
                         size="small"
                       />
                     )}
@@ -281,7 +288,9 @@ export default function AdminPage() {
                     ) : (
                       <Switch
                         checked={user.hasHangfireAccess}
+                        disabled={usersQuery.isFetching || statusQuery.isFetching}
                         onChange={() => toggleHangfireMutation.mutate(user)}
+                        slotProps={{ input: { role: 'switch', 'aria-label': `Hangfire-behörighet för ${user.userId}` } }}
                         size="small"
                       />
                     )}
@@ -298,14 +307,14 @@ export default function AdminPage() {
                     )}
                   </TableCell>
                   <TableCell>
-                    <Tooltip title={user.isCurrentUser ? 'Kan inte ta bort dig själv' : 'Ta bort användare'}>
+                    <Tooltip title="Kontoradering är tillfälligt spärrad">
                       <span>
                         <IconButton
                           size="small"
                           color="error"
-                          disabled={user.isCurrentUser}
-                          onClick={() => setDeleteTarget(user)}
-                          aria-label={user.isCurrentUser ? 'Kan inte ta bort din egen användare' : `Ta bort användare ${user.userId.slice(0, 8)}`}
+                          disabled
+                          aria-label={`Radering spärrad för ${user.userId}`}
+                          aria-describedby="account-deletion-unavailable"
                         >
                           <DeleteIcon fontSize="small" />
                         </IconButton>
@@ -325,29 +334,6 @@ export default function AdminPage() {
           </Table>
         </TableContainer>
       )}
-
-      <Dialog open={deleteTarget !== null} onClose={() => setDeleteTarget(null)}>
-        <DialogTitle>Ta bort användare</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            Är du säker på att du vill ta bort användare{' '}
-            <strong>{deleteTarget?.userId?.slice(0, 8)}…</strong>?
-            {' '}All data (inställningar, tokens, schemahistorik) kommer att raderas permanent.
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDeleteTarget(null)}>Avbryt</Button>
-          <Button
-            onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.userId)}
-            color="error"
-            variant="contained"
-            disabled={deleteMutation.isPending}
-            startIcon={deleteMutation.isPending ? <CircularProgress size={18} /> : <DeleteIcon />}
-          >
-            Ta bort
-          </Button>
-        </DialogActions>
-      </Dialog>
 
       <Snackbar
         open={snackbar.open}

@@ -277,7 +277,7 @@ public class HomeAssistantTelemetryTests
         new JsonObject { ["unit_of_measurement"] = unit, ["friendly_name"] = "Test" },
         updated ?? Now,
         updated ?? Now,
-        Now);
+        updated ?? Now);
 
     private sealed class StubFactory(HttpClient client) : IHttpClientFactory
     {
@@ -290,7 +290,7 @@ public class HomeAssistantTelemetryTests
     }
 
     private static HomeAssistantConnectionService CreateConnectionService(PrisstyrningDbContext db) =>
-        new(db, TestSecretProtector.Instance, new AcceptingEndpointValidator());
+        new(db, TestSecretProtector.Instance, new AcceptingEndpointValidator(), new HomeAssistantStateCache(), new HomeAssistantConnectionChanges());
 
     private sealed class AcceptingEndpointValidator : IHomeAssistantEndpointValidator
     {

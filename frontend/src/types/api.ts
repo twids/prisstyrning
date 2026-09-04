@@ -252,6 +252,7 @@ export interface ThermalStatus {
   dhwWriter: DhwWriter;
   lastTelemetryUtc: string | null;
   overallDataQuality: DataQuality;
+  dataQualityReason?: string | null;
   emhassAvailable: boolean;
   planCreatedUtc: string | null;
   planAgeMinutes: number | null;
@@ -380,6 +381,40 @@ export interface ThermalModelVersion {
   isActive: boolean;
   parametersJson: string;
   metricsJson: string;
+  provenance?: ThermalModelProvenance;
+  sourceValidation?: ThermalModelSourceValidation;
+  validation?: ThermalModelValidation;
+}
+
+export interface ThermalModelProvenance {
+  verifiable: boolean;
+  algorithmVersion: string | null;
+  selectionVersion: string | null;
+  buildRevision: string | null;
+  selectionFromUtc: string | null;
+  selectionToUtc: string | null;
+  observationCount: number | null;
+  trainingSamples: number | null;
+  validationSamples: number | null;
+}
+
+export interface ThermalModelValidation {
+  passed: boolean;
+  status: 'Missing' | 'Invalid' | 'Unproven' | 'Insufficient' | 'Validated' | 'ThresholdExceeded' | 'SourceChanged' | 'BuildChanged';
+  reason: string;
+  checkedAtUtc: string;
+  twoHourMaeC: number | null;
+  dayMaeC: number | null;
+  copMae: number | null;
+  twoHourValidationWindows: number | null;
+  dayValidationWindows: number | null;
+}
+
+export interface ThermalModelSourceValidation {
+  passed: boolean;
+  status: 'Current' | 'Changed' | 'BuildChanged' | 'Invalid' | 'Unproven';
+  reason: string;
+  checkedAtUtc: string;
 }
 
 export interface HomeAssistantStatus {
@@ -388,6 +423,9 @@ export interface HomeAssistantStatus {
   lastSnapshotUtc: string | null;
   lastActivityUtc: string | null;
   cachedEntities: number;
+  // Additive; older responses are displayed as unverified, never assumed live.
+  phase?: 'NotConfigured' | 'Disabled' | 'Reloading' | 'Connecting' | 'Synchronizing' | 'Connected' | 'Reconnecting' | 'Disconnected';
+  configurationUpdatedAtUtc?: string | null;
 }
 
 export interface HomeAssistantConnection {
@@ -421,6 +459,10 @@ export interface HomeAssistantEntity {
   receivedAtUtc: string;
   quality: DataQuality;
   qualityReason: string | null;
+  /** Preliminary value/unit checks only, not sensor-health or readiness approval. */
+  compatibleUnits?: string[];
+  checkedAtUtc?: string | null;
+  validUntilUtc?: string | null;
 }
 
 export interface HomeAssistantHistoryImportResult {

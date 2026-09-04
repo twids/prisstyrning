@@ -29,6 +29,9 @@ public sealed class SensorQualityTracker
         public bool Excluded { get; set; }
         public double? LastValidValue { get; set; }
         public DateTimeOffset? LastValidUtc { get; set; }
+        public DateTimeOffset? LastRecoveryMeasurementUtc { get; set; }
+        public DateTimeOffset? LastInvalidBucketUtc { get; set; }
+        public DateTimeOffset? ConfigurationRevisionUtc { get; set; }
     }
 
     private readonly ConcurrentDictionary<string, State> _states = new(StringComparer.OrdinalIgnoreCase);
@@ -38,25 +41,39 @@ public sealed class SensorQualityTracker
         HomeAssistantState? rawState,
         NormalizedSensorValue normalized,
         SensorValidationRules rules,
-        DateTimeOffset nowUtc)
+        DateTimeOffset nowUtc,
+        DateTimeOffset? configurationRevisionUtc = null,
+        DateTimeOffset? historyImportedAtUtc = null)
     {
         var state = _states.GetOrAdd(entityId, _ => new State());
         lock (state)
         {
+            if (configurationRevisionUtc < state.ConfigurationRevisionUtc)
+                return new(DataQuality.Unavailable, null, null, "Insamlingen tillhör en äldre konfiguration.", false, false, false, null, null);
+            if (configurationRevisionUtc != state.ConfigurationRevisionUtc)
+            {
+                state.ConsecutiveInvalid = state.ConsecutiveValid = 0;
+                state.Excluded = false;
+                state.LastValidValue = null;
+                state.LastValidUtc = state.LastRecoveryMeasurementUtc = state.LastInvalidBucketUtc = null;
+                state.ConfigurationRevisionUtc = configurationRevisionUtc;
+            }
             var quality = normalized.Quality;
             var reason = normalized.Reason;
             if (quality == DataQuality.Valid &&
-                rawState?.LastUpdatedUtc is { } lastUpdated &&
-                nowUtc - lastUpdated > rules.StaleAfter)
+                (normalized.Value is { } number && !double.IsFinite(number) ||
+                 normalized.Value.HasValue == normalized.BooleanValue.HasValue))
             {
-                quality = DataQuality.Stale;
-                reason = $"Senast uppdaterad för {(nowUtc - lastUpdated).TotalMinutes:0} minuter sedan.";
+                quality = DataQuality.Invalid;
+                reason = "Givaren saknar ett entydigt, ändligt mätvärde eller av/på-värde.";
             }
+            if (quality == DataQuality.Valid)
+                (quality, reason) = SensorTimestampValidator.Assess(rawState, nowUtc, rules.StaleAfter, historyImportedAtUtc);
 
             if (quality == DataQuality.Valid && normalized.Value is { } value)
             {
-                if (rules.Minimum is { } minimum && value < minimum ||
-                    rules.Maximum is { } maximum && value > maximum)
+                if (rules.Minimum is { } minimum && (!double.IsFinite(minimum) || value < minimum) ||
+                    rules.Maximum is { } maximum && (!double.IsFinite(maximum) || value > maximum))
                 {
                     quality = DataQuality.Invalid;
                     reason = "Värdet ligger utanför tillåtet intervall.";
@@ -64,8 +81,9 @@ public sealed class SensorQualityTracker
                 else if (rules.MaximumRatePerHour is { } maxRate &&
                          state.LastValidValue is { } previous &&
                          state.LastValidUtc is { } previousUtc &&
-                         nowUtc > previousUtc &&
-                         Math.Abs(value - previous) / (nowUtc - previousUtc).TotalHours > maxRate)
+                         rawState!.LastUpdatedUtc is { } measuredAt &&
+                         (measuredAt < previousUtc || measuredAt == previousUtc && value != previous ||
+                          measuredAt > previousUtc && Math.Abs(value - previous) / (measuredAt - previousUtc).TotalHours > maxRate))
                 {
                     quality = DataQuality.Invalid;
                     reason = "Värdet ändras snabbare än tillåtet.";
@@ -76,24 +94,35 @@ public sealed class SensorQualityTracker
             if (quality == DataQuality.Valid)
             {
                 state.ConsecutiveInvalid = 0;
-                state.ConsecutiveValid++;
+                state.LastInvalidBucketUtc = null;
+                if (state.LastRecoveryMeasurementUtc is null || rawState!.LastUpdatedUtc > state.LastRecoveryMeasurementUtc)
+                {
+                    state.ConsecutiveValid = Math.Min(3, state.ConsecutiveValid + 1);
+                    state.LastRecoveryMeasurementUtc = rawState!.LastUpdatedUtc;
+                }
                 if (!state.Excluded || state.ConsecutiveValid >= 3)
                 {
                     state.Excluded = false;
                     state.LastValidValue = normalized.Value;
-                    state.LastValidUtc = nowUtc;
+                    state.LastValidUtc = rawState!.LastUpdatedUtc;
                 }
             }
             else
             {
                 state.ConsecutiveValid = 0;
-                state.ConsecutiveInvalid++;
+                var bucket = nowUtc.ToUniversalTime().Ticks / TimeSpan.TicksPerMinute / 5;
+                var bucketUtc = new DateTimeOffset(bucket * TimeSpan.TicksPerMinute * 5, TimeSpan.Zero);
+                if (state.LastInvalidBucketUtc != bucketUtc)
+                {
+                    state.ConsecutiveInvalid = Math.Min(3, state.ConsecutiveInvalid + 1);
+                    state.LastInvalidBucketUtc = bucketUtc;
+                }
                 if (state.ConsecutiveInvalid >= 3) state.Excluded = true;
             }
 
             return new SensorAssessment(
                 quality,
-                normalized.Value,
+                normalized.Value is { } finite && double.IsFinite(finite) ? finite : null,
                 normalized.BooleanValue,
                 reason,
                 state.Excluded,

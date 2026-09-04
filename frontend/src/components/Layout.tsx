@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import {
-  AppBar, Box, Button, Container, Divider, List, ListItemButton, ListItemIcon,
+  Alert, AppBar, Box, Button, Container, Divider, List, ListItem, ListItemButton, ListItemIcon,
   ListItemText, Stack, Toolbar, Tooltip, Typography,
 } from '@mui/material';
 import { Link as RouterLink, useLocation } from 'react-router-dom';
@@ -41,10 +41,12 @@ export default function Layout({ children }: LayoutProps) {
   const navItem = (item: typeof thermalNavigation[number]) => {
     const selected = item.path === '/' ? location.pathname === '/' : location.pathname.startsWith(item.path);
     return (
-      <ListItemButton key={item.path} component={RouterLink} to={item.path} selected={selected} sx={{ borderRadius: 2, mb: .4 }}>
-        <ListItemIcon sx={{ minWidth: 38 }}>{item.icon}</ListItemIcon>
-        <ListItemText primary={item.label} primaryTypographyProps={{ fontWeight: selected ? 750 : 520 }} />
-      </ListItemButton>
+      <ListItem key={item.path} disablePadding>
+        <ListItemButton component={RouterLink} to={item.path} selected={selected} sx={{ borderRadius: 2, mb: .4 }}>
+          <ListItemIcon sx={{ minWidth: 38 }}>{item.icon}</ListItemIcon>
+          <ListItemText primary={item.label} primaryTypographyProps={{ fontWeight: selected ? 750 : 520 }} />
+        </ListItemButton>
+      </ListItem>
     );
   };
 
@@ -62,9 +64,14 @@ export default function Layout({ children }: LayoutProps) {
           <Button component={RouterLink} to="/legacy" color="inherit" startIcon={<HistoryOutlinedIcon />} sx={{ display: { xs: 'none', sm: 'inline-flex' } }}>Legacy-vy</Button>
           <Tooltip title="Logga ut från Prisstyrning"><Button color="inherit" startIcon={<LogoutOutlinedIcon />} onClick={() => logout.mutate()} disabled={logout.isPending}>{logout.isPending ? 'Loggar ut…' : 'Logga ut'}</Button></Tooltip>
         </Toolbar>
-        <Box component="nav" aria-label="Huvudnavigation" sx={{ display: { xs: 'flex', lg: 'none' }, overflowX: 'auto', px: 1, pb: 1, gap: .5, scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' } }}>
+        {logout.isError && (
+          <Alert severity="error" sx={{ borderRadius: 0 }}>
+            Utloggningen kunde inte bekräftas. Du kan fortfarande vara inloggad. Försök igen.
+          </Alert>
+        )}
+        <Box component="nav" aria-label="Huvudnavigation, kompakt" sx={{ display: { xs: 'flex', lg: 'none' }, overflowX: 'auto', px: 1, pb: 1, gap: .5, scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' } }}>
           {thermalNavigation.map((item) => (
-            <Button key={item.path} component={RouterLink} to={item.path} color={location.pathname === item.path ? 'primary' : 'inherit'} startIcon={item.icon} sx={{ whiteSpace: 'nowrap' }}>{item.label}</Button>
+            <Button key={item.path} component={RouterLink} to={item.path} color={location.pathname === item.path ? 'primary' : 'inherit'} startIcon={item.icon} sx={{ whiteSpace: 'nowrap', flexShrink: 0 }}>{item.label}</Button>
           ))}
         </Box>
       </AppBar>
@@ -76,13 +83,17 @@ export default function Layout({ children }: LayoutProps) {
           <Divider sx={{ my: 1.5 }} />
           <Typography variant="overline" color="text.secondary" sx={{ px: 1.5 }}>Befintlig funktion</Typography>
           <List dense>
-            <ListItemButton component={RouterLink} to="/legacy" selected={location.pathname === '/legacy'} sx={{ borderRadius: 2 }}>
-              <ListItemIcon sx={{ minWidth: 38 }}><HistoryOutlinedIcon /></ListItemIcon><ListItemText primary="Legacy-DHW" />
-            </ListItemButton>
-            <ListItemButton component={RouterLink} to="/legacy/settings" selected={location.pathname === '/legacy/settings'} sx={{ borderRadius: 2 }}>
-              <ListItemIcon sx={{ minWidth: 38 }}><SettingsOutlinedIcon /></ListItemIcon><ListItemText primary="Legacy-inställningar" />
-            </ListItemButton>
-            {isAdmin && <ListItemButton component={RouterLink} to="/admin" selected={location.pathname === '/admin'} sx={{ borderRadius: 2 }}><ListItemIcon sx={{ minWidth: 38 }}><AdminPanelSettingsOutlinedIcon /></ListItemIcon><ListItemText primary="Admin" /></ListItemButton>}
+            <ListItem disablePadding>
+              <ListItemButton component={RouterLink} to="/legacy" selected={location.pathname === '/legacy'} sx={{ borderRadius: 2 }}>
+                <ListItemIcon sx={{ minWidth: 38 }}><HistoryOutlinedIcon /></ListItemIcon><ListItemText primary="Legacy-DHW" />
+              </ListItemButton>
+            </ListItem>
+            <ListItem disablePadding>
+              <ListItemButton component={RouterLink} to="/legacy/settings" selected={location.pathname === '/legacy/settings'} sx={{ borderRadius: 2 }}>
+                <ListItemIcon sx={{ minWidth: 38 }}><SettingsOutlinedIcon /></ListItemIcon><ListItemText primary="Legacy-inställningar" />
+              </ListItemButton>
+            </ListItem>
+            {isAdmin && <ListItem disablePadding><ListItemButton component={RouterLink} to="/admin" selected={location.pathname === '/admin'} sx={{ borderRadius: 2 }}><ListItemIcon sx={{ minWidth: 38 }}><AdminPanelSettingsOutlinedIcon /></ListItemIcon><ListItemText primary="Admin" /></ListItemButton></ListItem>}
           </List>
         </Box>
         <Container component="main" maxWidth="xl" sx={{ flex: 1, minWidth: 0, py: { xs: 3, md: 5 }, px: { xs: 2, md: 4 } }}>

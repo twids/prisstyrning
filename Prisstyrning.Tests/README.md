@@ -39,6 +39,16 @@ dotnet test --logger "console;verbosity=detailed"
 dotnet test --filter "FullyQualifiedName~TestMethodName"
 ```
 
+## Isolated PostgreSQL acceptance
+
+The normal suite always compiles the PostgreSQL acceptance test and reports it as skipped unless an explicit disposable database is supplied. Run the guarded harness from the repository root:
+
+```powershell
+powershell -File scripts/test-postgres-acceptance.ps1
+```
+
+The harness starts PostgreSQL 17 in a temporary Docker container, publishes only a random loopback port, applies the real migrations and removes the container afterwards. The test refuses non-loopback hosts, database names without the `prisstyrning_acceptance_` prefix, PostgreSQL older than 17 and databases that already contain public tables. It must never be pointed at production or another persistent database.
+
 ## Helper Methods
 
 - `CreatePriceData()`: Creates properly formatted JSON price data for testing

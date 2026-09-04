@@ -49,6 +49,7 @@ public sealed record ThermalOptimizationQueueSnapshot(
 
 public sealed class ThermalOptimizationQueue : IEmhassOptimizationDispatcher
 {
+    private const string EvidenceErrorPrefix = "MODEL_EVIDENCE:";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ThermalOptimizationQueueOptions _options;
@@ -73,8 +74,9 @@ public sealed class ThermalOptimizationQueue : IEmhassOptimizationDispatcher
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(userId);
         ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        var expectedRequestJson = JsonSerializer.Serialize(request, JsonOptions);
         var jobId = await EnqueueOrCoalesceAsync(userId, reason, request, priority, cancellationToken);
-        return await WaitForResultAsync(jobId, cancellationToken);
+        return await WaitForResultAsync(jobId, expectedRequestJson, cancellationToken);
     }
 
     internal async Task<Guid> EnqueueOrCoalesceAsync(
@@ -223,13 +225,14 @@ public sealed class ThermalOptimizationQueue : IEmhassOptimizationDispatcher
     internal async Task FailAsync(
         ClaimedThermalOptimizationJob claimed,
         string error,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool evidenceFailure = false)
     {
         await UpdateClaimedAsync(claimed, job =>
         {
             var now = DateTimeOffset.UtcNow;
             job.Status = ThermalOptimizationJobStatuses.Failed;
-            job.Error = Limit(error, 1000);
+            job.Error = Limit(evidenceFailure ? EvidenceErrorPrefix + error : error, 1000);
             job.CompletedAtUtc = now;
             job.UpdatedAtUtc = now;
         }, cancellationToken);
@@ -258,7 +261,7 @@ public sealed class ThermalOptimizationQueue : IEmhassOptimizationDispatcher
         => JsonSerializer.Deserialize<EmhassOptimizationRequest>(claimed.RequestJson, JsonOptions)
            ?? throw new InvalidOperationException("Optimization job contains no request.");
 
-    private async Task<EmhassOptimizationResult> WaitForResultAsync(Guid jobId, CancellationToken cancellationToken)
+    private async Task<EmhassOptimizationResult> WaitForResultAsync(Guid jobId, string expectedRequestJson, CancellationToken cancellationToken)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(_options.ResultWaitTimeoutSeconds, 60, 300)));
@@ -272,11 +275,17 @@ public sealed class ThermalOptimizationQueue : IEmhassOptimizationDispatcher
                 var job = await db.ThermalOptimizationJobs.AsNoTracking()
                     .SingleOrDefaultAsync(x => x.Id == jobId, timeout.Token)
                     ?? throw new InvalidOperationException("Optimization job disappeared from the queue.");
+                if (!SameRequest(job.RequestJson, expectedRequestJson))
+                    throw new ThermalPlanningEvidenceException("Beräkningen ersattes av nyare underlag. Det äldre anropet får inte använda ersättningsresultatet.");
                 if (job.Status == ThermalOptimizationJobStatuses.Completed)
                     return JsonSerializer.Deserialize<EmhassOptimizationResult>(job.ResultJson ?? string.Empty, JsonOptions)
                            ?? throw new InvalidOperationException("Optimization job completed without a valid result.");
                 if (job.Status == ThermalOptimizationJobStatuses.Failed)
+                {
+                    if (job.Error?.StartsWith(EvidenceErrorPrefix, StringComparison.Ordinal) == true)
+                        throw new ThermalPlanningEvidenceException(job.Error[EvidenceErrorPrefix.Length..]);
                     throw new InvalidOperationException(job.Error ?? "EMHASS optimization failed.");
+                }
                 await Task.Delay(delay, timeout.Token);
             }
         }
@@ -293,9 +302,11 @@ public sealed class ThermalOptimizationQueue : IEmhassOptimizationDispatcher
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+        var now = DateTimeOffset.UtcNow;
         var job = await db.ThermalOptimizationJobs.SingleOrDefaultAsync(
             x => x.Id == claimed.Id && x.Status == ThermalOptimizationJobStatuses.Running &&
-                 x.LeaseOwner == claimed.LeaseOwner,
+                 x.UserId == claimed.UserId && x.LeaseOwner == claimed.LeaseOwner &&
+                 x.AttemptCount == claimed.AttemptCount && x.LeaseExpiresAtUtc > now && x.RequestJson == claimed.RequestJson,
             cancellationToken);
         if (job is null) throw new InvalidOperationException("Optimization job lease was lost before completion.");
         update(job);
@@ -316,4 +327,20 @@ public sealed class ThermalOptimizationQueue : IEmhassOptimizationDispatcher
 
     private static string Limit(string value, int maximumLength)
         => value.Length <= maximumLength ? value : value[..maximumLength];
+
+    private static bool SameRequest(string actual, string expected)
+    {
+        // PostgreSQL jsonb normalizes spacing and object-key order. Compare the
+        // complete values, including ordered forecasts, not the serialized text.
+        try
+        {
+            using var actualJson = JsonDocument.Parse(actual);
+            using var expectedJson = JsonDocument.Parse(expected);
+            return JsonElement.DeepEquals(actualJson.RootElement, expectedJson.RootElement);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
 }

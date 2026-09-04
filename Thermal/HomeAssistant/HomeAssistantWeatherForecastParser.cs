@@ -17,13 +17,20 @@ public static class HomeAssistantWeatherForecastParser
         if (state.State.Equals("unknown", StringComparison.OrdinalIgnoreCase) ||
             state.State.Equals("unavailable", StringComparison.OrdinalIgnoreCase))
             return new([], DataQuality.Unavailable, $"Väderentity rapporterar {state.State}.");
-        if (state.LastUpdatedUtc is not { } updated || nowUtc - updated > TimeSpan.FromHours(3))
-            return new([], DataQuality.Stale, "Väderprognosen har inte uppdaterats på tre timmar.");
+        var timestamps = SensorTimestampValidator.Assess(state, nowUtc, TimeSpan.FromHours(3));
+        if (timestamps.Quality != DataQuality.Valid) return new([], timestamps.Quality, timestamps.Reason);
+        if (state.AttributesMalformed ||
+            state.Attributes["temperature_unit"] is not null && state.StringAttribute("temperature_unit") is null ||
+            state.Attributes["wind_speed_unit"] is not null && state.StringAttribute("wind_speed_unit") is null)
+            return new([], DataQuality.Invalid, "Väderprognosens enheter har ett felaktigt format.");
         if (state.Attributes["forecast"] is not JsonArray forecast)
             return new([], DataQuality.Unavailable, "Väderentity saknar attributet forecast; exponera en HA-templateentity med timprognosen.");
 
-        var temperatureUnit = state.Attributes["temperature_unit"]?.ToString() ?? "°C";
-        var windUnit = state.Attributes["wind_speed_unit"]?.ToString() ?? "m/s";
+        var temperatureUnit = (state.StringAttribute("temperature_unit") ?? "°C").Trim().ToLowerInvariant();
+        var windUnit = (state.StringAttribute("wind_speed_unit") ?? "m/s").Trim().ToLowerInvariant();
+        if (temperatureUnit is not ("°c" or "c" or "celsius" or "°f" or "f" or "fahrenheit" or "k" or "kelvin") ||
+            windUnit is not ("m/s" or "mps" or "km/h" or "kmh" or "mph"))
+            return new([], DataQuality.Invalid, "Väderprognosens temperatur- eller vindenhet stöds inte.");
         var points = new List<WeatherForecastPoint>();
         foreach (var node in forecast.OfType<JsonObject>())
         {

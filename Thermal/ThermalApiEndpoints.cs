@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Prisstyrning.Data;
+using Prisstyrning.Data.Entities;
 using Prisstyrning.Thermal.Control;
 using Prisstyrning.Thermal.Data;
 using Prisstyrning.Thermal.Domain;
@@ -14,22 +15,7 @@ public static class ThermalApiEndpoints
 {
     public static IEndpointRouteBuilder MapThermalApi(this IEndpointRouteBuilder app)
     {
-        var thermal = app.MapGroup("/api/thermal");
-        thermal.AddEndpointFilter(async (invocation, next) =>
-        {
-            try
-            {
-                var registry = invocation.HttpContext.RequestServices.GetRequiredService<ThermalInstallationRegistry>();
-                invocation.HttpContext.Items[InstallationUserItem] = await registry.ResolveUserAsync(
-                    SessionUserId(invocation.HttpContext),
-                    invocation.HttpContext.RequestAborted);
-                return await next(invocation);
-            }
-            catch (InvalidOperationException exception)
-            {
-                return Results.Conflict(new { error = exception.Message });
-            }
-        });
+        var thermal = app.MapThermalStatusApi();
 
         thermal.MapGet("/config", async (
             HttpContext context,
@@ -54,8 +40,6 @@ public static class ThermalApiEndpoints
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["config"] = [exception.Message] });
             }
         });
-
-        thermal.MapGet("/status", GetStatusAsync);
 
         thermal.MapGet("/readiness", async (
             HttpContext context,
@@ -120,16 +104,6 @@ public static class ThermalApiEndpoints
             return Results.Ok(cycles);
         });
 
-        thermal.MapGet("/models", async (HttpContext context, PrisstyrningDbContext db, CancellationToken cancellationToken) =>
-        {
-            var models = await db.ThermalModelVersions.AsNoTracking()
-                .Where(x => x.UserId == UserId(context))
-                .OrderByDescending(x => x.CreatedAtUtc)
-                .Take(100)
-                .ToListAsync(cancellationToken);
-            return Results.Ok(models);
-        });
-
         thermal.MapPost("/mode", async (
             HttpContext context,
             ThermalModeRequest request,
@@ -166,7 +140,7 @@ public static class ThermalApiEndpoints
             return Results.NoContent();
         });
 
-        var homeAssistant = app.MapGroup("/api/home-assistant");
+        var homeAssistant = app.MapHomeAssistantEntityCatalogApi();
         homeAssistant.MapGet("/config", async (
             HttpContext context,
             HomeAssistantConnectionService connections,
@@ -200,24 +174,6 @@ public static class ThermalApiEndpoints
             }
             catch (InvalidOperationException exception) { return Results.Conflict(new { error = exception.Message }); }
         });
-        homeAssistant.MapGet("/status", async (
-            HttpContext context,
-            IHomeAssistantStateCache cache,
-            HomeAssistantConnectionService connections,
-            CancellationToken cancellationToken) =>
-        {
-            var userId = UserId(context);
-            var config = await connections.GetAsync(userId, cancellationToken);
-            var lastSnapshot = cache.LastSnapshotUtcFor(userId);
-            return Results.Ok(new
-            {
-                configured = config?.TelemetryEnabled == true && config.TelemetryTokenConfigured,
-                connected = cache.IsConnected(userId),
-                lastSnapshotUtc = lastSnapshot,
-                lastActivityUtc = cache.LastActivityUtcFor(userId),
-                cachedEntities = cache.Snapshot(userId).Count
-            });
-        });
         homeAssistant.MapPost("/test", async (
             HttpContext context,
             IHomeAssistantTelemetryClient client,
@@ -248,6 +204,41 @@ public static class ThermalApiEndpoints
                 return Results.BadRequest(new { error = "Home Assistant-historiken kunde inte hämtas." });
             }
         });
+        return app;
+    }
+
+    // Isolated HTTP tests host these exact account-scoped read routes with no
+    // integration clients, background workers, or control endpoints registered.
+    internal static RouteGroupBuilder MapHomeAssistantEntityCatalogApi(this IEndpointRouteBuilder app)
+    {
+        var homeAssistant = app.MapGroup("/api/home-assistant");
+        homeAssistant.MapGet("/status", async (
+            HttpContext context,
+            IHomeAssistantStateCache cache,
+            HomeAssistantConnectionService connections,
+            CancellationToken cancellationToken) =>
+        {
+            var userId = UserId(context);
+            var config = await connections.GetAsync(userId, cancellationToken);
+            var live = cache.ReadAccount(userId);
+            var configured = config is { TelemetryEnabled: true, TelemetryTokenConfigured: true };
+            var current = configured && live.ConfigurationUpdatedAtUtc == config!.UpdatedAtUtc;
+            var verified = current && live.Connected && live.LastSnapshotUtc >= config!.UpdatedAtUtc;
+            var phase = config is null || !config.TelemetryTokenConfigured ? "NotConfigured"
+                : !config.TelemetryEnabled ? "Disabled"
+                : !current ? "Reloading"
+                : live.Connected && !verified ? "Synchronizing" : live.Phase.ToString();
+            return Results.Ok(new
+            {
+                configured,
+                connected = verified,
+                lastSnapshotUtc = current ? live.LastSnapshotUtc : null,
+                lastActivityUtc = current ? live.LastActivityUtc : null,
+                cachedEntities = current ? live.States.Count : 0,
+                phase,
+                configurationUpdatedAtUtc = config?.UpdatedAtUtc
+            });
+        });
         homeAssistant.MapGet("/entities", async (
             HttpContext context,
             IHomeAssistantStateCache cache,
@@ -256,55 +247,151 @@ public static class ThermalApiEndpoints
         {
             var userId = UserId(context);
             var config = await connections.GetAsync(userId, cancellationToken);
-            var staleAfter = TimeSpan.FromMinutes(config?.StaleAfterMinutes ?? 10);
+            if (config is not { TelemetryEnabled: true, TelemetryTokenConfigured: true })
+                return Results.Ok(Array.Empty<ThermalEntityStateDto>());
+
             var now = DateTimeOffset.UtcNow;
-            var result = cache.Snapshot(userId).Select(state => new ThermalEntityStateDto(
-                state.EntityId,
-                state.FriendlyName,
-                state.State,
-                state.Unit,
-                state.LastUpdatedUtc,
-                state.ReceivedAtUtc,
-                state.LastUpdatedUtc is { } updated && now - updated <= staleAfter ? DataQuality.Valid : DataQuality.Stale,
-                state.LastUpdatedUtc is { } last && now - last > staleAfter ? "Värdet är äldre än tio minuter." : null));
+            var live = cache.ReadAccount(userId);
+            var connectionIssue = !live.Connected
+                ? "Liveanslutningen till Home Assistant är bruten. Visade värden är inte verifierade."
+                : live.ConfigurationUpdatedAtUtc != config.UpdatedAtUtc || live.LastSnapshotUtc is null || live.LastSnapshotUtc < config.UpdatedAtUtc
+                    ? "Startbilden saknas eller är äldre än anslutningsinställningarna. Telemetrin behöver läsa in en ny startbild."
+                    : null;
+            var result = live.States.Select(state => HomeAssistantEntityCatalog.Project(
+                state, now, config.StaleAfterMinutes, connectionIssue)).ToArray();
             return Results.Ok(result);
         });
+        return homeAssistant;
+    }
 
-        return app;
+    // The same read-only route and account boundary can be hosted in HTTP tests
+    // without registering workers or any heat-pump/integration write clients.
+    internal static RouteGroupBuilder MapThermalStatusApi(this IEndpointRouteBuilder app)
+    {
+        var thermal = app.MapGroup("/api/thermal");
+        thermal.AddEndpointFilter(async (invocation, next) =>
+        {
+            try
+            {
+                var registry = invocation.HttpContext.RequestServices.GetRequiredService<ThermalInstallationRegistry>();
+                invocation.HttpContext.Items[InstallationUserItem] = await registry.ResolveUserAsync(
+                    SessionUserId(invocation.HttpContext),
+                    invocation.HttpContext.RequestAborted);
+                return await next(invocation);
+            }
+            catch (InvalidOperationException exception)
+            {
+                return Results.Conflict(new { error = exception.Message });
+            }
+        });
+        thermal.MapGet("/status", GetStatusAsync);
+        thermal.MapGet("/models", GetModelsAsync);
+        return thermal;
+    }
+
+    private static async Task<IResult> GetModelsAsync(
+        HttpContext context,
+        PrisstyrningDbContext db,
+        RuntimeBuildProvenance build,
+        CancellationToken cancellationToken)
+    {
+        var userId = UserId(context);
+        var models = await db.ThermalModelVersions.AsNoTracking()
+            .Where(x => x.UserId == userId).OrderByDescending(x => x.CreatedAtUtc)
+            .Take(100).ToListAsync(cancellationToken);
+        var site = await db.ThermalSiteConfigs.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
+        var rooms = await db.ThermalRoomConfigs.AsNoTracking()
+            .Where(x => x.UserId == userId && x.Enabled).OrderBy(x => x.Id).ToListAsync(cancellationToken);
+        var entities = await db.ThermalEntityConfigs.AsNoTracking()
+            .Where(x => x.UserId == userId && x.Enabled).OrderBy(x => x.Id).ToListAsync(cancellationToken);
+        var now = DateTimeOffset.UtcNow;
+        var sourceValidations = await ThermalModelProvenance.VerifyCurrentAsync(
+            db,
+            userId,
+            models,
+            rooms,
+            entities,
+            site?.HeatPumpPowerSignVerified == true,
+            now,
+            cancellationToken,
+            build);
+        // Existing fields keep their meaning; this read-only assessment neither
+        // edits the stored active marker nor approves a mode transition.
+        return Results.Ok(models.Select(model =>
+        {
+            sourceValidations.TryGetValue(model.Id, out var sourceValidation);
+            return new
+            {
+                model.Id,
+                model.ModelType,
+                model.CreatedAtUtc,
+                model.TrainingFromUtc,
+                model.TrainingToUtc,
+                model.IsActive,
+                model.ParametersJson,
+                model.MetricsJson,
+                provenance = ThermalModelProvenance.Summary(model),
+                sourceValidation,
+                validation = ThermalModelEvidence.AssessCurrent(model, sourceValidation, now)
+            };
+        }));
     }
 
     private static async Task<IResult> GetStatusAsync(
         HttpContext context,
         PrisstyrningDbContext db,
         EmhassHealthState emhass,
+        RuntimeBuildProvenance build,
         CancellationToken cancellationToken)
     {
         var userId = UserId(context);
         var site = await db.ThermalSiteConfigs.AsNoTracking().SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
         var state = await db.ThermalControlStates.AsNoTracking().SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
         var latestTelemetry = await db.ThermalTelemetrySamples.AsNoTracking()
-            .Where(x => x.UserId == userId).OrderByDescending(x => x.TimestampUtc).Select(x => (DateTimeOffset?)x.TimestampUtc)
+            .Where(x => x.UserId == userId).OrderByDescending(x => x.TimestampUtc)
             .FirstOrDefaultAsync(cancellationToken);
-        var plan = await db.ThermalPlans.AsNoTracking().Where(x => x.UserId == userId)
-            .OrderByDescending(x => x.CreatedAtUtc).FirstOrDefaultAsync(cancellationToken);
+        var rooms = await db.ThermalRoomConfigs.AsNoTracking()
+            .Where(x => x.UserId == userId && x.Enabled).ToListAsync(cancellationToken);
+        var entities = await db.ThermalEntityConfigs.AsNoTracking()
+            .Where(x => x.UserId == userId && x.Enabled).ToListAsync(cancellationToken);
         var now = DateTimeOffset.UtcNow;
-        var quality = latestTelemetry is null ? DataQuality.Unavailable : now - latestTelemetry > TimeSpan.FromMinutes(10) ? DataQuality.Stale : DataQuality.Valid;
+        ThermalPlan? plan;
+        var mode = ThermalEnumParser.ControlModeOrLegacy(site?.ControlMode);
+        if (mode is ControlMode.LwtActive or ControlMode.FullActive)
+        {
+            try
+            {
+                plan = (await ThermalPlanConsumption.ReadCurrentAsync(db, userId, now, build, cancellationToken))?.Plan;
+            }
+            catch (ThermalPlanningEvidenceException)
+            {
+                plan = null;
+            }
+        }
+        else
+        {
+            plan = await db.ThermalPlans.AsNoTracking().Where(x => x.UserId == userId)
+                .OrderByDescending(x => x.CreatedAtUtc).FirstOrDefaultAsync(cancellationToken);
+        }
+        var quality = ThermalStatusQuality.Assess(latestTelemetry, rooms, entities, now, site?.UpdatedAtUtc);
         var next = plan is null ? null : await db.ThermalPlanSteps.AsNoTracking()
             .Where(x => x.ThermalPlanId == plan.Id && x.StartUtc > now && (x.DhwReserved || Math.Abs(x.DesiredLwtDeviationC - (state == null ? 0 : state.CurrentDeviationC)) >= 0.5))
             .OrderBy(x => x.StartUtc).Select(x => (DateTimeOffset?)x.StartUtc).FirstOrDefaultAsync(cancellationToken);
 
         return Results.Ok(new ThermalStatusDto(
-            ThermalEnumParser.ControlModeOrLegacy(site?.ControlMode),
+            mode,
             ThermalEnumParser.DhwWriterOrLegacy(site?.DhwWriter),
-            latestTelemetry,
-            quality,
+            latestTelemetry?.TimestampUtc,
+            quality.Quality,
             emhass.Available,
             plan?.CreatedAtUtc,
             plan is null ? null : (int)(now - plan.CreatedAtUtc).TotalMinutes,
             state?.CurrentDeviationC ?? 0,
             string.IsNullOrWhiteSpace(state?.FallbackReason) ? null : state.FallbackReason,
             next,
-            state?.ManualOverrideUntilUtc > now));
+            state?.ManualOverrideUntilUtc > now,
+            quality.Reason));
     }
 
     private static string UserId(HttpContext context)

@@ -115,6 +115,27 @@ public sealed class AccountCookieEvents : CookieAuthenticationEvents
 
     public AccountCookieEvents(PrisstyrningDbContext db) => _db = db;
 
+    public override Task RedirectToLogin(RedirectContext<CookieAuthenticationOptions> context)
+    {
+        if (!AccountApiSecurity.IsAccountApiPath(context.Request.Path))
+            return base.RedirectToLogin(context);
+
+        // Some minimal API handlers (for example an empty logout response) do
+        // not carry .NET 10's inferred API metadata. Never return HTML redirects
+        // from our account APIs, regardless of that endpoint metadata.
+        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        return context.Response.WriteAsJsonAsync(new { error = "Authentication required." });
+    }
+
+    public override Task RedirectToAccessDenied(RedirectContext<CookieAuthenticationOptions> context)
+    {
+        if (!AccountApiSecurity.IsAccountApiPath(context.Request.Path))
+            return base.RedirectToAccessDenied(context);
+
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        return context.Response.WriteAsJsonAsync(new { error = "Access denied." });
+    }
+
     public override async Task ValidatePrincipal(CookieValidatePrincipalContext context)
     {
         var userId = AccountAuthentication.UserId(context.Principal!);

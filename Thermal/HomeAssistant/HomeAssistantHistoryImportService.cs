@@ -42,6 +42,12 @@ public sealed class HomeAssistantHistoryImportService
             throw new ArgumentException("Historikimporten måste omfatta 5 minuter–90 dagar.");
         if (toUtc > DateTimeOffset.UtcNow.AddMinutes(5))
             throw new ArgumentException("Historikimport kan inte göras från framtiden.");
+        var importedAt = DateTimeOffset.UtcNow;
+        var staleAfterMinutes = await _db.HomeAssistantConnections.AsNoTracking()
+            .Where(x => x.UserId == userId).Select(x => (int?)x.StaleAfterMinutes).SingleOrDefaultAsync(cancellationToken) ?? 10;
+        var staleAfter = TimeSpan.FromMinutes(Math.Clamp(staleAfterMinutes, 1, 60));
+        // An import never mutates the live collector's exclusion/recovery state.
+        var tracker = new SensorQualityTracker();
 
         var site = await _db.ThermalSiteConfigs.AsNoTracking()
             .SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken)
@@ -61,8 +67,9 @@ public sealed class HomeAssistantHistoryImportService
         foreach (var entityId in entityIds)
         {
             var history = await _client.GetHistoryAsync(userId, entityId, fromUtc, toUtc, cancellationToken);
-            if (history.Count == 0) missing.Add(entityId);
-            cursors[entityId] = new HistoryCursor(history);
+            var cursor = new HistoryCursor(history.Where(x => x.EntityId.Equals(entityId, StringComparison.OrdinalIgnoreCase)), importedAt);
+            if (!cursor.HasUsableTimeline) missing.Add(entityId);
+            cursors[entityId] = cursor;
         }
 
         var firstBucket = CeilingToStep(fromUtc);
@@ -77,29 +84,35 @@ public sealed class HomeAssistantHistoryImportService
 
         for (var bucket = firstBucket; bucket <= lastBucket; bucket = bucket.Add(Step))
         {
-            if (existing.Contains(bucket))
-            {
-                preserved++;
-                continue;
-            }
-
-            var values = new Dictionary<string, NormalizedSensorValue>(StringComparer.OrdinalIgnoreCase);
+            var values = new Dictionary<string, SensorAssessment>(StringComparer.OrdinalIgnoreCase);
             var entityQuality = new JsonObject();
             foreach (var config in entityConfigs)
             {
-                var normalized = Normalize(cursors[config.EntityId].At(bucket), config.ExpectedUnit, config.MinimumValid, config.MaximumValid);
-                values[config.Role] = normalized;
-                entityQuality[config.Role] = Quality(normalized);
+                var raw = cursors[config.EntityId].At(bucket);
+                var assessed = tracker.Assess($"entity|{config.Role}|{config.EntityId}", raw, SensorValueNormalizer.Normalize(raw, config.ExpectedUnit),
+                    new(config.MinimumValid, config.MaximumValid, config.MaximumRatePerHour, staleAfter), bucket, historyImportedAtUtc: importedAt);
+                values[config.Role] = assessed;
+                entityQuality[config.Role] = Quality(assessed);
             }
 
             var roomValues = new Dictionary<string, double>();
             var roomQuality = new JsonObject();
             foreach (var room in rooms)
             {
-                var normalized = Normalize(cursors[room.EntityId].At(bucket), "°C", room.MinimumValidC, room.MaximumValidC);
-                roomQuality[room.EntityId] = Quality(normalized);
-                if (normalized.Quality == DataQuality.Valid && normalized.Value is { } value)
+                var raw = cursors[room.EntityId].At(bucket);
+                var assessed = tracker.Assess($"room|{room.EntityId}", raw, SensorValueNormalizer.Normalize(raw, "°C"),
+                    new(room.MinimumValidC, room.MaximumValidC, room.MaximumRateCPerHour, staleAfter), bucket, historyImportedAtUtc: importedAt);
+                roomQuality[room.EntityId] = Quality(assessed);
+                if (assessed.Quality == DataQuality.Valid && !assessed.Excluded && assessed.Value is { } value)
                     roomValues[room.EntityId] = value;
+            }
+
+            // Still assess these buckets, so a preserved live row cannot hide an
+            // invalid history transition from subsequent imported buckets.
+            if (existing.Contains(bucket))
+            {
+                preserved++;
+                continue;
             }
 
             var sample = new ThermalTelemetrySample
@@ -118,7 +131,7 @@ public sealed class HomeAssistantHistoryImportService
                 TankTemperatureC = Numeric(values, ThermalEntityRoles.TankTemperature),
                 HeatPumpPowerKw = Numeric(values, ThermalEntityRoles.HeatPumpPower),
                 PropertyPowerKw = Numeric(values, ThermalEntityRoles.PropertyPower),
-                SpotPriceSekPerKwh = Numeric(values, ThermalEntityRoles.SpotPrice) is { } spot ? (decimal)spot : null,
+                SpotPriceSekPerKwh = SensorValueNormalizer.ToDecimal(Numeric(values, ThermalEntityRoles.SpotPrice)),
                 DhwActive = Boolean(values, ThermalEntityRoles.DhwActive),
                 DefrostActive = Boolean(values, ThermalEntityRoles.DefrostActive),
                 BackupHeaterActive = Boolean(values, ThermalEntityRoles.BackupHeaterActive),
@@ -134,10 +147,11 @@ public sealed class HomeAssistantHistoryImportService
                 sample.FlowLitresPerMinute,
                 sample.LeavingWaterTemperatureC,
                 sample.ReturnWaterTemperatureC);
-            sample.Cop = site.HeatPumpPowerSignVerified && sample.BackupHeaterActive != true &&
+            sample.Cop = site.HeatPumpPowerSignVerified && sample.BackupHeaterActive == false &&
                          sample.HeatPumpPowerKw is > 0.1 && sample.HeatOutputKw is { } heatOutput
                 ? heatOutput / sample.HeatPumpPowerKw.Value
                 : null;
+            if (sample.Cop is { } cop && !double.IsFinite(cop)) sample.Cop = null;
             _db.ThermalTelemetrySamples.Add(sample);
             imported++;
 
@@ -159,31 +173,18 @@ public sealed class HomeAssistantHistoryImportService
         return new HomeAssistantHistoryImportResult(imported, preserved, entityIds.Length, missing);
     }
 
-    private static NormalizedSensorValue Normalize(
-        HomeAssistantState? state,
-        string expectedUnit,
-        double? minimum,
-        double? maximum)
-    {
-        var normalized = SensorValueNormalizer.Normalize(state, expectedUnit);
-        if (normalized.Quality != DataQuality.Valid || normalized.Value is not { } value) return normalized;
-        if (minimum is { } min && value < min || maximum is { } max && value > max)
-            return normalized with { Value = null, Quality = DataQuality.Invalid, Reason = "Värdet ligger utanför konfigurerat intervall." };
-        return normalized;
-    }
-
-    private static JsonObject Quality(NormalizedSensorValue value) => new()
+    private static JsonObject Quality(SensorAssessment value) => new()
     {
         ["quality"] = (int)value.Quality,
         ["reason"] = value.Reason,
-        ["excluded"] = false
+        ["excluded"] = value.Excluded
     };
 
-    private static double? Numeric(IReadOnlyDictionary<string, NormalizedSensorValue> values, string role) =>
-        values.TryGetValue(role, out var value) && value.Quality == DataQuality.Valid ? value.Value : null;
+    private static double? Numeric(IReadOnlyDictionary<string, SensorAssessment> values, string role) =>
+        values.TryGetValue(role, out var value) && value.Quality == DataQuality.Valid && !value.Excluded ? value.Value : null;
 
-    private static bool? Boolean(IReadOnlyDictionary<string, NormalizedSensorValue> values, string role) =>
-        values.TryGetValue(role, out var value) && value.Quality == DataQuality.Valid ? value.BooleanValue : null;
+    private static bool? Boolean(IReadOnlyDictionary<string, SensorAssessment> values, string role) =>
+        values.TryGetValue(role, out var value) && value.Quality == DataQuality.Valid && !value.Excluded ? value.BooleanValue : null;
 
     private static DateTimeOffset FloorToStep(DateTimeOffset value)
     {
@@ -202,8 +203,17 @@ public sealed class HomeAssistantHistoryImportService
         private readonly HomeAssistantState[] _states;
         private int _index = -1;
 
-        public HistoryCursor(IEnumerable<HomeAssistantState> states) =>
-            _states = states.OrderBy(Timestamp).ToArray();
+        public bool HasUsableTimeline => _states.Length > 0;
+
+        public HistoryCursor(IEnumerable<HomeAssistantState> states, DateTimeOffset importedAt)
+        {
+            var materialized = states.ToArray();
+            // An undated fault cannot be placed safely between two valid states.
+            // Reject that entity's timeline instead of silently bridging the fault.
+            _states = materialized.Any(x => x.LastUpdatedUtc is null || x.LastUpdatedUtc == default(DateTimeOffset) ||
+                                           x.LastUpdatedUtc > importedAt.AddSeconds(30))
+                ? [] : materialized.OrderBy(Timestamp).ToArray();
+        }
 
         public HomeAssistantState? At(DateTimeOffset timestampUtc)
         {
@@ -212,6 +222,6 @@ public sealed class HomeAssistantHistoryImportService
         }
 
         private static DateTimeOffset Timestamp(HomeAssistantState state) =>
-            state.LastUpdatedUtc ?? state.LastChangedUtc ?? state.ReceivedAtUtc;
+            state.LastUpdatedUtc!.Value;
     }
 }

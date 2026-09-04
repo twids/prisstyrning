@@ -72,6 +72,63 @@ public class EmhassClientTests
         Assert.Contains("predicted_temp_heater0", exception.Message);
     }
 
+    [Theory]
+    [InlineData("duplicate")]
+    [InlineData("gap")]
+    [InlineData("wrong-start")]
+    [InlineData("unzoned")]
+    public async Task Optimize_RejectsAmbiguousOrNoncontiguousResultTimeline(string fault)
+    {
+        using var resultFile = new TemporaryResultFile();
+        var second = fault switch
+        {
+            "duplicate" => "2026-01-01T00:00:00Z",
+            "gap" => "2026-01-01T00:30:00Z",
+            "unzoned" => "2026-01-01T00:15:00",
+            _ => "2026-01-01T00:15:00Z"
+        };
+        var first = fault == "wrong-start" ? "2026-01-01T00:15:00Z" : "2026-01-01T00:00:00Z";
+        var handler = new StubHandler(request =>
+        {
+            resultFile.Write(",P_deferrable0,predicted_temp_heater0,unit_load_cost\n" +
+                $"{first},1200,21.1,0.5\n{second},600,21.2,0.8\n");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        });
+        var request = Request() with { HorizonStartUtc = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero) };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => CreateClient(handler, resultFile.Path).OptimizeAsync(request));
+    }
+
+    [Fact]
+    public async Task Optimize_AcceptsOffsetTimelineEquivalentToExpectedUtc()
+    {
+        using var resultFile = new TemporaryResultFile();
+        var handler = new StubHandler(request =>
+        {
+            resultFile.Write(",P_deferrable0,predicted_temp_heater0,unit_load_cost\n" +
+                "2026-01-01T01:00:00+01:00,1200,21.1,0.5\n2026-01-01T01:15:00+01:00,600,21.2,0.8\n");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        });
+        var request = Request() with { HorizonStartUtc = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero) };
+
+        Assert.Equal(2, (await CreateClient(handler, resultFile.Path).OptimizeAsync(request)).Steps.Count);
+    }
+
+    [Fact]
+    public async Task Optimize_RejectsRowsBeyondTheRequestedHorizon()
+    {
+        using var resultFile = new TemporaryResultFile();
+        var handler = new StubHandler(request =>
+        {
+            resultFile.Write(",P_deferrable0,predicted_temp_heater0,unit_load_cost\n" +
+                "2026-01-01T00:00:00Z,1200,21.1,0.5\n2026-01-01T00:15:00Z,600,21.2,0.8\n" +
+                "2026-01-01T00:30:00Z,0,21.2,0.8\n");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        });
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => CreateClient(handler, resultFile.Path).OptimizeAsync(Request()));
+    }
+
     [Fact]
     public void CsvParser_HandlesQuotedFieldsAndEscapedQuotes()
     {
@@ -91,6 +148,42 @@ public class EmhassClientTests
 
         Assert.Contains("\"names\":[\"deferrable0\",\"deferrable1\"]", json);
         Assert.Contains("\"mutual_exclusion\":true", json);
+    }
+
+    [Fact]
+    public void RuntimePayload_KeepsAccountModelAndInputEvidenceInsideOrchestrator()
+    {
+        using var resultFile = new TemporaryResultFile();
+        var client = CreateClient(new StubHandler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK))), resultFile.Path);
+        var request = Request();
+        var withEvidence = request with
+        {
+            ModelEvidence = new(10, 11, "Shadow", DateTimeOffset.UtcNow, "local-fingerprint"),
+            InputEvidence = new(
+                12,
+                DateTimeOffset.UtcNow,
+                "telemetry-fingerprint",
+                13,
+                "SE3",
+                DateTimeOffset.UtcNow,
+                "price-fingerprint",
+                new(14, 1, "dhw-cycle-fingerprint"),
+                new(
+                    "Estimated",
+                    null,
+                    new("Eco", 40, 45, 2, 3, 39, true, true, true, "dhw-profile-fingerprint"))),
+            HorizonStartUtc = DateTimeOffset.UtcNow
+        };
+
+        var original = System.Text.Json.JsonSerializer.Serialize(client.BuildRuntimePayload(request));
+        var actual = System.Text.Json.JsonSerializer.Serialize(client.BuildRuntimePayload(withEvidence));
+
+        Assert.Equal(original, actual);
+        Assert.DoesNotContain("local-fingerprint", actual);
+        Assert.DoesNotContain("telemetry-fingerprint", actual);
+        Assert.DoesNotContain("price-fingerprint", actual);
+        Assert.DoesNotContain("dhw-cycle-fingerprint", actual);
+        Assert.DoesNotContain("dhw-profile-fingerprint", actual);
     }
 
     [Fact]
