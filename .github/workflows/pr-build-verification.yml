@@ -11,6 +11,25 @@ permissions:
   checks: write
 
 jobs:
+  postgres-acceptance:
+    name: PostgreSQL Acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.400'
+
+      - name: Verify isolated PostgreSQL migrations and concurrency
+        shell: pwsh
+        run: ./scripts/test-postgres-acceptance.ps1 -DockerEndpoint unix:///var/run/docker.sock
+
   build-verification:
     name: Build Verification
     runs-on: ubuntu-latest
