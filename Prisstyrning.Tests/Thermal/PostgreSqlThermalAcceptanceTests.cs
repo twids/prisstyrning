@@ -15,11 +15,19 @@ public sealed class PostgreSqlThermalAcceptanceTests
     private const string Account = "postgres-acceptance-a";
     private const string ForeignAccount = "postgres-acceptance-b";
     private const string ConcurrentAccount = "postgres-acceptance-concurrent";
+    private const string RoomEntity = "sensor.room";
     private const int RetentionDays = 400;
     private const int FiveMinuteSamplesPerDay = 24 * 12;
     private readonly ITestOutputHelper _output;
 
     public PostgreSqlThermalAcceptanceTests(ITestOutputHelper output) => _output = output;
+
+    [Fact]
+    public void FixtureRoomMatchesValidatedThermalHistory()
+    {
+        var sample = ThermalModelTrainingDataTests.ValidSample(DateTimeOffset.UtcNow.AddMinutes(-5));
+        Assert.Contains(RoomEntity, ThermalModelTrainingData.ReadRooms(sample).Keys);
+    }
 
     [PostgreSqlFact]
     [Trait("Category", "PostgreSqlAcceptance")]
@@ -102,7 +110,7 @@ public sealed class PostgreSqlThermalAcceptanceTests
                 .Where(x => x.Id == source.FirstSampleId && x.UserId == Account)
                 .ExecuteUpdateAsync(setters => setters.SetProperty(
                     x => x.RoomTemperaturesJson,
-                    "{\"sensor.postgres_acceptance_room\":21.7}"));
+                    "{\"" + RoomEntity + "\":21.7}"));
             Assert.Equal(1, affected);
         }
 
@@ -252,7 +260,7 @@ public sealed class PostgreSqlThermalAcceptanceTests
         {
             UserId = Account,
             Name = "PostgreSQL acceptance room",
-            EntityId = "sensor.postgres_acceptance_room",
+            EntityId = RoomEntity,
             IsCritical = true
         });
         db.ThermalEntityConfigs.AddRange(ThermalModelTrainingDataTests.Entities.Select(entity => new ThermalEntityConfig
