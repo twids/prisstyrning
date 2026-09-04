@@ -129,6 +129,9 @@ public sealed class HomeAssistantConnectionServiceTests
     [Fact]
     public async Task ConcurrentSaves_SerializeCommitAndCacheInvalidationForTheSameAccount()
     {
+        // This bounds a deadlock, not a production latency requirement. Allow
+        // continuations to run on coverage-instrumented, shared CI runners.
+        var completionTimeout = TimeSpan.FromSeconds(30);
         var writes = new GatedSaveInterceptor();
         var options = new DbContextOptionsBuilder<PrisstyrningDbContext>().UseInMemoryDatabase($"ha-concurrent-{Guid.NewGuid():N}")
             .AddInterceptors(writes).Options;
@@ -143,14 +146,14 @@ public sealed class HomeAssistantConnectionServiceTests
         Task<HomeAssistantConnectionDto>? secondSave = null;
         try
         {
-            await writes.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await writes.Entered.Task.WaitAsync(completionTimeout);
             secondSave = secondService.SaveAsync("account-a", request with { StaleAfterMinutes = 15 });
             Assert.False(secondSave.IsCompleted);
             Assert.Equal(1, writes.Calls);
         }
         finally { writes.Release.TrySetResult(); }
-        var first = await firstSave.WaitAsync(TimeSpan.FromSeconds(5));
-        var second = await secondSave!.WaitAsync(TimeSpan.FromSeconds(5));
+        var first = await firstSave.WaitAsync(completionTimeout);
+        var second = await secondSave!.WaitAsync(completionTimeout);
         Assert.True(second.UpdatedAtUtc > first.UpdatedAtUtc);
         Assert.Equal(second.UpdatedAtUtc, cache.ReadAccount("account-a").ConfigurationUpdatedAtUtc);
         Assert.Equal(second.UpdatedAtUtc, (await firstService.GetAsync("account-a"))!.UpdatedAtUtc);
