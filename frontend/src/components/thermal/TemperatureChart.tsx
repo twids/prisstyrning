@@ -41,7 +41,7 @@ export default function TemperatureChart({ history, plan }: { history: ThermalTe
       <ToggleButtonGroup exclusive value={hours} onChange={(_, value: number | null) => value && setHours(value)} aria-label="Historikperiod">
         {[6, 24, 48].map((value) => <ToggleButton key={value} value={value}>{value} timmar</ToggleButton>)}
       </ToggleButtonGroup>
-      <Typography>{latest?.lwt != null ? `Senast uppmätt LWT: ${latest.lwt.toFixed(1)} °C · ${timeLabel(latest.time)}` : 'Ingen uppmätt LWT i valt intervall.'}</Typography>
+      <Typography>{latest?.lwt != null ? `Senast uppmätt LWT: ${latest.lwt.toFixed(1)} °C · ${timeLabel(latest.time)}` : latest ? `Senaste insamlingen (${timeLabel(latest.time)}) saknar giltig LWT. Äldre mätvärden visas i grafen när de finns.` : 'Ingen uppmätt LWT i valt intervall.'}</Typography>
       {!data.length ? <Alert severity="info">Temperaturgrafen visas när telemetri finns. En optimeringsplan behövs inte.</Alert> : <Box aria-label="Uppmätta temperaturer i grader Celsius">
         <LineChart height={310} dataset={data} xAxis={[{ dataKey: 'time', scaleType: 'time', valueFormatter: timeLabel }]} yAxis={[{ label: '°C' }]}
           series={[{ dataKey: 'lwt', label: 'Uppmätt LWT' }, { dataKey: 'rwt', label: 'Uppmätt retur' }, { dataKey: 'room', label: 'Rum, giltigt givarmedel' }, { dataKey: 'outside', label: 'Uppmätt ute' }].map((series) => ({ ...series, showMark: false, connectNulls: false }))} />
