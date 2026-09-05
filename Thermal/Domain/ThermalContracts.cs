@@ -55,7 +55,12 @@ public sealed record ReadinessCheck(
     string Requirement,
     bool Passed,
     string Action,
-    string Severity = "ActionRequired");
+    string Severity = "ActionRequired")
+{
+    public bool BlocksMode(ControlMode target) => !Passed &&
+        !(target == ControlMode.Shadow && Severity == "Warning" &&
+          Key is "telemetry-fresh" or "telemetry-quality");
+}
 
 public sealed record DecisionReason(
     string MainReason,
@@ -86,7 +91,8 @@ public sealed record ThermalEntityStateDto(
     string? QualityReason,
     IReadOnlyList<string>? CompatibleUnits = null,
     DateTimeOffset? CheckedAtUtc = null,
-    DateTimeOffset? ValidUntilUtc = null);
+    DateTimeOffset? ValidUntilUtc = null,
+    DateTimeOffset? LastReportedUtc = null);
 
 public static class ThermalEnumParser
 {

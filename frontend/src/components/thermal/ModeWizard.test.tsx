@@ -50,8 +50,38 @@ describe('ModeWizard', () => {
     mocks.readiness.data.targetMode = 'LwtActive';
     mocks.readiness.data.ready = false;
     mocks.readiness.data.checks[1].passed = false;
+    mocks.readiness.data.checks[1].key = 'weather';
+    mocks.readiness.data.checks[1].severity = 'ActionRequired';
   });
   afterEach(() => vi.useRealTimers());
+
+  it('tillåter Shadow med datavarning och visar begränsningen även vid bekräftelse', async () => {
+    const user = userEvent.setup();
+    mocks.readiness.data.targetMode = 'Shadow';
+    mocks.readiness.data.ready = true;
+    mocks.readiness.data.checks[1].key = 'telemetry-quality';
+    mocks.readiness.data.checks[1].severity = 'Warning';
+    render(<ModeWizard open currentMode="Legacy" onClose={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Fortsätt' }));
+    expect(screen.getByText('Varning – hindrar inte Shadow')).toBeInTheDocument();
+    expect(screen.getByText(/Legacy fortsätter styra varmvattnet/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Fortsätt' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Fortsätt' }));
+    expect(screen.getByText(/Shadow startas med datavarningar/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Aktivera Shadow' }));
+    expect(mocks.mutateAsync).toHaveBeenCalledExactlyOnceWith('Shadow');
+  });
+
+  it('en datavarning får inte kringgå LWT-spärren även om servern felaktigt säger ready', async () => {
+    const user = userEvent.setup();
+    mocks.readiness.data.ready = true;
+    mocks.readiness.data.checks[1].key = 'telemetry-quality';
+    mocks.readiness.data.checks[1].severity = 'Warning';
+    render(<ModeWizard open currentMode="Shadow" onClose={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Fortsätt' }));
+    expect(screen.getByRole('button', { name: 'Fortsätt' })).toBeDisabled();
+    expect(mocks.mutateAsync).not.toHaveBeenCalled();
+  });
 
   it('förhindrar hopp över lägen och blockerar aktivering när readiness saknas', async () => {
     const user = userEvent.setup();

@@ -11,6 +11,17 @@ const entity: HomeAssistantEntity = {
 };
 
 describe('preliminär entity-kontroll', () => {
+  it('godtar ett oförändrat värde med färsk rapport och visar serverns förklaring', () => {
+    const result = assessEntityChoice({ ...entity, lastUpdatedUtc: iso(-7200), lastReportedUtc: iso(-60),
+      qualityReason: 'Oförändrat värde med aktuell rapportering från HA-integrationen.' }, '°C', now);
+    expect(result.quality).toBe('Valid');
+    expect(result.reason).toContain('Oförändrat värde');
+  });
+
+  it.each([iso(90), iso(-120)])('avvisar motsägelsefull rapporteringstid %s', (lastReportedUtc) => {
+    expect(assessEntityChoice({ ...entity, lastReportedUtc }, '°C', now).quality).toBe('Invalid');
+  });
+
   it('kräver både färska värden och serverns enhetskontroll', () => {
     expect(assessEntityChoice(entity, '°C', now).quality).toBe('Valid');
     expect(assessEntityChoice({ ...entity, state: '68', unit: '°F' }, '°C', now).quality).toBe('Valid');

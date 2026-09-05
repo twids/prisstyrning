@@ -185,6 +185,60 @@ public sealed class HomeAssistantStateCacheTests
         return session;
     }
 
+    [Fact]
+    public void Refresh_UpdatesUnchangedReportWithoutReplacingNewerEventsOrResurrectingRemoval()
+    {
+        var cache = new HomeAssistantStateCache();
+        var session = Connected(cache, "account-a", Revision, "21");
+        var version = cache.BeginRefresh(session)!.Value;
+        var report = State("sensor.room", "21", Revision) with { LastReportedUtc = Revision.AddMinutes(5) };
+        Assert.True(cache.PublishRefresh(session, version, [report]));
+        Assert.Equal(report.LastReportedUtc, Assert.Single(cache.Snapshot("account-a")).LastReportedUtc);
+
+        version = cache.BeginRefresh(session)!.Value;
+        cache.ApplyEvent(session, Change("sensor.room", "22", Revision.AddMinutes(6)));
+        cache.PublishRefresh(session, version, [report]);
+        Assert.Equal("22", Assert.Single(cache.Snapshot("account-a")).State);
+
+        version = cache.BeginRefresh(session)!.Value;
+        cache.ApplyEvent(session, new("sensor.room", null, Revision.AddMinutes(7)));
+        cache.PublishRefresh(session, version, [report]);
+        Assert.Empty(cache.Snapshot("account-a"));
+        cache.PublishRefresh(session, cache.BeginRefresh(session)!.Value, [report]);
+        Assert.Empty(cache.Snapshot("account-a"));
+    }
+
+    [Fact]
+    public void Refresh_OldEventCannotReplaceNewerReport_AndMissingEntityIsRemoved()
+    {
+        var cache = new HomeAssistantStateCache();
+        var session = Connected(cache, "account-a", Revision, "21");
+        cache.ApplyEvent(session, Change("sensor.room", "21", Revision));
+        var report = State("sensor.room", "21", Revision) with { LastReportedUtc = Revision.AddMinutes(5) };
+        cache.PublishRefresh(session, cache.BeginRefresh(session)!.Value, [report]);
+        cache.ApplyEvent(session, Change("sensor.room", "21", Revision));
+        Assert.Equal(report.LastReportedUtc, Assert.Single(cache.Snapshot("account-a")).LastReportedUtc);
+        cache.PublishRefresh(session, cache.BeginRefresh(session)!.Value, []);
+        Assert.Empty(cache.Snapshot("account-a"));
+    }
+
+    [Fact]
+    public void Refresh_RevisionChangeAndDisconnectRejectLateRestResults()
+    {
+        var cache = new HomeAssistantStateCache();
+        var session = Connected(cache, "account-a", Revision, "21");
+        var version = cache.BeginRefresh(session)!.Value;
+        cache.EndSession(session);
+        Assert.Null(cache.BeginRefresh(session));
+        Assert.False(cache.PublishRefresh(session, version, [State("sensor.room", "99", Revision)]));
+        var newer = Connected(cache, "account-a", Revision.AddMinutes(1), "22");
+        Assert.False(cache.PublishRefresh(session, version, []));
+        Assert.Equal("22", Assert.Single(cache.Snapshot("account-a")).State);
+        cache.Invalidate("account-a", newer.ConfigurationUpdatedAtUtc.AddMinutes(1), true);
+        Assert.False(cache.PublishRefresh(newer, 0, [State("sensor.room", "99", Revision)]));
+        Assert.Empty(cache.Snapshot("account-a"));
+    }
+
     private static HomeAssistantState State(string id, string value, DateTimeOffset updated) =>
         new(id, value, new JsonObject { ["unit_of_measurement"] = "°C" }, updated, updated, DateTimeOffset.UtcNow);
 

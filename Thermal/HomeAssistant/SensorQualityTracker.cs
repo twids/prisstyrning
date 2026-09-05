@@ -60,6 +60,9 @@ public sealed class SensorQualityTracker
             }
             var quality = normalized.Quality;
             var reason = normalized.Reason;
+            var sourceTime = historyImportedAtUtc is null
+                ? rawState?.LastReportedUtc ?? rawState?.LastUpdatedUtc
+                : rawState?.LastUpdatedUtc;
             if (quality == DataQuality.Valid &&
                 (normalized.Value is { } number && !double.IsFinite(number) ||
                  normalized.Value.HasValue == normalized.BooleanValue.HasValue))
@@ -81,7 +84,7 @@ public sealed class SensorQualityTracker
                 else if (rules.MaximumRatePerHour is { } maxRate &&
                          state.LastValidValue is { } previous &&
                          state.LastValidUtc is { } previousUtc &&
-                         rawState!.LastUpdatedUtc is { } measuredAt &&
+                         sourceTime is { } measuredAt &&
                          (measuredAt < previousUtc || measuredAt == previousUtc && value != previous ||
                           measuredAt > previousUtc && Math.Abs(value - previous) / (measuredAt - previousUtc).TotalHours > maxRate))
                 {
@@ -95,16 +98,16 @@ public sealed class SensorQualityTracker
             {
                 state.ConsecutiveInvalid = 0;
                 state.LastInvalidBucketUtc = null;
-                if (state.LastRecoveryMeasurementUtc is null || rawState!.LastUpdatedUtc > state.LastRecoveryMeasurementUtc)
+                if (state.LastRecoveryMeasurementUtc is null || sourceTime > state.LastRecoveryMeasurementUtc)
                 {
                     state.ConsecutiveValid = Math.Min(3, state.ConsecutiveValid + 1);
-                    state.LastRecoveryMeasurementUtc = rawState!.LastUpdatedUtc;
+                    state.LastRecoveryMeasurementUtc = sourceTime;
                 }
                 if (!state.Excluded || state.ConsecutiveValid >= 3)
                 {
                     state.Excluded = false;
                     state.LastValidValue = normalized.Value;
-                    state.LastValidUtc = rawState!.LastUpdatedUtc;
+                    state.LastValidUtc = sourceTime;
                 }
             }
             else

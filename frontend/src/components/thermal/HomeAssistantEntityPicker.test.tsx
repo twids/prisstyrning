@@ -22,6 +22,15 @@ function picker(view = catalog, entityId = temperature.entityId, onChange = vi.f
 }
 
 describe('Home Assistant-väljare', () => {
+  it('skiljer gammal ändring från färsk rapportering i den tillgängliga statusen', () => {
+    render(picker({ ...catalog, entities: [{ ...temperature, lastUpdatedUtc: iso(-240), lastReportedUtc: iso(-1),
+      qualityReason: 'Oförändrat värde med aktuell rapportering från HA-integrationen.' }] }));
+    expect(screen.getByRole('status')).toHaveTextContent('HA uppdaterad');
+    expect(screen.getByRole('status')).toHaveTextContent('Senast rapporterat av HA-integrationen');
+    expect(screen.getByRole('status')).toHaveTextContent('Oförändrat värde');
+    expect(screen.getByText('Värde/enhet OK')).toBeInTheDocument();
+  });
+
   it('visar namn, ID, råvärde, enhet, båda tiderna och preliminär kontroll efter valet', () => {
     render(picker());
     expect(screen.getByRole('combobox', { name: 'Temperaturentity' })).toHaveValue('Vardagsrum · sensor.room_temperature');

@@ -71,6 +71,7 @@ export default function HomeAssistantEntityPicker({ catalog, entityId, expectedU
       {!catalog.issue && found && <Typography variant="body2">
         Senast mottaget värde: {found.state || 'saknas'} {found.unit ?? ''}.
         {' '}HA uppdaterad {formatRelative(found.lastUpdatedUtc)}, mottaget {formatRelative(found.receivedAtUtc)}.
+        {found.lastReportedUtc && <> Senast rapporterat av HA-integrationen {formatRelative(found.lastReportedUtc)}.</>}
       </Typography>}
       <Typography variant="body2" color="text.secondary">{quality.reason}</Typography>
     </Stack>}

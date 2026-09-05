@@ -49,7 +49,7 @@ public static class ThermalApiEndpoints
         {
             var mode = targetMode ?? ControlMode.FullActive;
             var checks = await readiness.EvaluateAsync(UserId(context), mode, cancellationToken);
-            return Results.Ok(new { targetMode = mode, ready = checks.All(x => x.Passed), checks });
+            return Results.Ok(new { targetMode = mode, ready = checks.All(x => !x.BlocksMode(mode)), checks });
         });
 
         thermal.MapGet("/plan", async (HttpContext context, PrisstyrningDbContext db, CancellationToken cancellationToken) =>

@@ -124,6 +124,40 @@ public sealed class ThermalReadinessEvidenceTests
         await fixture.AssertLegacyAsync();
     }
 
+    [Theory]
+    [InlineData(ControlMode.Shadow, "Warning", false)]
+    [InlineData(ControlMode.LwtActive, "ActionRequired", true)]
+    [InlineData(ControlMode.FullActive, "ActionRequired", true)]
+    public async Task Readiness_MissingOrOldTelemetryIsWarningOnlyForShadow(ControlMode mode, string severity, bool blocks)
+    {
+        await using var fixture = new Fixture();
+        fixture.Db.ThermalTelemetrySamples.Add(Sample(fixture.Now.AddHours(-2)));
+        await fixture.Db.SaveChangesAsync();
+        var checks = await fixture.EvaluateAsync(mode);
+        foreach (var key in new[] { "telemetry-fresh", "telemetry-quality" })
+        {
+            var check = checks.Single(x => x.Key == key);
+            Assert.False(check.Passed);
+            Assert.Equal(severity, check.Severity);
+            Assert.Equal(blocks, check.BlocksMode(mode));
+        }
+        Assert.True(checks.Single(x => x.Key == "ha-telemetry-configured").BlocksMode(mode));
+        await fixture.AssertLegacyAsync();
+    }
+
+    [Theory]
+    [InlineData(ControlMode.Shadow, "telemetry-fresh", "Warning", false)]
+    [InlineData(ControlMode.Shadow, "telemetry-quality", "Warning", false)]
+    [InlineData(ControlMode.Shadow, "telemetry-quality", "ActionRequired", true)]
+    [InlineData(ControlMode.Shadow, "ha-live", "Warning", true)]
+    [InlineData(ControlMode.LwtActive, "telemetry-quality", "Warning", true)]
+    [InlineData(ControlMode.FullActive, "telemetry-fresh", "Warning", true)]
+    public void Readiness_WarningsCannotBypassOtherRequirementsOrActiveModes(ControlMode mode, string key, string severity, bool blocks)
+    {
+        var check = new ReadinessCheck(key, "Test", false, "Test", severity);
+        Assert.Equal(blocks, check.BlocksMode(mode));
+    }
+
     [Fact]
     public async Task Readiness_OnlyActiveLwtModesRequireVerifiedControlSafetyInputs()
     {
