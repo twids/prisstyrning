@@ -26,11 +26,12 @@ internal static class HomeAssistantEntityCatalog
         var received = state.ReceivedAtUtc;
         var value = state.State.Trim();
         DateTimeOffset? validUntil = null;
+        var normalizedValues = new Dictionary<string, double>();
 
         ThermalEntityStateDto Result(DataQuality quality, string? reason, IReadOnlyList<string>? units = null) => new(
             state.EntityId, string.IsNullOrWhiteSpace(name) ? state.EntityId : name,
             state.State, unit, updated, received, quality, reason,
-            units ?? [], nowUtc, validUntil, state.LastReportedUtc);
+            units ?? [], nowUtc, validUntil, state.LastReportedUtc, normalizedValues);
 
         if (connectionIssue is not null) return Result(DataQuality.Unavailable, connectionIssue);
         if (value.Length == 0 || value.Equals("unknown", StringComparison.OrdinalIgnoreCase) ||
@@ -42,7 +43,6 @@ internal static class HomeAssistantEntityCatalog
         if (timing.Quality is DataQuality.Unavailable or DataQuality.Invalid) return Result(timing.Quality, timing.Reason);
         var reported = state.LastReportedUtc ?? updated!.Value;
         validUntil = (reported < received ? reported : received).Add(staleAfter);
-        if (timing.Quality != DataQuality.Valid) return Result(timing.Quality, timing.Reason);
         if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number) && !double.IsFinite(number))
             return Result(DataQuality.Invalid, "Värdet är inte ett ändligt tal.");
 
@@ -52,7 +52,10 @@ internal static class HomeAssistantEntityCatalog
         {
             var normalized = SensorValueNormalizer.Normalize(state, expected);
             if (normalized.Quality == DataQuality.Valid && normalized.Value is { } numeric && double.IsFinite(numeric))
+            {
                 compatibleUnits.Add(expected);
+                normalizedValues[expected] = numeric;
+            }
         }
         // A temperature of 0/1 must not masquerade as a boolean operating signal.
         if ((string.IsNullOrWhiteSpace(unit) || unit.Trim().Equals("bool", StringComparison.OrdinalIgnoreCase) ||
@@ -66,7 +69,7 @@ internal static class HomeAssistantEntityCatalog
             forecast.Points.Count(point => point.TimestampUtc >= nowUtc) >= 2)
             compatibleUnits.Add("forecast");
 
-        return Result(DataQuality.Valid, timing.Reason, compatibleUnits);
+        return Result(timing.Quality, timing.Reason, compatibleUnits);
     }
 
     private static string? StringAttribute(JsonObject attributes, string key) =>

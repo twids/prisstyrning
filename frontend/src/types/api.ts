@@ -227,6 +227,7 @@ export interface ThermalRoomConfig {
   minimumValidC: number;
   maximumValidC: number;
   maximumRateCPerHour: number;
+  maximumReportAgeMinutes?: number | null;
 }
 
 export interface ThermalEntityConfig {
@@ -239,6 +240,7 @@ export interface ThermalEntityConfig {
   minimumValid: number | null;
   maximumValid: number | null;
   maximumRatePerHour: number | null;
+  maximumReportAgeMinutes?: number | null;
 }
 
 export interface ThermalConfig {
@@ -254,6 +256,7 @@ export interface ThermalStatus {
   overallDataQuality: DataQuality;
   dataQualityReason?: string | null;
   emhassAvailable: boolean;
+  emhassEnabled?: boolean;
   planCreatedUtc: string | null;
   planAgeMinutes: number | null;
   currentLwtDeviationC: number;
@@ -313,6 +316,12 @@ export interface ThermalPlan {
   summary: string;
   inputSnapshotJson: string;
   steps: ThermalPlanStep[];
+}
+
+export interface WeatherForecastTest {
+  quality: DataQuality;
+  reason: string | null;
+  points: { timestampUtc: string; temperatureC: number; windSpeedMps: number | null; solarIrradianceWm2: number | null }[];
 }
 
 export interface ThermalTelemetrySample {
@@ -462,6 +471,7 @@ export interface HomeAssistantEntity {
   qualityReason: string | null;
   /** Preliminary value/unit checks only, not sensor-health or readiness approval. */
   compatibleUnits?: string[];
+  normalizedValues?: Record<string, number>;
   checkedAtUtc?: string | null;
   validUntilUtc?: string | null;
 }

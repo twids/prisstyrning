@@ -25,6 +25,19 @@ public static class ThermalApiEndpoints
             return Results.Ok(await data.GetConfigAsync(UserId(context), cancellationToken));
         });
 
+        thermal.MapPost("/weather/test", async (HttpContext context, WeatherTestRequest request,
+            IHomeAssistantTelemetryClient client, CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                return Results.Ok(await client.GetWeatherForecastAsync(UserId(context), request.EntityId, cancellationToken));
+            }
+            catch (ArgumentException)
+            {
+                return Results.BadRequest(new { message = "Välj en giltig weather-entity." });
+            }
+        });
+
         thermal.MapPut("/config", async (
             HttpContext context,
             ThermalConfigDto config,
@@ -342,6 +355,7 @@ public static class ThermalApiEndpoints
         HttpContext context,
         PrisstyrningDbContext db,
         EmhassHealthState emhass,
+        IOptions<EmhassOptions> emhassOptions,
         RuntimeBuildProvenance build,
         CancellationToken cancellationToken)
     {
@@ -391,7 +405,8 @@ public static class ThermalApiEndpoints
             string.IsNullOrWhiteSpace(state?.FallbackReason) ? null : state.FallbackReason,
             next,
             state?.ManualOverrideUntilUtc > now,
-            quality.Reason));
+            quality.Reason,
+            emhassOptions.Value.Enabled));
     }
 
     private static string UserId(HttpContext context)

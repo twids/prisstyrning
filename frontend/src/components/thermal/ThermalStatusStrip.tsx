@@ -45,7 +45,7 @@ export default function ThermalStatusStrip() {
                 </Stack>
                 <Tooltip title="Aktiv skrivare för varmvatten"><Chip size="small" variant="outlined" label={`DHW: ${data.dhwWriter}`} /></Tooltip>
                 <Tooltip title="Senast sparade femminutersinsamling, oavsett kvalitet"><Chip size="small" variant="outlined" label={`Insamlat ${formatRelative(data.lastTelemetryUtc)}`} /></Tooltip>
-                <Chip size="small" variant="outlined" icon={data.emhassAvailable ? <CloudDoneIcon /> : <CloudOffIcon />} label={`EMHASS ${data.emhassAvailable ? 'klar' : 'nere'}`} color={data.emhassAvailable ? 'success' : 'default'} />
+                <Chip size="small" variant="outlined" icon={data.emhassEnabled !== false && data.emhassAvailable ? <CloudDoneIcon /> : <CloudOffIcon />} label={`EMHASS ${data.emhassEnabled === false ? 'avstängd' : data.emhassAvailable ? 'klar' : 'ej verifierad'}`} color={data.emhassEnabled !== false && data.emhassAvailable ? 'success' : 'default'} />
                 <Chip size="small" variant="outlined" label={`Plan ${data.planAgeMinutes == null ? 'saknas' : `${data.planAgeMinutes} min`}`} color={data.planAgeMinutes != null && data.planAgeMinutes > 60 ? 'error' : 'default'} />
                 <Chip size="small" variant="outlined" icon={<BoltIcon />} label={`LWT ${data.currentLwtDeviationC.toLocaleString('sv-SE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} °C`} />
                 {data.manualOverride && <Chip size="small" color="warning" label="Manuellt läge" />}

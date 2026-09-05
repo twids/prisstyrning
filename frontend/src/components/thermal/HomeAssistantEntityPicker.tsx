@@ -12,13 +12,14 @@ export interface EntityCatalogView {
   loading?: boolean;
 }
 
-export default function HomeAssistantEntityPicker({ catalog, entityId, expectedUnit, label, onChange, required = false }: {
+export default function HomeAssistantEntityPicker({ catalog, entityId, expectedUnit, label, onChange, rules, required = false }: {
   catalog: EntityCatalogView;
   entityId: string;
   expectedUnit: string;
   label: string;
   onChange: (entity: HomeAssistantEntity | null) => void;
   required?: boolean;
+  rules?: { maximumReportAgeMinutes?: number | null; minimum?: number | null; maximum?: number | null };
 }) {
   const found = catalog.entities.find((entity) => entity.entityId === entityId) ?? null;
   // Preserve configured IDs through empty/error responses. Never clear on refetch.
@@ -28,7 +29,7 @@ export default function HomeAssistantEntityPicker({ catalog, entityId, expectedU
     qualityReason: 'Den sparade entityn finns inte i den aktuella listan. Mappningen är kvar.',
   } : null), [found, entityId]);
   const options = !found && selected ? [selected, ...catalog.entities] : catalog.entities;
-  const quality = assessEntityChoice(found, expectedUnit, catalog.nowUtc, catalog.issue);
+  const quality = assessEntityChoice(found, expectedUnit, catalog.nowUtc, catalog.issue, rules);
 
   return <Box role="group" aria-label={`Datakälla: ${label}`} sx={{ minWidth: 0, width: '100%' }}>
     <Autocomplete
@@ -46,7 +47,7 @@ export default function HomeAssistantEntityPicker({ catalog, entityId, expectedU
       getOptionLabel={(option) => option.friendlyName === option.entityId ? option.entityId : `${option.friendlyName} · ${option.entityId}`}
       isOptionEqualToValue={(option, value) => option.entityId === value.entityId}
       renderOption={({ key, ...props }, option) => {
-        const result = assessEntityChoice(option, expectedUnit, catalog.nowUtc, catalog.issue);
+        const result = assessEntityChoice(option, expectedUnit, catalog.nowUtc, catalog.issue, rules);
         return <Box component="li" {...props} key={key} sx={{ minWidth: 0, overflowWrap: 'anywhere' }}>
           <Stack spacing={.5} sx={{ minWidth: 0, width: '100%' }}>
             <Typography>{option.friendlyName}</Typography>
@@ -74,6 +75,9 @@ export default function HomeAssistantEntityPicker({ catalog, entityId, expectedU
         {found.lastReportedUtc && <> Senast rapporterat av HA-integrationen {formatRelative(found.lastReportedUtc)}.</>}
       </Typography>}
       <Typography variant="body2" color="text.secondary">{quality.reason}</Typography>
+      {found?.normalizedValues?.[expectedUnit] != null && <Typography variant="body2">
+        Appen tolkar värdet som {found.normalizedValues[expectedUnit].toLocaleString('sv-SE', { maximumFractionDigits: 3 })} {expectedUnit}.
+      </Typography>}
     </Stack>}
   </Box>;
 }

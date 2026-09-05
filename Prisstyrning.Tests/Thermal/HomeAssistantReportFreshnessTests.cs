@@ -92,7 +92,7 @@ public sealed class HomeAssistantReportFreshnessTests
         var tracker = new SensorQualityTracker();
         var rules = new SensorValidationRules(5, 35, 10, MaxAge);
         var normalized = new NormalizedSensorValue(21, null, "°C", DataQuality.Valid, null);
-        for (var i = 0; i < 3; i++) tracker.Assess("room", State(null), normalized, rules, Now.AddMinutes(i * 5));
+        for (var i = 0; i < 3; i++) tracker.Assess("room", State(null), new(90, null, "°C", DataQuality.Valid, null), rules, Now.AddMinutes(i * 5));
         var report = Now.AddMinutes(15);
         for (var i = 0; i < 3; i++)
         {

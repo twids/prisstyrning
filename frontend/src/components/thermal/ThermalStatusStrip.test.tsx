@@ -32,6 +32,20 @@ function renderStatus() {
 }
 
 describe('ThermalStatusStrip', () => {
+  it.each([
+    [false, false, 'EMHASS avstängd'],
+    [false, true, 'EMHASS avstängd'],
+    [true, false, 'EMHASS ej verifierad'],
+    [true, true, 'EMHASS klar'],
+    [undefined, false, 'EMHASS ej verifierad'],
+  ])('skiljer avstängd integration från okänd tillgänglighet (%s/%s)', (emhassEnabled, emhassAvailable, label) => {
+    mocks.status.mockReturnValue({ data: { ...data, emhassEnabled, emhassAvailable }, isError: false });
+    renderStatus();
+    expect(screen.getByText(label)).toBeInTheDocument();
+    expect(screen.queryByText('EMHASS nere')).not.toBeInTheDocument();
+    expect(mocks.mutateAsync).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.mutateAsync.mockResolvedValue(undefined);

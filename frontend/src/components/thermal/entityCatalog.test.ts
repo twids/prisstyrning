@@ -11,6 +11,14 @@ const entity: HomeAssistantEntity = {
 };
 
 describe('preliminär entity-kontroll', () => {
+  it('tillåter angiven rapportperiod men aldrig gammal HA-avläsning', () => {
+    const slow = { ...entity, lastUpdatedUtc: iso(-2400), quality: 'Stale' as const, validUntilUtc: iso(-1800) };
+    expect(assessEntityChoice(slow, '°C', now, undefined, { maximumReportAgeMinutes: 60 }).quality).toBe('Valid');
+    expect(assessEntityChoice({ ...slow, receivedAtUtc: iso(-660) }, '°C', now, undefined, { maximumReportAgeMinutes: 60 }).quality).toBe('Stale');
+  });
+  it('kontrollerar intervallet efter enhetsomräkning', () => {
+    expect(assessEntityChoice({ ...entity, state: '194', unit: '°F', normalizedValues: { '°C': 90 } }, '°C', now, undefined, { minimum: 5, maximum: 35 }).quality).toBe('Invalid');
+  });
   it('godtar ett oförändrat värde med färsk rapport och visar serverns förklaring', () => {
     const result = assessEntityChoice({ ...entity, lastUpdatedUtc: iso(-7200), lastReportedUtc: iso(-60),
       qualityReason: 'Oförändrat värde med aktuell rapportering från HA-integrationen.' }, '°C', now);

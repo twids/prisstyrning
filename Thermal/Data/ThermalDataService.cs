@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using Prisstyrning.Data;
 using Prisstyrning.Data.Entities;
 using Prisstyrning.Thermal.Domain;
+using Prisstyrning.Thermal.HomeAssistant;
 
 namespace Prisstyrning.Thermal.Data;
 
@@ -60,6 +61,7 @@ public sealed class ThermalDataService
                 Weight = room.Weight,
                 IsCritical = room.IsCritical,
                 Enabled = room.Enabled,
+                MaximumReportAgeMinutes = room.MaximumReportAgeMinutes,
                 MinimumValidC = room.MinimumValidC,
                 MaximumValidC = room.MaximumValidC,
                 MaximumRateCPerHour = room.MaximumRateCPerHour
@@ -77,6 +79,7 @@ public sealed class ThermalDataService
                 EntityId = entity.EntityId.Trim(),
                 ExpectedUnit = entity.ExpectedUnit.Trim(),
                 Enabled = entity.Enabled,
+                MaximumReportAgeMinutes = entity.MaximumReportAgeMinutes,
                 MinimumValid = entity.MinimumValid,
                 MaximumValid = entity.MaximumValid,
                 MaximumRatePerHour = entity.MaximumRatePerHour
@@ -107,6 +110,11 @@ public sealed class ThermalDataService
 
     private static void Validate(ThermalConfigDto config)
     {
+        if (config.Rooms.Any(x => x.MaximumReportAgeMinutes is < 1 or > 1440))
+            throw new ArgumentException("Rumsgivarens rapportgräns måste vara 1–1440 minuter eller lämnas tom.");
+        if (config.Entities.Any(x => x.MaximumReportAgeMinutes is { } age &&
+            (age < 1 || age > SensorFreshnessPolicy.MaximumForRole(x.Role))))
+            throw new ArgumentException("Ogiltig rapportgräns. Driftsignaler får högst tio minuter; väder och pris högst 1440 minuter.");
         if (config.Site.BaseRoomTargetC is < 10 or > 30) throw new ArgumentException("Rumsmålet måste vara 10–30 °C.");
         if (config.Site.LowerComfortBandC is < 0 or > 5 || config.Site.UpperComfortBandC is < 0 or > 5)
             throw new ArgumentException("Komfortbandet måste vara 0–5 °C.");

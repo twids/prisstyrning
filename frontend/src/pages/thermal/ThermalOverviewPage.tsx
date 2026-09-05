@@ -60,7 +60,7 @@ export default function ThermalOverviewPage() {
         <MetricCard label="Representativ rumstemperatur" value={roomAverage == null ? '–' : `${roomAverage.toFixed(1)} °C`} detail={`${rooms.length} aktiva rumsvärden`} icon={<DeviceThermostatIcon />} loading={history.isLoading} />
         <MetricCard label="Varmvattentank" value={latest?.tankTemperatureC == null ? '–' : `${latest.tankTemperatureC.toFixed(1)} °C`} detail={latest?.dhwActive ? 'DHW pågår' : 'Ingen verifierad DHW-drift'} icon={<WaterDropOutlinedIcon />} accent="#9dd7ff" loading={history.isLoading} />
         <MetricCard label="Beräknad COP" value={latest?.cop == null ? '–' : latest.cop.toFixed(2)} detail={config.data?.site.heatPumpPowerSignVerified ? 'Shelly-riktning verifierad' : 'Visas först efter effektverifiering'} icon={<ElectricBoltOutlinedIcon />} accent="#f6c56f" loading={history.isLoading} />
-        <MetricCard label="Planens ålder" value={status.data?.planAgeMinutes == null ? '–' : `${status.data.planAgeMinutes} min`} detail={status.data?.emhassAvailable ? 'EMHASS svarar' : 'EMHASS är inte tillgänglig'} icon={<InsightsOutlinedIcon />} accent="#c6a8ff" loading={status.isLoading} />
+        <MetricCard label="Planens ålder" value={status.data?.planAgeMinutes == null ? '–' : `${status.data.planAgeMinutes} min`} detail={status.data?.emhassEnabled === false ? 'EMHASS-integrationen är avstängd. Legacy styr varmvatten utan EMHASS.' : status.data?.emhassAvailable ? 'EMHASS svarar' : 'EMHASS tillgänglighet är inte verifierad'} icon={<InsightsOutlinedIcon />} accent="#c6a8ff" loading={status.isLoading} />
       </Box>
 
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 1.2fr) minmax(340px, .8fr)' }, gap: 2 }}>

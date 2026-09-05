@@ -127,7 +127,7 @@ public sealed class HomeAssistantHistoryImportTests
         Assert.Equal("{}", samples[5].RoomTemperaturesJson);
         var lastQuality = JsonNode.Parse(samples[^1].QualityJson)!["rooms"]!["sensor.room"]!;
         Assert.Equal((int)DataQuality.Stale, lastQuality["quality"]!.GetValue<int>());
-        Assert.True(lastQuality["excluded"]!.GetValue<bool>());
+        Assert.False(lastQuality["excluded"]!.GetValue<bool>());
     }
 
     [Fact]

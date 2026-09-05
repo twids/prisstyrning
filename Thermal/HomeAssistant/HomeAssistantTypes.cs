@@ -30,6 +30,8 @@ public sealed record NormalizedSensorValue(
 
 public interface IHomeAssistantTelemetryClient
 {
+    Task<NormalizedWeatherForecast> GetWeatherForecastAsync(string userId, string entityId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new NormalizedWeatherForecast([], DataQuality.Unavailable, "Prognoshämtning stöds inte av klienten."));
     Task<bool> TestConnectionAsync(string userId, CancellationToken cancellationToken = default);
     Task<HomeAssistantState?> GetStateAsync(string userId, string entityId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<HomeAssistantState>> GetStatesAsync(string userId, CancellationToken cancellationToken = default);

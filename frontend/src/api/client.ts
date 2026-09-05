@@ -3,6 +3,10 @@ import { readControlMode, readDataQuality, readThermalStatus, writeControlMode }
 import type { ThermalStatusWire } from './thermalContract';
 
 class ApiClient {
+  async testWeather(entityId: string): Promise<T.WeatherForecastTest> {
+    const result = await this.post<T.WeatherForecastTest>('/api/thermal/weather/test', { entityId });
+    return { ...result, quality: readDataQuality(result.quality) };
+  }
   private baseUrl = ''; // Empty for same-origin requests (Vite proxy handles routing)
   private csrfToken: string | null = null;
 

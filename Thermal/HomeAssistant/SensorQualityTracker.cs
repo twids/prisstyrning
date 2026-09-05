@@ -70,9 +70,6 @@ public sealed class SensorQualityTracker
                 quality = DataQuality.Invalid;
                 reason = "Givaren saknar ett entydigt, ändligt mätvärde eller av/på-värde.";
             }
-            if (quality == DataQuality.Valid)
-                (quality, reason) = SensorTimestampValidator.Assess(rawState, nowUtc, rules.StaleAfter, historyImportedAtUtc);
-
             if (quality == DataQuality.Valid && normalized.Value is { } value)
             {
                 if (rules.Minimum is { } minimum && (!double.IsFinite(minimum) || value < minimum) ||
@@ -93,6 +90,9 @@ public sealed class SensorQualityTracker
                 }
             }
 
+            if (quality == DataQuality.Valid)
+                (quality, reason) = SensorTimestampValidator.Assess(rawState, nowUtc, rules.StaleAfter, historyImportedAtUtc);
+
             var wasExcluded = state.Excluded;
             if (quality == DataQuality.Valid)
             {
@@ -110,7 +110,7 @@ public sealed class SensorQualityTracker
                     state.LastValidUtc = sourceTime;
                 }
             }
-            else
+            else if (quality == DataQuality.Invalid)
             {
                 state.ConsecutiveValid = 0;
                 var bucket = nowUtc.ToUniversalTime().Ticks / TimeSpan.TicksPerMinute / 5;
@@ -121,6 +121,14 @@ public sealed class SensorQualityTracker
                     state.LastInvalidBucketUtc = bucketUtc;
                 }
                 if (state.ConsecutiveInvalid >= 3) state.Excluded = true;
+            }
+            else
+            {
+                // Missing reports are not evidence of three erroneous measurements.
+                // Keep an already excluded sensor excluded until real recovery.
+                state.ConsecutiveValid = 0;
+                state.ConsecutiveInvalid = 0;
+                state.LastInvalidBucketUtc = null;
             }
 
             return new SensorAssessment(
