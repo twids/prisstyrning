@@ -95,8 +95,10 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
             snapshot.TryGetValue(entity.EntityId, out var raw);
             if (entity.Role.Equals(ThermalEntityRoles.WeatherForecast, StringComparison.OrdinalIgnoreCase))
             {
-                weatherForecast = connectionReady ? HomeAssistantWeatherForecastParser.Parse(raw, now)
-                    : new([], DataQuality.Unavailable, "En aktuell liveanslutning till Home Assistant saknas.");
+                weatherForecast = !connectionReady ? new([], DataQuality.Unavailable, "En aktuell liveanslutning till Home Assistant saknas.")
+                    : entity.EntityId.StartsWith("weather.", StringComparison.Ordinal)
+                        ? await scope.ServiceProvider.GetRequiredService<IHomeAssistantTelemetryClient>().GetWeatherForecastAsync(userId, entity.EntityId, cancellationToken)
+                        : HomeAssistantWeatherForecastParser.Parse(raw, now);
                 continue;
             }
             values[entity.Role] = Assess(
@@ -107,7 +109,7 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
                 entity.MaximumValid,
                 entity.MaximumRatePerHour,
                 now,
-                staleAfter,
+                SensorFreshnessPolicy.ReportAge(entity.MaximumReportAgeMinutes, staleAfter),
                 userId,
                 revision,
                 connectionReady);
@@ -126,7 +128,7 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
                 room.MaximumValidC,
                 room.MaximumRateCPerHour,
                 now,
-                staleAfter,
+                SensorFreshnessPolicy.ReportAge(room.MaximumReportAgeMinutes, staleAfter),
                 userId,
                 revision,
                 connectionReady);

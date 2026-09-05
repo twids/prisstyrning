@@ -48,7 +48,8 @@ public sealed record ThermalStatusDto(
     string? FallbackReason,
     DateTimeOffset? NextControlEventUtc,
     bool ManualOverride,
-    string? DataQualityReason = null);
+    string? DataQualityReason = null,
+    bool EmhassEnabled = false);
 
 public sealed record ReadinessCheck(
     string Key,
@@ -70,6 +71,7 @@ public sealed record DecisionReason(
     string? Alternative);
 
 public sealed record ThermalModeRequest(ControlMode Mode, bool Confirmed = false);
+public sealed record WeatherTestRequest(string EntityId);
 
 public sealed record ThermalOverrideRequest(
     DateTimeOffset? UntilUtc,
@@ -92,7 +94,8 @@ public sealed record ThermalEntityStateDto(
     IReadOnlyList<string>? CompatibleUnits = null,
     DateTimeOffset? CheckedAtUtc = null,
     DateTimeOffset? ValidUntilUtc = null,
-    DateTimeOffset? LastReportedUtc = null);
+    DateTimeOffset? LastReportedUtc = null,
+    IReadOnlyDictionary<string, double>? NormalizedValues = null);
 
 public static class ThermalEnumParser
 {

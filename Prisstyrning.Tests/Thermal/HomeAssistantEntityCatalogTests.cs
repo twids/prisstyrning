@@ -126,7 +126,8 @@ public sealed class HomeAssistantEntityCatalogTests
         };
         var result = Project(state);
         Assert.Equal(quality, result.Quality);
-        Assert.Empty(result.CompatibleUnits!);
+        if (quality == DataQuality.Stale) Assert.Contains("°C", result.CompatibleUnits!);
+        else Assert.Empty(result.CompatibleUnits!);
         Assert.NotNull(result.QualityReason);
     }
 

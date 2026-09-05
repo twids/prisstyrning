@@ -90,7 +90,7 @@ public sealed class HomeAssistantHistoryImportService
             {
                 var raw = cursors[config.EntityId].At(bucket);
                 var assessed = tracker.Assess($"entity|{config.Role}|{config.EntityId}", raw, SensorValueNormalizer.Normalize(raw, config.ExpectedUnit),
-                    new(config.MinimumValid, config.MaximumValid, config.MaximumRatePerHour, staleAfter), bucket, historyImportedAtUtc: importedAt);
+                    new(config.MinimumValid, config.MaximumValid, config.MaximumRatePerHour, SensorFreshnessPolicy.ReportAge(config.MaximumReportAgeMinutes, staleAfter)), bucket, historyImportedAtUtc: importedAt);
                 values[config.Role] = assessed;
                 entityQuality[config.Role] = Quality(assessed);
             }
@@ -101,7 +101,7 @@ public sealed class HomeAssistantHistoryImportService
             {
                 var raw = cursors[room.EntityId].At(bucket);
                 var assessed = tracker.Assess($"room|{room.EntityId}", raw, SensorValueNormalizer.Normalize(raw, "°C"),
-                    new(room.MinimumValidC, room.MaximumValidC, room.MaximumRateCPerHour, staleAfter), bucket, historyImportedAtUtc: importedAt);
+                    new(room.MinimumValidC, room.MaximumValidC, room.MaximumRateCPerHour, SensorFreshnessPolicy.ReportAge(room.MaximumReportAgeMinutes, staleAfter)), bucket, historyImportedAtUtc: importedAt);
                 roomQuality[room.EntityId] = Quality(assessed);
                 if (assessed.Quality == DataQuality.Valid && !assessed.Excluded && assessed.Value is { } value)
                     roomValues[room.EntityId] = value;

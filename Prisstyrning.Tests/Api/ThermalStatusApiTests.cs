@@ -15,6 +15,26 @@ namespace Prisstyrning.Tests.Api;
 public sealed class ThermalStatusApiTests
 {
     [Fact]
+    public async Task Status_ReportsEnabledSeparatelyFromUnverifiedAvailability()
+    {
+        await using var host = await AccountApiTestHost.CreateAsync(includeThermalStatus: true);
+        using var browser = host.CreateBrowser();
+        await browser.SignInAsync();
+        await host.WithServicesAsync(services =>
+        {
+            services.GetRequiredService<Microsoft.Extensions.Options.IOptions<EmhassOptions>>().Value.Enabled = true;
+            return Task.CompletedTask;
+        });
+
+        var status = await browser.Client.GetFromJsonAsync<ThermalStatusDto>("/api/thermal/status");
+
+        Assert.True(status!.EmhassEnabled);
+        Assert.False(status.EmhassAvailable);
+        Assert.Equal(ControlMode.Legacy, status.Mode);
+        Assert.Equal(DhwWriter.Legacy, status.DhwWriter);
+    }
+
+    [Fact]
     public async Task FreshSnapshot_WithExcludedCriticalRoom_IsNotValidAndDoesNotChangeLegacy()
     {
         await using var host = await AccountApiTestHost.CreateAsync(includeThermalStatus: true);
@@ -89,6 +109,7 @@ public sealed class ThermalStatusApiTests
         Assert.Null(status.PlanCreatedUtc);
         Assert.Null(status.PlanAgeMinutes);
         Assert.False(status.EmhassAvailable);
+        Assert.False(status.EmhassEnabled);
         Assert.False(status.ManualOverride);
         await host.WithServicesAsync(async services =>
         {

@@ -74,7 +74,7 @@ public sealed class HomeAssistantCollectorValidationTests
     [Fact]
     public async Task Collect_ThreeDistinctBucketsExclude_ThreeNewMeasurementsRecover_WithSingleEvents()
     {
-        await using var fixture = await Fixture.CreateAsync(state => state.EntityId == "sensor.room" ? state with { State = "unknown" } : state);
+        await using var fixture = await Fixture.CreateAsync(state => state.EntityId == "sensor.room" ? state with { State = "90" } : state);
         for (var index = 0; index < 3; index++) await fixture.CollectAsync(0);
         Assert.False(RoomQuality(await fixture.LatestAsync())["Excluded"]!.GetValue<bool>());
         await fixture.CollectAsync(5);

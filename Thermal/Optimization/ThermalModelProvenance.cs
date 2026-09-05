@@ -327,14 +327,21 @@ internal static class ThermalModelProvenance
             x.MaximumValid,
             x.MaximumRatePerHour
         });
-        return Hash(JsonSerializer.Serialize(new
+        var existingConfiguration = JsonSerializer.Serialize(new
         {
             userId,
             modelType,
             heatPumpPowerSignVerified = modelType == "COP" && heatPumpPowerSignVerified,
             rooms = selectedRooms,
             entities = selectedEntities
-        }, JsonSerializerOptions.Web));
+        }, JsonSerializerOptions.Web);
+        // Preserve existing model fingerprints on migration when no report policy changed.
+        var reportPolicies = (modelType == "2R2C" ? rooms.Where(x => x.MaximumReportAgeMinutes.HasValue)
+            .Select(x => new { key = $"room:{x.Id}", minutes = x.MaximumReportAgeMinutes }) : [])
+            .Concat(entities.Where(x => x.MaximumReportAgeMinutes.HasValue)
+                .Select(x => new { key = $"entity:{x.Id}", minutes = x.MaximumReportAgeMinutes }))
+            .OrderBy(x => x.key, StringComparer.Ordinal).ToArray();
+        return Hash(existingConfiguration + (reportPolicies.Length == 0 ? "" : JsonSerializer.Serialize(reportPolicies, JsonSerializerOptions.Web)));
     }
 
     private static (string Algorithm, string Selection) Versions(string modelType) => modelType switch

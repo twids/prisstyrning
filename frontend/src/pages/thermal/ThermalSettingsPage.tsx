@@ -11,7 +11,9 @@ import CableOutlinedIcon from '@mui/icons-material/CableOutlined';
 import { useHomeAssistant, useSaveThermalConfig, useThermalConfig } from '../../hooks/thermal/useThermal';
 import { PageHeader, formatRelative } from '../../components/thermal/thermalUi';
 import HomeAssistantEntityPicker, { type EntityCatalogView } from '../../components/thermal/HomeAssistantEntityPicker';
+import WeatherSourcePicker from '../../components/thermal/WeatherSourcePicker';
 import HomeAssistantLiveStatus from '../../components/thermal/HomeAssistantLiveStatus';
+import { assessEntityChoice } from '../../components/thermal/entityCatalog';
 import { assessHomeAssistantLive } from '../../components/thermal/homeAssistantConnectionStatus';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import type { HomeAssistantConnection, HomeAssistantEntity, ThermalConfig, ThermalEntityConfig, ThermalRoomConfig, UpdateHomeAssistantConnection } from '../../types/api';
@@ -56,7 +58,7 @@ export default function ThermalSettingsPage() {
     }
   }, [config.data, draft]);
   const dirty = draft != null && JSON.stringify(draft) !== savedSnapshot;
-  const errors = useMemo(() => validate(draft), [draft]);
+  const configErrors = useMemo(() => validate(draft), [draft]);
   const live = assessHomeAssistantLive(ha.config.data, ha.status.data, ha.status.dataUpdatedAt, Math.max(nowUtc, Date.now()),
     ha.config.isLoading || ha.status.isLoading, ha.config.isError || ha.status.isError);
   const catalogIssue = ha.config.isError || ha.status.isError || ha.entities.isError
@@ -72,6 +74,8 @@ export default function ThermalSettingsPage() {
     const [connection, status] = await Promise.all([ha.config.refetch(), ha.status.refetch()]);
     if (!connection.isError && !status.isError && status.data?.configured) await ha.entities.refetch();
   };
+
+  const errors = [...configErrors, ...validateSensorMappings(draft, catalog)];
 
   const persist = async () => {
     if (!draft || errors.length) return;
@@ -160,7 +164,7 @@ export function HomeAssistantConnectionPanel({ ha, connection }: { ha: ReturnTyp
       <Stack spacing={2.5}>
         <Stack direction={{ xs: 'column', md: 'row' }} gap={2} alignItems={{ md: 'flex-start' }}>
           <TextField fullWidth required label="Home Assistant-adress" placeholder="https://ha.example.se" value={connectionDraft.baseUrl} onChange={(event) => setConnectionDraft({ ...connectionDraft, baseUrl: event.target.value })} helperText="Publik HTTPS-adress utan sökvägsparametrar eller inloggningsuppgifter." />
-          <TextField type="number" label="Gammal efter, minuter" value={connectionDraft.staleAfterMinutes} onChange={(event) => setConnectionDraft({ ...connectionDraft, staleAfterMinutes: Number(event.target.value) })} inputProps={{ min: 1, max: 60 }} sx={{ minWidth: 190 }} />
+          <TextField type="number" label="Gammal efter, minuter" value={connectionDraft.staleAfterMinutes} onChange={(event) => setConnectionDraft({ ...connectionDraft, staleAfterMinutes: Number(event.target.value) })} helperText="Standard för givarrapporter. Enskilda gränser anges under Entities/Rum. HA-kommunikation kontrolleras separat inom tio minuter." inputProps={{ min: 1, max: 60 }} sx={{ minWidth: 190 }} />
         </Stack>
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>
           <Paper variant="outlined" sx={{ p: 2 }}>
@@ -245,11 +249,15 @@ function EntitiesTab({ draft, setDraft, catalog }: { draft: ThermalConfig; setDr
   };
   return <Stack spacing={2}>
     <Box><Typography variant="h5">Entity-mappning</Typography><Typography color="text.secondary">Välj datakälla för varje roll. Senast mottaget värde och preliminär kontroll visas även efter valet.</Typography></Box>
-    {roles.map(([role, label, unit]) => {
+    <WeatherSourcePicker key={draft.entities.find((entity) => entity.role === 'weather_forecast')?.entityId ?? ''} catalog={catalog} entityId={draft.entities.find((entity) => entity.role === 'weather_forecast')?.entityId ?? ''} onChange={(selected) => updateRole('weather_forecast', selected, 'forecast')} />
+    {roles.filter(([role]) => role !== 'weather_forecast').map(([role, label, unit]) => {
       const mapping = draft.entities.find((entity) => entity.role === role);
       return <Box key={role} sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0,1fr)', md: 'minmax(180px,.45fr) minmax(0,1fr)' }, gap: 2, alignItems: 'start', py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
         <Box><Typography fontWeight={700}>{label}</Typography><Typography variant="caption" color="text.secondary">Förväntad enhet {unit}</Typography></Box>
-        <HomeAssistantEntityPicker catalog={catalog} entityId={mapping?.entityId ?? ''} expectedUnit={unit} label={`Välj ${label.toLowerCase()}`} onChange={(selected) => updateRole(role, selected, unit)} />
+        <Stack spacing={2}>
+          <HomeAssistantEntityPicker catalog={catalog} entityId={mapping?.entityId ?? ''} expectedUnit={unit} rules={{ maximumReportAgeMinutes: mapping?.maximumReportAgeMinutes, minimum: mapping?.minimumValid, maximum: mapping?.maximumValid }} label={`Välj ${label.toLowerCase()}`} onChange={(selected) => updateRole(role, selected, unit)} />
+          {mapping && <ReportAgeField label={`Rapportgräns för ${label.toLowerCase()}`} value={mapping.maximumReportAgeMinutes} maximum={['outside_temperature', 'wind_speed', 'solar_irradiance', 'spot_price'].includes(role) ? 1440 : 10} onChange={(value) => setDraft({ ...draft, entities: draft.entities.map((entity) => entity.role === role ? { ...entity, maximumReportAgeMinutes: value } : entity) })} />}
+        </Stack>
       </Box>;
     })}
   </Stack>;
@@ -263,7 +271,8 @@ function RoomsTab({ draft, setDraft, catalog }: { draft: ThermalConfig; setDraft
     {draft.rooms.map((room, index) => <Paper key={`${room.id}-${index}`} variant="outlined" sx={{ p: 2, minWidth: 0 }}>
       <Stack spacing={2}>
         <TextField label="Namn" value={room.name} onChange={(event) => update(index, { name: event.target.value })} required />
-        <HomeAssistantEntityPicker catalog={catalog} entityId={room.entityId} expectedUnit="°C" label={`Temperaturentity för ${room.name}`} required onChange={(entity) => update(index, { entityId: entity?.entityId ?? '' })} />
+        <HomeAssistantEntityPicker catalog={catalog} entityId={room.entityId} expectedUnit="°C" rules={{ maximumReportAgeMinutes: room.maximumReportAgeMinutes, minimum: room.minimumValidC, maximum: room.maximumValidC }} label={`Temperaturentity för ${room.name}`} required onChange={(entity) => update(index, { entityId: entity?.entityId ?? '' })} />
+        <ReportAgeField label={`Rapportgräns för ${room.name}`} value={room.maximumReportAgeMinutes} maximum={1440} onChange={(value) => update(index, { maximumReportAgeMinutes: value })} />
         <Stack direction="row" gap={2} flexWrap="wrap" alignItems="center">
           <TextField type="number" label="Offset °C" value={room.targetOffsetC} onChange={(event) => update(index, { targetOffsetC: Number(event.target.value) })} inputProps={{ step: .1, min: -5, max: 5 }} sx={{ width: 110 }} />
           <TextField type="number" label="Vikt" value={room.weight} onChange={(event) => update(index, { weight: Number(event.target.value) })} inputProps={{ step: .1, min: 0, max: 100 }} sx={{ width: 100 }} />
@@ -285,6 +294,26 @@ function SafetyTab({ draft, setDraft }: { draft: ThermalConfig; setDraft: (value
 }
 
 function validate(config: ThermalConfig | null): string[] { if (!config) return []; const errors: string[] = []; if (config.site.baseRoomTargetC < 10 || config.site.baseRoomTargetC > 30) errors.push('Rumsmålet måste vara 10–30 °C.'); if (config.site.activeDeviationLimitC < 0 || config.site.activeDeviationLimitC > 3) errors.push('LWT-avvikelsen måste vara 0–3 °C.'); if (config.rooms.some((room) => !room.name.trim() || !room.entityId)) errors.push('Alla rum måste ha namn och temperaturentity.'); if (new Set(config.rooms.map((room) => room.entityId)).size !== config.rooms.length) errors.push('Samma temperaturentity kan inte användas av flera rum.'); try { JSON.parse(config.site.variableCostComponentsJson); } catch { errors.push('Rörliga kostnadskomponenter måste vara giltig JSON.'); } try { JSON.parse(config.site.tariffDefinitionJson); } catch { errors.push('Tariffdefinitionen måste vara giltig JSON.'); } return errors; }
+
+function validateSensorMappings(config: ThermalConfig | null, catalog: EntityCatalogView): string[] {
+  if (!config) return [];
+  const errors: string[] = [];
+  const check = (label: string, entityId: string, unit: string, age: number | null | undefined, maximum: number, minimumValue?: number | null, maximumValue?: number | null) => {
+    if (age != null && (!Number.isInteger(age) || age < 1 || age > maximum)) errors.push(`${label}: rapportgränsen måste vara 1–${maximum} minuter.`);
+    if (unit === 'forecast' && entityId.startsWith('weather.')) return; // Forecast capability is tested through the dedicated read-only HA action.
+    const entity = catalog.entities.find((entry) => entry.entityId === entityId);
+    if (!entity || catalog.issue) return;
+    const result = assessEntityChoice(entity, unit, catalog.nowUtc, undefined, { maximumReportAgeMinutes: age, minimum: minimumValue, maximum: maximumValue });
+    if (result.quality === 'Invalid') errors.push(`${label}: ${result.reason}`);
+  };
+  config.rooms.filter((room) => room.enabled).forEach((room) => check(room.name, room.entityId, '°C', room.maximumReportAgeMinutes, 1440, room.minimumValidC, room.maximumValidC));
+  config.entities.filter((entity) => entity.enabled).forEach((entity) => check(roles.find(([role]) => role === entity.role)?.[1] ?? entity.role, entity.entityId, entity.expectedUnit, entity.maximumReportAgeMinutes, ['outside_temperature', 'wind_speed', 'solar_irradiance', 'spot_price'].includes(entity.role) ? 1440 : 10, entity.minimumValid, entity.maximumValid));
+  return errors;
+}
+
+function ReportAgeField({ label, value, maximum, onChange }: { label: string; value?: number | null; maximum: number; onChange: (value: number | null) => void }) {
+  return <TextField type="number" label={label} value={value ?? ''} onChange={(event) => onChange(event.target.value === '' ? null : Number(event.target.value))} inputProps={{ min: 1, max: maximum, step: 1 }} error={value != null && (!Number.isInteger(value) || value < 1 || value > maximum)} helperText={`Minuter utan ny rapport innan åldersvarning (1–${maximum}). Tomt använder kontots standard. Välj utifrån givarens verkliga rapportintervall; en längre gräns gör inte en gammal mätning ny.`} />;
+}
 
 function toLocalDateTimeInput(value: Date): string {
   const local = new Date(value.getTime() - value.getTimezoneOffset() * 60_000);

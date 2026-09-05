@@ -5,6 +5,7 @@ import PsychologyAltOutlinedIcon from '@mui/icons-material/PsychologyAltOutlined
 import { useThermalHistory, useThermalPlan } from '../../hooks/thermal/useThermal';
 import { MetricCard, PageHeader, formatDateTime } from '../../components/thermal/thermalUi';
 import ThermalTimeline from '../../components/thermal/ThermalTimeline';
+import TemperatureChart from '../../components/thermal/TemperatureChart';
 import { parsePlanInputSnapshot } from '../../components/thermal/planInputSnapshot';
 import type { DecisionReason } from '../../types/api';
 
@@ -22,6 +23,8 @@ export default function ThermalPlanPage() {
     <Stack spacing={4}>
       <PageHeader eyebrow="Gemensam tidslinje" title="Plan" description="Husvärme i 15-minuterssteg och hela DHW-cykler i femminuterssteg, sammanförda utan att dubbelboka kompressorn." />
       {plan.isError && <Alert severity="error">Planen kunde inte hämtas: {plan.error.message}</Alert>}
+      {history.isError && <Alert severity="error">Temperaturhistoriken kunde inte hämtas.</Alert>}
+      <TemperatureChart history={history.data ?? []} plan={plan.data} />
       {!plan.isLoading && !plan.data && <Alert severity="info">Ingen plan finns ännu. I Legacy är det väntat; starta Telemetry Shadow när HA-entities är konfigurerade.</Alert>}
       {plan.data && (
         <>

@@ -25,8 +25,10 @@ internal static class SensorTimestampValidator
             reported == default || reported - nowUtc > ClockTolerance || reported - received > ClockTolerance ||
             updated - reported > ClockTolerance)
             return (DataQuality.Invalid, "Givarens tidsstämplar är motsägelsefulla eller ligger i framtiden. Kontrollera klockorna.");
-        if (nowUtc - reported > staleAfter || historyImportedAtUtc is null && nowUtc - received > staleAfter)
-            return (DataQuality.Stale, $"Givarens värde är äldre än gränsen på {staleAfter.TotalMinutes:0} minuter.");
+        if (historyImportedAtUtc is null && nowUtc - received > SensorFreshnessPolicy.CommunicationTimeout)
+            return (DataQuality.Stale, "Ingen aktuell avläsning från Home Assistant på tio minuter. Kontrollera anslutningen.");
+        if (nowUtc - reported > staleAfter)
+            return (DataQuality.Stale, $"Ingen ny rapport inom {staleAfter.TotalMinutes:0} minuter. Värdet kan vara oförändrat; mätningens aktualitet är osäker. Kontrollera givarens rapportintervall.");
         return (DataQuality.Valid, nowUtc - updated > staleAfter
             ? "Oförändrat värde med aktuell rapportering från HA-integrationen." : null);
     }

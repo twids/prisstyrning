@@ -9,6 +9,7 @@ public class ThermalEntityConfig
     public string EntityId { get; set; } = string.Empty;
     public string ExpectedUnit { get; set; } = string.Empty;
     public bool Enabled { get; set; } = true;
+    public int? MaximumReportAgeMinutes { get; set; }
     public double? MinimumValid { get; set; }
     public double? MaximumValid { get; set; }
     public double? MaximumRatePerHour { get; set; }

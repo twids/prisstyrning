@@ -186,6 +186,15 @@ Vanlig rollback görs i samma Dockhand-stack utan databasåterläsning. Behåll 
 - Säkerhetsuppföljning: en tidigare rå verktygsvy från Compose-redigeraren återgav credentialvärden i uppgiftsloggen. Värdena finns inte i denna dokumentation eller i hotfix-committen. Rotera berörda HA-/Daikin OAuth-credentials via respektive tjänsts normala flöde och uppdatera skyddad driftkonfiguration under kontrollerade former. Ingen rotation eller återkallelse har genomförts här.
 - Full intelligent styrning är inte driftgodkänd: verkliga Shadow-dagar, värmekurvetest, komfort-/modellmått och DHW-cykelverifiering enligt planen återstår före aktiv styrning.
 
+### Produktionssättning 2026-09-05 omkring 17:26 CEST / 15:26 UTC
+
+- Den signerade masterrevisionen `da26721679d78e8da06721edd5c3d9ab52146097` deployades via Dockhand i den befintliga `daikin`-stacken. Endast `prisstyrning`-tjänstens image-digest ändrades till `sha256:5f37ac69cc51640aaa35f4c595c769d76d959c569d50e468587a7d95ec9a1cdd`.
+- Compose-diff mot backupen `/mnt/user/appdata/dockhand/stacks/daikin/backups/compose.pre-pr122-20260905T1355.yml` innehöll exakt den gamla och nya app-digest-raden; PostgreSQL, EMHASS, nätverk, volymer och miljöinställningar ändrades inte.
+- Dockhand rapporterade `Redeployed daikin`. Appcontainern startade `2026-09-05T15:26:34Z` med image-ID som matchar den signerade nya digestens lokala image-ID. PostgreSQL och EMHASS behöll sina starttider från 2026-08-30 och hade noll omstarter.
+- `/health/live` och `/health/ready` svarade HTTP 200. Anonyma `/api/thermal/status`, `/api/home-assistant/status` och `/api/home-assistant/entities` svarade HTTP 401. Appens startlogg visade lyckad migrationskontroll, `Database migrations applied successfully`, lyssnande på port 5000 och inga fatal/unhandled-fel i kontrollfönstret.
+- Read-only PostgreSQL-kontroll efter deploy bekräftade `Legacy|Legacy` och noll rader i `ThermalControlCommands`. LWT/FullActive och gemensam DHW-writer aktiverades inte.
+- Den ordinarie post-deploy-legacykörningen ligger efter rapportens kontrolltid och ska följas read-only när nästa schemalagda körning inträffar. Ingen testsändning gjordes.
+
 ## Dokumentationsspärr och fortsättning varannan timme
 
 Windows Kontrollerad mappåtkomst blockerade ändring av det gemensamma projektets `README.md`/`INFRASTRUCTURE.md` under Dokument, även vid godkänd eskalering. Defender-händelse 1123 verifierade att `codex.exe` blockerades; skyddet har inte ändrats eller kringgåtts.

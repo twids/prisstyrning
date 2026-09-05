@@ -11,6 +11,55 @@ namespace Prisstyrning.Tests.Thermal;
 
 public sealed class HomeAssistantRestClientTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Weather_UsesFixedReadActionAndAccountUnits(bool failed)
+    {
+        await using var db = Database();
+        db.HomeAssistantConnections.Add(new HomeAssistantConnection
+        {
+            UserId = "account-a", BaseUrl = "https://ha.example.test/prefix", TelemetryEnabled = true,
+            TelemetryTokenCiphertext = TestSecretProtector.Instance.Protect("synthetic-secret", "account-a", "ha-telemetry")
+        });
+        await db.SaveChangesAsync();
+        var connections = new HomeAssistantConnectionService(db, TestSecretProtector.Instance, new AcceptingValidator(), new HomeAssistantStateCache(), new HomeAssistantConnectionChanges());
+        var now = DateTimeOffset.UtcNow;
+        var handler = new Handler(request =>
+        {
+            Assert.Equal("synthetic-secret", request.Headers.Authorization?.Parameter);
+            if (request.Method == HttpMethod.Get)
+            {
+                Assert.Equal("/prefix/api/states/weather.home", request.RequestUri!.AbsolutePath);
+                return new(HttpStatusCode.OK) { Content = new StringContent("""{"entity_id":"weather.home","state":"sunny","attributes":{"temperature_unit":"°F","wind_speed_unit":"km/h"}}""") };
+            }
+            Assert.Equal(HttpMethod.Post, request.Method);
+            Assert.Equal("/prefix/api/services/weather/get_forecasts?return_response", request.RequestUri!.PathAndQuery);
+            Assert.Contains("\"type\":\"hourly\"", request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+            if (failed) return new(HttpStatusCode.BadRequest) { Content = new StringContent("synthetic-secret private-error") };
+            var forecast = new[] { new { datetime = now.AddHours(1), temperature = 68, wind_speed = 18 }, new { datetime = now.AddHours(2), temperature = 68, wind_speed = 18 } };
+            return new(HttpStatusCode.OK) { Content = new StringContent(System.Text.Json.JsonSerializer.Serialize(new { service_response = new Dictionary<string, object> { ["weather.home"] = new { forecast } } })) };
+        });
+        using var http = new HttpClient(handler);
+        var logger = new RecordingLogger();
+        var client = new HomeAssistantTelemetryClient(new Factory(http), connections, logger);
+        var result = await client.GetWeatherForecastAsync("account-a", "weather.home");
+        Assert.Equal(2, handler.Calls);
+        if (failed)
+        {
+            Assert.Equal(Prisstyrning.Thermal.Domain.DataQuality.Unavailable, result.Quality);
+            Assert.DoesNotContain("synthetic-secret", result.Reason);
+        }
+        else
+        {
+            Assert.Equal(Prisstyrning.Thermal.Domain.DataQuality.Valid, result.Quality);
+            Assert.All(result.Points, point => { Assert.Equal(20, point.TemperatureC); Assert.Equal(5, point.WindSpeedMps); Assert.Null(point.SolarIrradianceWm2); });
+        }
+        Assert.Empty(logger.Messages);
+        await Assert.ThrowsAsync<ArgumentException>(() => client.GetWeatherForecastAsync("account-a", "switch.heater"));
+        Assert.Equal(2, handler.Calls);
+    }
+
     [Fact]
     public async Task Snapshot_UsesAlreadyResolvedEndpointPathAndIdentity_NotNewSavedSettings()
     {

@@ -24,6 +24,46 @@ public sealed class HomeAssistantTelemetryClient : IHomeAssistantTelemetryClient
     public Task<bool> TestConnectionAsync(string userId, CancellationToken cancellationToken = default) =>
         TestConnectionCoreAsync(userId, cancellationToken);
 
+    public async Task<NormalizedWeatherForecast> GetWeatherForecastAsync(string userId, string entityId, CancellationToken cancellationToken = default)
+    {
+        EnsureSafeEntityId(entityId);
+        if (!entityId.StartsWith("weather.", StringComparison.Ordinal)) throw new ArgumentException("Välj en weather-entity.");
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(15));
+        try
+        {
+            var connection = await ResolveAsync(userId, timeout.Token);
+            using var stateResponse = await SendAsync(connection, HttpMethod.Get, $"/api/states/{Uri.EscapeDataString(entityId)}", timeout.Token);
+            stateResponse.EnsureSuccessStatusCode();
+            using var stateDocument = JsonDocument.Parse(await stateResponse.Content.ReadAsStringAsync(timeout.Token));
+            var state = ParseState(stateDocument.RootElement, DateTimeOffset.UtcNow);
+            if (state is null || state.EntityId != entityId) throw new InvalidOperationException();
+            // Fixed read-only weather action; never expose a generic HA service call.
+            using var request = new HttpRequestMessage(HttpMethod.Post,
+                new Uri(connection.BaseUri.AbsoluteUri.TrimEnd('/') + "/api/services/weather/get_forecasts?return_response"));
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", connection.TelemetryToken);
+            request.Content = JsonContent.Create(new { entity_id = entityId, type = "hourly" });
+            using var response = await _httpClientFactory.CreateClient("HomeAssistantTelemetry").SendAsync(request, timeout.Token);
+            response.EnsureSuccessStatusCode();
+            var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(timeout.Token));
+            if (json?["service_response"]?[entityId]?["forecast"] is not JsonArray forecast) throw new InvalidOperationException();
+            var attributes = (JsonObject)state.Attributes.DeepClone();
+            attributes["forecast"] = forecast.DeepClone();
+            var fetched = DateTimeOffset.UtcNow;
+            // This is retrieval time for a forecast, never a new physical measurement.
+            var forecastState = state with { Attributes = attributes, LastChangedUtc = fetched, LastUpdatedUtc = fetched,
+                LastReportedUtc = fetched, ReceivedAtUtc = fetched, ReportTimestampMalformed = false };
+            var current = await _connections.ResolveAsync(userId, timeout.Token);
+            if (current?.UpdatedAtUtc != connection.UpdatedAtUtc) throw new InvalidOperationException();
+            return HomeAssistantWeatherForecastParser.Parse(forecastState, fetched);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or JsonException or InvalidOperationException or TaskCanceledException)
+        {
+            if (cancellationToken.IsCancellationRequested) throw;
+            return new([], Prisstyrning.Thermal.Domain.DataQuality.Unavailable, "Timprognosen kunde inte hämtas. Kontrollera HA-anslutningen och att vald weather-entity stöder timprognos.");
+        }
+    }
+
     private async Task<bool> TestConnectionCoreAsync(string userId, CancellationToken cancellationToken)
     {
         try
