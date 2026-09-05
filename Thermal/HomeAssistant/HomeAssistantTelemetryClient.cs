@@ -121,7 +121,13 @@ public sealed class HomeAssistantTelemetryClient : IHomeAssistantTelemetryClient
             attributes,
             ParseTimestamp(element, "last_changed"),
             ParseTimestamp(element, "last_updated"),
-            receivedAt) { AttributesMalformed = !attributesValid };
+            receivedAt)
+        {
+            AttributesMalformed = !attributesValid,
+            LastReportedUtc = ParseTimestamp(element, "last_reported"),
+            ReportTimestampMalformed = element.TryGetProperty("last_reported", out _) &&
+                                       ParseTimestamp(element, "last_reported") is null
+        };
     }
 
     private async Task<HttpResponseMessage> SendAsync(string userId, HttpMethod method, string path, CancellationToken cancellationToken)

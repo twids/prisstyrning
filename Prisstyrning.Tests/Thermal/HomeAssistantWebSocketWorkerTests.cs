@@ -18,6 +18,41 @@ namespace Prisstyrning.Tests.Thermal;
 public sealed class HomeAssistantWebSocketWorkerTests
 {
     [Fact]
+    public async Task PeriodicRefresh_ObtainsUnchangedReports_WithoutControlWrites()
+    {
+        await using var test = new Harness(refreshInterval: TimeSpan.FromMilliseconds(30));
+        test.Sockets.Queue("ha-a");
+        var updated = DateTimeOffset.UtcNow.AddHours(-2);
+        var count = 0;
+        test.Telemetry.Snapshot = (_, _) => Task.FromResult<IReadOnlyList<HomeAssistantState>>(
+            [State("sensor.room", "21", updated) with { LastReportedUtc = updated.AddMinutes(Interlocked.Increment(ref count)) }]);
+        await test.SaveAsync("account-a", "ha-a");
+        await test.Worker.StartAsync(default);
+        await EventuallyAsync(() => test.Cache.Snapshot("account-a").SingleOrDefault()?.LastReportedUtc >= updated.AddMinutes(2));
+        Assert.All(test.Telemetry.Requests, request => Assert.Equal(test.Cache.ReadAccount("account-a").ConfigurationUpdatedAtUtc, request.UpdatedAtUtc));
+        Assert.True(test.Cache.IsConnected("account-a"));
+        await test.AssertLegacyUnchangedAsync();
+    }
+
+    [Fact]
+    public async Task PeriodicRefresh_FailureRetiresConnectedCacheAndDoesNotLogResponseText()
+    {
+        await using var test = new Harness(refreshInterval: TimeSpan.FromMilliseconds(30));
+        test.Sockets.Queue("ha-a");
+        var count = 0;
+        test.Telemetry.Snapshot = (_, _) => Interlocked.Increment(ref count) == 1
+            ? Task.FromResult<IReadOnlyList<HomeAssistantState>>([State("sensor.room", "21", DateTimeOffset.UtcNow)])
+            : Task.FromException<IReadOnlyList<HomeAssistantState>>(new HttpRequestException("private-server-secret"));
+        await test.SaveAsync("account-a", "ha-a");
+        await test.Worker.StartAsync(default);
+        await EventuallyAsync(() => test.Cache.ReadAccount("account-a").Phase == HomeAssistantLivePhase.Reconnecting);
+        Assert.False(test.Cache.IsConnected("account-a"));
+        Assert.All(test.Log.Messages, message => Assert.DoesNotContain("private-server-secret", message));
+        Assert.Empty(test.Log.Exceptions);
+        await test.AssertLegacyUnchangedAsync();
+    }
+
+    [Fact]
     public async Task Connect_RequiresAcknowledgementAndSnapshot_AndBuffersInterveningEvents()
     {
         await using var test = new Harness();
@@ -316,7 +351,7 @@ public sealed class HomeAssistantWebSocketWorkerTests
         public ServiceProvider Services { get; }
         public HomeAssistantWebSocketWorker Worker { get; }
 
-        public Harness(TimeSpan? startupTimeout = null, TimeSpan? retryDelay = null)
+        public Harness(TimeSpan? startupTimeout = null, TimeSpan? retryDelay = null, TimeSpan? refreshInterval = null)
         {
             var databaseName = $"ha-live-{Guid.NewGuid():N}";
             var services = new ServiceCollection();
@@ -332,6 +367,7 @@ public sealed class HomeAssistantWebSocketWorkerTests
                 Services.GetRequiredService<HomeAssistantConnectionChanges>(), Sockets, Log)
             {
                 StartupTimeout = startupTimeout ?? TimeSpan.FromSeconds(3),
+                RefreshInterval = refreshInterval ?? TimeSpan.FromMinutes(1),
                 RetryDelay = _ => retryDelay ?? TimeSpan.FromSeconds(30)
             };
         }

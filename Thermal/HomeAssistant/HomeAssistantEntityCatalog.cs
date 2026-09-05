@@ -11,7 +11,6 @@ namespace Prisstyrning.Thermal.HomeAssistant;
 /// </summary>
 internal static class HomeAssistantEntityCatalog
 {
-    private static readonly TimeSpan ClockTolerance = TimeSpan.FromSeconds(30);
     private static readonly string[] NumericUnits = ["°C", "kW", "l/min", "kWh", "SEK/kWh", "m/s", "W/m²"];
 
     public static ThermalEntityStateDto Project(
@@ -31,7 +30,7 @@ internal static class HomeAssistantEntityCatalog
         ThermalEntityStateDto Result(DataQuality quality, string? reason, IReadOnlyList<string>? units = null) => new(
             state.EntityId, string.IsNullOrWhiteSpace(name) ? state.EntityId : name,
             state.State, unit, updated, received, quality, reason,
-            units ?? [], nowUtc, validUntil);
+            units ?? [], nowUtc, validUntil, state.LastReportedUtc);
 
         if (connectionIssue is not null) return Result(DataQuality.Unavailable, connectionIssue);
         if (value.Length == 0 || value.Equals("unknown", StringComparison.OrdinalIgnoreCase) ||
@@ -39,13 +38,11 @@ internal static class HomeAssistantEntityCatalog
             return Result(DataQuality.Unavailable, "Home Assistant saknar ett tillgängligt värde för denna entity.");
         if (state.AttributesMalformed || state.Attributes["unit_of_measurement"] is not null && unit is null)
             return Result(DataQuality.Invalid, "Enheten har ett felaktigt format i Home Assistant.");
-        if (updated is null || received == default)
-            return Result(DataQuality.Unavailable, "Uppdaterings- eller mottagningstid saknas; värdets ålder kan inte verifieras.");
-        if (updated - nowUtc > ClockTolerance || received - nowUtc > ClockTolerance || updated - received > ClockTolerance)
-            return Result(DataQuality.Invalid, "Tidsstämplarna är motsägelsefulla eller ligger i framtiden. Kontrollera klockorna.");
-        validUntil = (updated.Value < received ? updated.Value : received).Add(staleAfter);
-        if (nowUtc - updated > staleAfter || nowUtc - received > staleAfter)
-            return Result(DataQuality.Stale, $"Värdet är äldre än kontots gräns på {Math.Clamp(staleAfterMinutes, 1, 60)} minuter.");
+        var timing = SensorTimestampValidator.Assess(state, nowUtc, staleAfter);
+        if (timing.Quality is DataQuality.Unavailable or DataQuality.Invalid) return Result(timing.Quality, timing.Reason);
+        var reported = state.LastReportedUtc ?? updated!.Value;
+        validUntil = (reported < received ? reported : received).Add(staleAfter);
+        if (timing.Quality != DataQuality.Valid) return Result(timing.Quality, timing.Reason);
         if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number) && !double.IsFinite(number))
             return Result(DataQuality.Invalid, "Värdet är inte ett ändligt tal.");
 
@@ -69,7 +66,7 @@ internal static class HomeAssistantEntityCatalog
             forecast.Points.Count(point => point.TimestampUtc >= nowUtc) >= 2)
             compatibleUnits.Add("forecast");
 
-        return Result(DataQuality.Valid, null, compatibleUnits);
+        return Result(DataQuality.Valid, timing.Reason, compatibleUnits);
     }
 
     private static string? StringAttribute(JsonObject attributes, string key) =>

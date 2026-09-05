@@ -75,7 +75,8 @@ public sealed class HomeAssistantEntityCatalogApiTests
         await browser.SignInAsync();
         await SeedAsync(host, "account-a", "21.5", minutes);
         var cache = host.Services.GetRequiredService<IHomeAssistantStateCache>();
-        cache.Upsert("account-a", State("sensor.room", "21.5") with { LastUpdatedUtc = DateTimeOffset.UtcNow.AddMinutes(-4) });
+        var changedAt = DateTimeOffset.UtcNow.AddMinutes(-4);
+        cache.Upsert("account-a", State("sensor.room", "21.5") with { LastChangedUtc = changedAt, LastUpdatedUtc = changedAt });
 
         var entities = await browser.Client.GetFromJsonAsync<ThermalEntityStateDto[]>("/api/home-assistant/entities");
         var entity = Assert.Single(entities!);

@@ -11,6 +11,8 @@ public sealed record HomeAssistantState(
     DateTimeOffset? LastUpdatedUtc,
     DateTimeOffset ReceivedAtUtc)
 {
+    public DateTimeOffset? LastReportedUtc { get; init; }
+    public bool ReportTimestampMalformed { get; init; }
     public bool AttributesMalformed { get; init; }
     public string FriendlyName => StringAttribute("friendly_name") is { Length: > 0 } name ? name : EntityId;
     public string? Unit => StringAttribute("unit_of_measurement");
@@ -54,6 +56,8 @@ public interface IHomeAssistantStateCache
     HomeAssistantCacheSession? BeginSession(string userId, DateTimeOffset configurationUpdatedAtUtc);
     bool BeginSnapshot(HomeAssistantCacheSession session);
     bool PublishSnapshot(HomeAssistantCacheSession session, IEnumerable<HomeAssistantState> states);
+    long? BeginRefresh(HomeAssistantCacheSession session);
+    bool PublishRefresh(HomeAssistantCacheSession session, long eventVersion, IEnumerable<HomeAssistantState> states);
     bool ApplyEvent(HomeAssistantCacheSession session, HomeAssistantStateChange change);
     void EndSession(HomeAssistantCacheSession session);
     DateTimeOffset? LastSnapshotUtc { get; }

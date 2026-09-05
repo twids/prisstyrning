@@ -456,6 +456,7 @@ export interface HomeAssistantEntity {
   state: string;
   unit: string | null;
   lastUpdatedUtc: string | null;
+  lastReportedUtc?: string | null;
   receivedAtUtc: string;
   quality: DataQuality;
   qualityReason: string | null;

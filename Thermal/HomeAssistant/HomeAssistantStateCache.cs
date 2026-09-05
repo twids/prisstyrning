@@ -107,6 +107,7 @@ public sealed class HomeAssistantStateCache : IHomeAssistantStateCache
             // Retain tombstone watermarks after publishing; a delayed older update
             // must not resurrect an entity removed while REST was in flight.
             account.Pending[change.EntityId] = change;
+            account.EventVersions[change.EntityId] = ++account.EventVersion;
             if (account.Phase == HomeAssistantLivePhase.Connected) Apply(account.States, change);
             account.LastActivityUtc = DateTimeOffset.UtcNow;
             return true;
@@ -121,6 +122,7 @@ public sealed class HomeAssistantStateCache : IHomeAssistantStateCache
             if (!IsCurrent(account, session)) return;
             account.Generation++;
             account.Pending.Clear();
+            account.EventVersions.Clear();
             account.Phase = HomeAssistantLivePhase.Reconnecting;
             // Retain the last complete snapshot only for diagnostics; Connected is false.
         }
@@ -129,10 +131,46 @@ public sealed class HomeAssistantStateCache : IHomeAssistantStateCache
     private static bool IsCurrent(AccountCache account, HomeAssistantCacheSession session) =>
         account.TelemetryEnabled && account.Generation == session.Generation && account.Revision == session.ConfigurationUpdatedAtUtc;
 
+    public long? BeginRefresh(HomeAssistantCacheSession session)
+    {
+        var account = Account(session.UserId);
+        lock (account.Gate)
+            return IsCurrent(account, session) && account.Phase == HomeAssistantLivePhase.Connected
+                ? account.EventVersion : null;
+    }
+
+    // REST also carries last_reported for unchanged values, which state_changed
+    // does not deliver. Keep live events and deletion watermarks across each poll.
+    public bool PublishRefresh(HomeAssistantCacheSession session, long eventVersion, IEnumerable<HomeAssistantState> states)
+    {
+        var replacement = states.ToDictionary(x => x.EntityId, StringComparer.OrdinalIgnoreCase);
+        var account = Account(session.UserId);
+        lock (account.Gate)
+        {
+            if (!IsCurrent(account, session) || account.Phase != HomeAssistantLivePhase.Connected ||
+                eventVersion > account.EventVersion) return false;
+            foreach (var change in account.Pending.Values)
+            {
+                if (account.EventVersions[change.EntityId] > eventVersion)
+                {
+                    if (change.State is null) replacement.Remove(change.EntityId);
+                    else Apply(replacement, change);
+                }
+                else if (replacement.ContainsKey(change.EntityId)) Apply(replacement, change);
+            }
+            account.States = replacement;
+            account.LastSnapshotUtc = DateTimeOffset.UtcNow;
+            account.LastActivityUtc = account.LastSnapshotUtc;
+            return true;
+        }
+    }
+
     private static void Apply(Dictionary<string, HomeAssistantState> states, HomeAssistantStateChange change)
     {
         if (states.TryGetValue(change.EntityId, out var current) &&
             IsOlder(change.State?.LastUpdatedUtc ?? change.OccurredAtUtc, current.LastUpdatedUtc)) return;
+        if (current is not null && change.State is { } incoming && incoming.LastUpdatedUtc == current.LastUpdatedUtc &&
+            IsOlder(incoming.LastReportedUtc ?? incoming.LastUpdatedUtc, current.LastReportedUtc ?? current.LastUpdatedUtc)) return;
         if (change.State is null) states.Remove(change.EntityId);
         else states[change.EntityId] = change.State;
     }
@@ -144,6 +182,8 @@ public sealed class HomeAssistantStateCache : IHomeAssistantStateCache
     {
         account.States.Clear();
         account.Pending.Clear();
+        account.EventVersions.Clear();
+        account.EventVersion = 0;
         account.LastSnapshotUtc = null;
         account.LastActivityUtc = null;
     }
@@ -230,6 +270,8 @@ public sealed class HomeAssistantStateCache : IHomeAssistantStateCache
         public object Gate { get; } = new();
         public Dictionary<string, HomeAssistantState> States { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, HomeAssistantStateChange> Pending { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, long> EventVersions { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public long EventVersion { get; set; }
         public long Generation { get; set; }
         public DateTimeOffset? Revision { get; set; }
         public bool TelemetryEnabled { get; set; }

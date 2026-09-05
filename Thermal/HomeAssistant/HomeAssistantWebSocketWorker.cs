@@ -17,6 +17,7 @@ public sealed class HomeAssistantWebSocketWorker : BackgroundService
     private readonly Dictionary<string, AccountWorker> _workers = new(StringComparer.Ordinal);
 
     internal TimeSpan StartupTimeout { get; init; } = TimeSpan.FromSeconds(30);
+    internal TimeSpan RefreshInterval { get; init; } = TimeSpan.FromMinutes(1);
     internal Func<int, TimeSpan> RetryDelay { get; init; } = failure =>
         TimeSpan.FromSeconds(Math.Min(60, Math.Pow(2, Math.Min(failure, 6))) + Random.Shared.NextDouble());
 
@@ -167,6 +168,7 @@ public sealed class HomeAssistantWebSocketWorker : BackgroundService
         // the complete snapshot is published, all under the same connection revision.
         var events = ReceiveEventsAsync(session, socket, lifetime.Token);
         Task<IReadOnlyList<HomeAssistantState>>? snapshot = null;
+        Task? refresh = null;
         try
         {
             snapshot = client.GetStatesAsync(connection, startup.Token);
@@ -177,7 +179,8 @@ public sealed class HomeAssistantWebSocketWorker : BackgroundService
             if (!_cache.PublishSnapshot(session, states)) return;
             connected();
             startup.CancelAfter(Timeout.InfiniteTimeSpan);
-            await events;
+            refresh = RefreshSnapshotsAsync(session, connection, client, lifetime.Token);
+            await await Task.WhenAny(events, refresh);
         }
         finally
         {
@@ -185,11 +188,30 @@ public sealed class HomeAssistantWebSocketWorker : BackgroundService
             startup.Cancel();
             try { await events; }
             catch (Exception) when (lifetime.IsCancellationRequested) { }
+            if (refresh is not null)
+            {
+                try { await refresh; }
+                catch (Exception) when (lifetime.IsCancellationRequested) { }
+            }
             if (snapshot is not null)
             {
                 try { await snapshot; }
                 catch (Exception) when (startup.IsCancellationRequested) { }
             }
+        }
+    }
+
+    private async Task RefreshSnapshotsAsync(HomeAssistantCacheSession session, ResolvedHomeAssistantConnection connection,
+        IHomeAssistantTelemetryClient client, CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(RefreshInterval);
+        while (await timer.WaitForNextTickAsync(cancellationToken))
+        {
+            if (_cache.BeginRefresh(session) is not { } version) return;
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(StartupTimeout);
+            var states = await client.GetStatesAsync(connection, timeout.Token);
+            if (!_cache.PublishRefresh(session, version, states)) return;
         }
     }
 

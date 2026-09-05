@@ -22,12 +22,14 @@ export function assessEntityChoice(
     return { quality: 'Unavailable', reason: 'Home Assistant saknar ett tillgängligt värde för denna entity.' };
 
   const updated = timestamp(entity.lastUpdatedUtc);
+  const reported = entity.lastReportedUtc == null ? updated : timestamp(entity.lastReportedUtc);
   const received = timestamp(entity.receivedAtUtc);
   const checked = timestamp(entity.checkedAtUtc);
   const validUntil = timestamp(entity.validUntilUtc);
-  if (updated == null || received == null || checked == null || validUntil == null)
+  if (updated == null || reported == null || received == null || checked == null || validUntil == null)
     return { quality: 'Unavailable', reason: 'Aktuell värde- och enhetskontroll saknas. Hämta sensorlistan igen.' };
-  if (updated > nowUtc + 30_000 || received > nowUtc + 30_000 || checked > nowUtc + 30_000 || updated > received + 30_000)
+  if (updated > nowUtc + 30_000 || received > nowUtc + 30_000 || checked > nowUtc + 30_000 || updated > received + 30_000 ||
+      reported > nowUtc + 30_000 || reported > received + 30_000 || updated > reported + 30_000)
     return { quality: 'Invalid', reason: 'Tidsstämplarna ligger i framtiden eller stämmer inte överens. Kontrollera klockorna.' };
   if (nowUtc > validUntil)
     return { quality: 'Stale', reason: 'Värdet har passerat kontots åldersgräns. Väntar på ett färskt värde.' };
@@ -42,7 +44,8 @@ export function assessEntityChoice(
       ? 'Entityn saknar en läsbar temperaturprognos med minst två kommande tidpunkter. Kontrollera forecast-attributet och enheterna.'
       : `Värdet kan inte läsas som ${expectedUnit === 'bool' ? 'på/av' : expectedUnit}. Kontrollera värdet och enheten i Home Assistant.`,
   };
-  return { quality: 'Valid', reason: 'Värde, enhet och ålder är preliminärt kontrollerade. Historik och rimlighet bedöms separat.' };
+  return { quality: 'Valid', reason: [entity.qualityReason,
+    'Värde, enhet och ålder är preliminärt kontrollerade. Historik och rimlighet bedöms separat.'].filter(Boolean).join(' ') };
 }
 
 function timestamp(value: string | null | undefined): number | null {

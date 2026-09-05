@@ -122,7 +122,7 @@ public sealed class HomeAssistantEntityCatalogTests
             "future_updated" => state with { LastUpdatedUtc = Now.AddMinutes(2) },
             "future_received" => state with { ReceivedAtUtc = Now.AddMinutes(2) },
             "received_before_update" => state with { ReceivedAtUtc = Now.AddMinutes(-3) },
-            _ => state with { LastUpdatedUtc = Now.AddMinutes(-11) }
+            _ => state with { LastChangedUtc = Now.AddMinutes(-11), LastUpdatedUtc = Now.AddMinutes(-11) }
         };
         var result = Project(state);
         Assert.Equal(quality, result.Quality);
@@ -133,7 +133,7 @@ public sealed class HomeAssistantEntityCatalogTests
     [Fact]
     public void Project_AccountAgeLimit_IsUsedInQualityReasonAndExpiry()
     {
-        var state = State("21.5") with { LastUpdatedUtc = Now.AddMinutes(-4) };
+        var state = State("21.5") with { LastChangedUtc = Now.AddMinutes(-4), LastUpdatedUtc = Now.AddMinutes(-4) };
         var stale = HomeAssistantEntityCatalog.Project(state, Now, 3);
         Assert.Equal(DataQuality.Stale, stale.Quality);
         Assert.Contains("3 minuter", stale.QualityReason);
