@@ -55,7 +55,12 @@ public sealed record ReadinessCheck(
     string Requirement,
     bool Passed,
     string Action,
-    string Severity = "ActionRequired");
+    string Severity = "ActionRequired")
+{
+    public bool BlocksMode(ControlMode target) => !Passed &&
+        !(target == ControlMode.Shadow && Severity == "Warning" &&
+          Key is "telemetry-fresh" or "telemetry-quality");
+}
 
 public sealed record DecisionReason(
     string MainReason,

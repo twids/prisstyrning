@@ -65,7 +65,7 @@ internal sealed class ThermalModeService
         if (request.Mode is not ControlMode.Legacy)
         {
             var checks = await _readiness.EvaluateAsync(userId, request.Mode, cancellationToken);
-            if (checks.Any(x => !x.Passed)) return (false, "Alla readiness-kontroller måste vara godkända före lägesbytet.");
+            if (checks.Any(x => x.BlocksMode(request.Mode))) return (false, "Alla blockerande readiness-kontroller måste vara godkända före lägesbytet.");
         }
 
         var controlState = await _db.ThermalControlStates.SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken)

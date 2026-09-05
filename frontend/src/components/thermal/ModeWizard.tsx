@@ -29,10 +29,14 @@ export default function ModeWizard({ open, currentMode, onClose }: { open: boole
   const checks = currentResult ? readiness.data?.checks ?? [] : [];
   const passed = checks.filter(check => check.passed).length;
   const total = checks.length;
+  const isShadowWarning = (check: typeof checks[number]) => target === 'Shadow' && check.severity === 'Warning' &&
+    ['telemetry-fresh', 'telemetry-quality'].includes(check.key);
+  const blocking = checks.some(check => !check.passed && !isShadowWarning(check));
+  const warnings = checks.filter(check => !check.passed && isShadowWarning(check)).length;
   const allowedTarget = target !== currentMode && (target === 'Legacy' || Math.abs(modes.indexOf(target) - modes.indexOf(currentMode)) === 1);
   // Rollback must remain available during a telemetry outage. The server still
   // verifies safe zeroing and writer handover; this is not a readiness bypass.
-  const canProceed = allowedTarget && (target === 'Legacy' || currentResult && readiness.data?.ready === true && total > 0 && passed === total);
+  const canProceed = allowedTarget && (target === 'Legacy' || currentResult && readiness.data?.ready === true && total > 0 && !blocking);
 
   useEffect(() => {
     if (!open) return;
@@ -113,10 +117,11 @@ export default function ModeWizard({ open, currentMode, onClose }: { open: boole
             {step === 1 && target !== 'Legacy' && currentResult && (
               <>
                 <Typography>{passed} av {total} krav är godkända.</Typography>
+                {warnings > 0 && <Alert severity="warning">Givarnas aktualitet eller kvalitet är osäker. Det hindrar inte Shadow. Osäkra värden markeras fortsatt och beräkningar kan utebli. Legacy fortsätter styra varmvattnet; Shadow får ingen skrivbehörighet.</Alert>}
                 {checks.map((check) => (
                   <Stack key={check.key} direction="row" gap={1.5} alignItems="flex-start" sx={{ p: 1.5, borderRadius: 2, bgcolor: 'background.default' }}>
                     {check.passed ? <CheckCircleOutlineIcon color="success" /> : <RadioButtonUncheckedIcon color="warning" />}
-                    <Box><Typography fontWeight={700}>{check.requirement}</Typography><Typography variant="body2">{check.passed ? 'Godkänt' : 'Åtgärd krävs'}</Typography><Typography variant="body2" color="text.secondary">{check.action}</Typography></Box>
+                    <Box><Typography fontWeight={700}>{check.requirement}</Typography><Typography variant="body2">{check.passed ? 'Godkänt' : isShadowWarning(check) ? 'Varning – hindrar inte Shadow' : 'Åtgärd krävs'}</Typography><Typography variant="body2" color="text.secondary">{check.action}</Typography></Box>
                   </Stack>
                 ))}
               </>
@@ -126,6 +131,7 @@ export default function ModeWizard({ open, currentMode, onClose }: { open: boole
 
         {step === 2 && (
           <Stack spacing={2} sx={{ mt: 2 }}>
+            {warnings > 0 && <Alert severity="warning">Shadow startas med datavarningar. Osäkra värden blir inte godkända för aktiv styrning. Legacy behåller varmvattenstyrningen.</Alert>}
             <Alert severity={target === 'FullActive' ? 'warning' : 'info'}>
               Valt läge: <strong>{modeLabel[target]}</strong>. Rollback till Legacy är permanent synlig efter aktivering.
             </Alert>

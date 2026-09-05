@@ -179,6 +179,10 @@ public sealed class ThermalReadinessService
             checks.Add(Check("comfort-setting", "Daikins comfort-läge är manuellt bekräftat till 60 °C", site?.ComfortSetpointConfirmed == true && site.ComfortSetpointC >= 60, "Kontrollera inställningen i Daikin och bekräfta den här."));
         }
 
+        if (targetMode == ControlMode.Shadow)
+            checks = checks.Select(check => !check.Passed && check.Key is "telemetry-fresh" or "telemetry-quality"
+                ? check with { Severity = "Warning", Action = "Shadow kan aktiveras trots denna varning. Osäkra värden markeras fortsatt; beräkningar kan utebli och datan räknas inte som godkänd inför aktiv styrning. " + check.Action }
+                : check).ToList();
         return checks;
     }
 
