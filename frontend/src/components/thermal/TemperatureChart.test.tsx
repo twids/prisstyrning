@@ -5,6 +5,12 @@ import TemperatureChart, { temperatureRows } from './TemperatureChart';
 
 vi.mock('@mui/x-charts/LineChart', () => ({ LineChart: () => <div>Diagram</div> }));
 describe('temperaturhistorik', () => {
+  it('skiljer ett saknat senaste värde från saknad historik', () => {
+    const sample = { timestampUtc: new Date().toISOString(), leavingWaterTemperatureC: null, roomTemperaturesJson: '{}', qualityJson: '{}' } as ThermalTelemetrySample;
+    render(<TemperatureChart history={[{ ...sample, timestampUtc: new Date(Date.now() - 300000).toISOString(), leavingWaterTemperatureC: 32 }, sample]} />);
+    expect(screen.getByText(/saknar giltig LWT. Äldre mätvärden visas/)).toBeInTheDocument();
+    expect(screen.queryByText('Ingen uppmätt LWT i valt intervall.')).not.toBeInTheDocument();
+  });
   it('visar tomt läge utan att kräva en optimeringsplan', () => {
     render(<TemperatureChart history={[]} />);
     expect(screen.getByText(/En optimeringsplan behövs inte/)).toBeInTheDocument();
