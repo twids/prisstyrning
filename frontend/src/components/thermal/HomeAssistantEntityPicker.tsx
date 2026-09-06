@@ -10,6 +10,7 @@ export interface EntityCatalogView {
   nowUtc: number;
   issue?: string;
   loading?: boolean;
+  connectionRevisionUtc?: string;
 }
 
 export default function HomeAssistantEntityPicker({ catalog, entityId, expectedUnit, label, onChange, rules, required = false }: {

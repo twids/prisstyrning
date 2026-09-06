@@ -39,7 +39,8 @@ test('modellvyn skiljer modellbevis fr책n aktiv styrning och 책terh채mtar sig s�
   await page.getByRole('button', { name: /Avancerat: husmodell och rumskalibrering/ }).click();
   await expect(page.getByText('Versionsbundet tr채ningsunderlag')).toBeVisible();
   await expect(page.getByText(/Algoritm: grey-box-2r2c-v1/)).toBeVisible();
-  await expect(page.getByText('Byggrevision: 0123456789ab')).toBeVisible();
+  await expect(page.getByText(/Kodrevision vid tr채ning: 0123456789ab/)).toBeVisible();
+  await expect(page.getByText(/Vanliga programuppdateringar kr채ver inte omtr채ning/)).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => window.innerWidth));
   await page.evaluate(() => window.scrollTo(0, 0));
   await testInfo.attach('model-validerat-underlag', { body: await page.screenshot({ path: testInfo.outputPath('model-validerat-underlag.png'), fullPage: true }), contentType: 'image/png' });

@@ -12,6 +12,8 @@ public class ThermalRoomConfig
     public bool IsCritical { get; set; }
     public bool Enabled { get; set; } = true;
     public int? MaximumReportAgeMinutes { get; set; }
+    public string? FreshnessEntityId { get; set; }
+    public string? FreshnessAttribute { get; set; }
     public double MinimumValidC { get; set; } = 5.0;
     public double MaximumValidC { get; set; } = 35.0;
     public double MaximumRateCPerHour { get; set; } = 3.0;

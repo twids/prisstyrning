@@ -216,6 +216,8 @@ export interface ThermalSiteConfig {
 }
 
 export interface ThermalRoomConfig {
+  freshnessEntityId?: string | null;
+  freshnessAttribute?: string | null;
   id: number;
   userId: string;
   name: string;
@@ -231,6 +233,8 @@ export interface ThermalRoomConfig {
 }
 
 export interface ThermalEntityConfig {
+  freshnessEntityId?: string | null;
+  freshnessAttribute?: string | null;
   id: number;
   userId: string;
   role: string;
@@ -323,6 +327,21 @@ export interface WeatherForecastTest {
   quality: DataQuality;
   reason: string | null;
   points: { timestampUtc: string; temperatureC: number; windSpeedMps: number | null; solarIrradianceWm2: number | null }[];
+}
+
+export interface SensorFreshnessRequest {
+  entityId: string;
+  role: string;
+  maximumReportAgeMinutes?: number | null;
+  freshnessEntityId?: string | null;
+  freshnessAttribute?: string | null;
+}
+export interface SensorFreshnessPreview {
+  quality: DataQuality;
+  reason: string;
+  checkedAtUtc: string;
+  valueUpdatedUtc: string | null;
+  livenessUtc: string | null;
 }
 
 export interface ThermalTelemetrySample {

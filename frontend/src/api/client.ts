@@ -3,6 +3,10 @@ import { readControlMode, readDataQuality, readThermalStatus, writeControlMode }
 import type { ThermalStatusWire } from './thermalContract';
 
 class ApiClient {
+  async previewSensorFreshness(request: T.SensorFreshnessRequest): Promise<T.SensorFreshnessPreview> {
+    const result = await this.post<T.SensorFreshnessPreview>('/api/home-assistant/freshness-preview', request);
+    return { ...result, quality: readDataQuality(result.quality) };
+  }
   async testWeather(entityId: string): Promise<T.WeatherForecastTest> {
     const result = await this.post<T.WeatherForecastTest>('/api/thermal/weather/test', { entityId });
     return { ...result, quality: readDataQuality(result.quality) };

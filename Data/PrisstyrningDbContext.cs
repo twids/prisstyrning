@@ -165,6 +165,8 @@ public class PrisstyrningDbContext : DbContext
             e.Property(x => x.UserId).HasMaxLength(100).IsRequired();
             e.Property(x => x.Name).HasMaxLength(100).IsRequired();
             e.Property(x => x.EntityId).HasMaxLength(255).IsRequired();
+            e.Property(x => x.FreshnessEntityId).HasMaxLength(255);
+            e.Property(x => x.FreshnessAttribute).HasMaxLength(100);
             e.HasIndex(x => new { x.UserId, x.EntityId }).IsUnique();
         });
 
@@ -174,6 +176,8 @@ public class PrisstyrningDbContext : DbContext
             e.Property(x => x.UserId).HasMaxLength(100).IsRequired();
             e.Property(x => x.Role).HasMaxLength(100).IsRequired();
             e.Property(x => x.EntityId).HasMaxLength(255).IsRequired();
+            e.Property(x => x.FreshnessEntityId).HasMaxLength(255);
+            e.Property(x => x.FreshnessAttribute).HasMaxLength(100);
             e.Property(x => x.ExpectedUnit).HasMaxLength(50);
             e.HasIndex(x => new { x.UserId, x.Role }).IsUnique();
             e.HasIndex(x => new { x.UserId, x.EntityId });

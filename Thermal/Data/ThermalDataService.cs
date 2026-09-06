@@ -62,6 +62,8 @@ public sealed class ThermalDataService
                 IsCritical = room.IsCritical,
                 Enabled = room.Enabled,
                 MaximumReportAgeMinutes = room.MaximumReportAgeMinutes,
+                FreshnessEntityId = room.FreshnessEntityId,
+                FreshnessAttribute = room.FreshnessAttribute,
                 MinimumValidC = room.MinimumValidC,
                 MaximumValidC = room.MaximumValidC,
                 MaximumRateCPerHour = room.MaximumRateCPerHour
@@ -80,6 +82,8 @@ public sealed class ThermalDataService
                 ExpectedUnit = entity.ExpectedUnit.Trim(),
                 Enabled = entity.Enabled,
                 MaximumReportAgeMinutes = entity.MaximumReportAgeMinutes,
+                FreshnessEntityId = entity.FreshnessEntityId,
+                FreshnessAttribute = entity.FreshnessAttribute,
                 MinimumValid = entity.MinimumValid,
                 MaximumValid = entity.MaximumValid,
                 MaximumRatePerHour = entity.MaximumRatePerHour
@@ -110,6 +114,8 @@ public sealed class ThermalDataService
 
     private static void Validate(ThermalConfigDto config)
     {
+        foreach (var room in config.Rooms) SensorLiveness.Validate("room", room.FreshnessEntityId, room.FreshnessAttribute);
+        foreach (var entity in config.Entities) SensorLiveness.Validate(entity.Role, entity.FreshnessEntityId, entity.FreshnessAttribute);
         if (config.Rooms.Any(x => x.MaximumReportAgeMinutes is < 1 or > 1440))
             throw new ArgumentException("Rumsgivarens rapportgräns måste vara 1–1440 minuter eller lämnas tom.");
         if (config.Entities.Any(x => x.MaximumReportAgeMinutes is { } age &&

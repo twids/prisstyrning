@@ -82,7 +82,8 @@ describe('ThermalModelPage', () => {
     rendered.rerender(<main><ThermalModelPage /></main>);
     const advanced = screen.getByRole('button', { name: /Avancerat: husmodell och rumskalibrering/ });
     await userEvent.click(advanced);
-    expect(screen.getByText('Byggrevision: 0123456789ab')).toBeInTheDocument();
+    expect(screen.getByText(/Kodrevision vid träning: 0123456789ab/)).toBeInTheDocument();
+    expect(screen.getByText(/Vanliga programuppdateringar kräver inte omträning/)).toBeInTheDocument();
     expect(screen.queryByText('0123456789abcdef0123456789abcdef01234567')).not.toBeInTheDocument();
   });
 

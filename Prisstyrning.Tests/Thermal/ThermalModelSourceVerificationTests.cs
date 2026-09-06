@@ -107,11 +107,12 @@ public sealed class ThermalModelSourceVerificationTests
     }
 
     [Theory]
-    [InlineData("changed", "BuildChanged")]
+    [InlineData("changed", "Current")]
     [InlineData("missing", "Unproven")]
-    public async Task VerifyCurrent_RunningBuildMustMatchTheTrainingBuild(string fault, string expectedStatus)
+    public async Task VerifyCurrent_CompatibleReleaseKeepsModelsButUnstampedBuildFailsClosed(string fault, string expectedStatus)
     {
-        await using var fixture = await FixtureAsync("2R2C");
+        await using var fixture = await FixtureAsync("2R2C", "COP");
+        var evidenceBefore = fixture.Models.Select(model => model.SourceEvidenceJson).ToArray();
         var running = fault == "changed"
             ? RuntimeBuildProvenance.FromRevision("fedcba9876543210fedcba9876543210fedcba98")
             : RuntimeBuildProvenance.FromRevision(null);
@@ -122,10 +123,45 @@ public sealed class ThermalModelSourceVerificationTests
             fixture.Db, "account-a", fixture.Models, rooms, entities, true, fixture.Now,
             CancellationToken.None, running);
 
-        var validation = Assert.Single(result.Values);
-        Assert.False(validation.Passed);
-        Assert.Equal(expectedStatus, validation.Status);
-        Assert.Contains("revision", validation.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.All(result.Values, validation =>
+        {
+            Assert.Equal(fault == "changed", validation.Passed);
+            Assert.Equal(expectedStatus, validation.Status);
+            Assert.Contains("revision", validation.Reason, StringComparison.OrdinalIgnoreCase);
+        });
+        Assert.Equal(evidenceBefore, fixture.Models.Select(model => model.SourceEvidenceJson));
+        Assert.Equal(2, await fixture.Db.ThermalModelVersions.CountAsync());
+    }
+
+    [Theory]
+    [InlineData("algorithm")]
+    [InlineData("selection")]
+    [InlineData("schema")]
+    public async Task VerifyCurrent_IncompatibleModelContractStillFailsClosed(string change)
+    {
+        await using var fixture = await FixtureAsync("2R2C");
+        var model = fixture.Models.Single();
+        var source = ThermalModelProvenance.Read(model)!;
+        model.SourceEvidenceJson = ThermalModelProvenance.Serialize(change switch
+        {
+            "algorithm" => source with { AlgorithmVersion = "unrecognized-algorithm" },
+            "selection" => source with { SelectionVersion = "unrecognized-selection" },
+            _ => source with { SchemaVersion = 999 }
+        });
+        var result = await VerifyAsync(fixture.Db, fixture.Now, fixture.Models, true);
+        Assert.False(result[model.Id].Passed);
+        Assert.Equal("Unproven", result[model.Id].Status);
+    }
+
+    [Fact]
+    public async Task VerifyCurrent_ChangedLivenessPolicyRevokesModelWithoutChangingOtherAccounts()
+    {
+        await using var fixture = await FixtureAsync("2R2C");
+        var room = await fixture.Db.ThermalRoomConfigs.SingleAsync();
+        room.FreshnessAttribute = "last_seen";
+        await fixture.Db.SaveChangesAsync();
+        var result = await VerifyAsync(fixture.Db, fixture.Now, fixture.Models, true);
+        Assert.Equal("Changed", result[fixture.Models.Single().Id].Status);
     }
 
     private static async Task<Fixture> FixtureAsync(params string[] modelTypes)

@@ -15,6 +15,32 @@ namespace Prisstyrning.Tests.Thermal;
 public sealed class HomeAssistantCollectorValidationTests
 {
     [Fact]
+    public async Task Collect_AccountLivenessSupportsUnchangedRoomAndFailsBackWhenHeartbeatStops()
+    {
+        await using var fixture = await Fixture.CreateAsync(state => state.EntityId == "sensor.room"
+            ? state with { LastChangedUtc = state.ReceivedAtUtc.AddHours(-3), LastUpdatedUtc = state.ReceivedAtUtc.AddHours(-3) } : state);
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+            (await db.ThermalRoomConfigs.SingleAsync(x => x.EntityId == "sensor.room")).FreshnessEntityId = "sensor.seen";
+            await db.SaveChangesAsync();
+        }
+        var beat = new HomeAssistantState("sensor.seen", fixture.Now.ToString("O"), new(), fixture.Now, fixture.Now, fixture.Now);
+        fixture.Cache.ApplyEvent(fixture.Session, new(beat.EntityId, beat, fixture.Now));
+        await fixture.CollectAsync(0);
+        var first = await fixture.LatestAsync();
+        using var quality = System.Text.Json.JsonDocument.Parse(first.QualityJson);
+        Assert.Equal((int)DataQuality.Valid, quality.RootElement.GetProperty("rooms").GetProperty("sensor.room").GetProperty("Quality").GetInt32());
+        Assert.Contains("sensor.room", first.RoomTemperaturesJson);
+        await fixture.CollectAsync(15);
+        var after = await fixture.LatestAsync();
+        using var laterQuality = System.Text.Json.JsonDocument.Parse(after.QualityJson);
+        Assert.Equal((int)DataQuality.Stale, laterQuality.RootElement.GetProperty("rooms").GetProperty("sensor.room").GetProperty("Quality").GetInt32());
+        Assert.False(laterQuality.RootElement.GetProperty("rooms").GetProperty("sensor.room").GetProperty("Excluded").GetBoolean());
+        await fixture.AssertLegacyAsync();
+    }
+
+    [Fact]
     public async Task Collect_ValidLiveValuesProduceFiniteHeatAndCopWithoutChangingLegacy()
     {
         await using var fixture = await Fixture.CreateAsync();

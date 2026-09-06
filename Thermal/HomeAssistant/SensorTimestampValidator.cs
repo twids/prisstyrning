@@ -12,7 +12,8 @@ internal static class SensorTimestampValidator
         HomeAssistantState? state,
         DateTimeOffset nowUtc,
         TimeSpan staleAfter,
-        DateTimeOffset? historyImportedAtUtc = null)
+        DateTimeOffset? historyImportedAtUtc = null,
+        SensorLivenessEvidence? liveness = null)
     {
         if (state?.LastUpdatedUtc is not { } updated || updated == default || state.ReceivedAtUtc == default)
             return (DataQuality.Unavailable, "Uppdaterings- eller mottagningstid saknas; givarens ålder kan inte verifieras.");
@@ -27,6 +28,16 @@ internal static class SensorTimestampValidator
             return (DataQuality.Invalid, "Givarens tidsstämplar är motsägelsefulla eller ligger i framtiden. Kontrollera klockorna.");
         if (historyImportedAtUtc is null && nowUtc - received > SensorFreshnessPolicy.CommunicationTimeout)
             return (DataQuality.Stale, "Ingen aktuell avläsning från Home Assistant på tio minuter. Kontrollera anslutningen.");
+        if (liveness is not null)
+        {
+            if (liveness.Warning is not null || liveness.TimestampUtc is not { } heartbeat)
+                return (DataQuality.Stale, liveness.Warning ?? "Livstecknets tid saknas.");
+            if (heartbeat > nowUtc + ClockTolerance || heartbeat > received + ClockTolerance)
+                return (DataQuality.Stale, "Livstecknets tid kan inte verifieras.");
+            if (nowUtc - heartbeat > staleAfter)
+                return (DataQuality.Stale, $"Inget verifierat livstecken inom {staleAfter.TotalMinutes:0} minuter. Värdet kan vara oförändrat; kontrollera givaren.");
+            return (DataQuality.Valid, "Oförändrat värde med aktuellt, uttryckligt valt livstecken. Livstecknet är inte en ny temperaturmätning.");
+        }
         if (nowUtc - reported > staleAfter)
             return (DataQuality.Stale, $"Ingen ny rapport inom {staleAfter.TotalMinutes:0} minuter. Värdet kan vara oförändrat; mätningens aktualitet är osäker. Kontrollera givarens rapportintervall.");
         return (DataQuality.Valid, nowUtc - updated > staleAfter
