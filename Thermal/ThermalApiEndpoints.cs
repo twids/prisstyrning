@@ -16,6 +16,11 @@ public static class ThermalApiEndpoints
     public static IEndpointRouteBuilder MapThermalApi(this IEndpointRouteBuilder app)
     {
         var thermal = app.MapThermalStatusApi();
+        thermal.MapPost("/learning", async (HttpContext context, Prisstyrning.Thermal.Jobs.ShadowLearningJob learning, CancellationToken ct) =>
+        {
+            await learning.TrainAsync(UserId(context), DateTimeOffset.UtcNow, ct);
+            return Results.Ok(await learning.GetAsync(UserId(context), DateTimeOffset.UtcNow, ct));
+        });
 
         thermal.MapGet("/config", async (
             HttpContext context,
@@ -355,6 +360,8 @@ public static class ThermalApiEndpoints
         });
         thermal.MapGet("/status", GetStatusAsync);
         thermal.MapGet("/models", GetModelsAsync);
+        thermal.MapGet("/learning", async (HttpContext context, PrisstyrningDbContext db, CancellationToken ct) =>
+            Results.Ok(await new Prisstyrning.Thermal.Jobs.ShadowLearningJob(db).GetAsync(UserId(context), DateTimeOffset.UtcNow, ct)));
         return thermal;
     }
 
@@ -366,7 +373,7 @@ public static class ThermalApiEndpoints
     {
         var userId = UserId(context);
         var models = await db.ThermalModelVersions.AsNoTracking()
-            .Where(x => x.UserId == userId).OrderByDescending(x => x.CreatedAtUtc)
+            .Where(x => x.UserId == userId && x.ModelType != Prisstyrning.Thermal.Jobs.ShadowLearningJob.ModelType).OrderByDescending(x => x.CreatedAtUtc)
             .Take(100).ToListAsync(cancellationToken);
         var site = await db.ThermalSiteConfigs.AsNoTracking()
             .SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);

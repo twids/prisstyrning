@@ -44,6 +44,9 @@ public sealed class ThermalDataService
         var site = await EnsureSiteAsync(userId, cancellationToken, tracked: true);
         if (ThermalEnumParser.ControlModeOrLegacy(site.ControlMode) is ControlMode.LwtActive or ControlMode.FullActive)
         {
+            var priorDeclaration = await _db.ThermalEntityConfigs.AnyAsync(x => x.UserId == userId && x.NotApplicable && x.Enabled, cancellationToken);
+            if (priorDeclaration != requested.Entities.Any(x => x.NotApplicable && x.Enabled))
+                throw new InvalidOperationException("Byt till Shadow eller Legacy innan avfrostningsförutsättningen ändras.");
             var previousFeedback = await _db.ThermalEntityConfigs.AsNoTracking()
                 .Where(x => x.UserId == userId && x.Role == ThermalEntityRoles.HeatingDeviation).ToListAsync(cancellationToken);
             var nextFeedback = requested.Entities.Where(x => x.Role.Trim().Equals(ThermalEntityRoles.HeatingDeviation, StringComparison.OrdinalIgnoreCase));
@@ -91,6 +94,7 @@ public sealed class ThermalDataService
                 EntityId = entity.EntityId.Trim(),
                 ExpectedUnit = entity.ExpectedUnit.Trim(),
                 Enabled = entity.Enabled,
+                NotApplicable = entity.NotApplicable,
                 MaximumReportAgeMinutes = entity.MaximumReportAgeMinutes,
                 FreshnessEntityId = entity.FreshnessEntityId,
                 FreshnessAttribute = entity.FreshnessAttribute,
@@ -127,6 +131,10 @@ public sealed class ThermalDataService
     {
         foreach (var entity in config.Entities)
         {
+            if (entity.NotApplicable && (!DefrostPolicy.IsDeclared(entity) || entity.FreshnessEntityId is not null ||
+                entity.FreshnessAttribute is not null || entity.MaximumReportAgeMinutes is not null ||
+                entity.MinimumValid is not null || entity.MaximumValid is not null || entity.MaximumRatePerHour is not null))
+                throw new ArgumentException("Ej tillämpligt får endast användas för avfrostning, utan entity eller mätregler.");
             if (entity.Role.Equals(ThermalEntityRoles.CopRealtime, StringComparison.OrdinalIgnoreCase) ||
                 entity.Role.Equals(ThermalEntityRoles.CopAverage, StringComparison.OrdinalIgnoreCase))
                 if (!string.Equals(entity.ExpectedUnit, "COP", StringComparison.OrdinalIgnoreCase))
@@ -164,7 +172,7 @@ public sealed class ThermalDataService
                                   x.Weight is < 0 or > 100 || x.TargetOffsetC is < -5 or > 5 ||
                                   x.MinimumValidC >= x.MaximumValidC || x.MaximumRateCPerHour <= 0))
             throw new ArgumentException("Rumskonfigurationen är ogiltig.");
-        if (config.Entities.Any(x => !IsEntityId(x.EntityId) || string.IsNullOrWhiteSpace(x.ExpectedUnit) ||
+        if (config.Entities.Any(x => !IsEntityId(x.EntityId) && !DefrostPolicy.IsDeclared(x) || string.IsNullOrWhiteSpace(x.ExpectedUnit) ||
                                      x.MinimumValid is { } minimum && x.MaximumValid is { } maximum && minimum >= maximum ||
                                      x.MaximumRatePerHour is <= 0))
             throw new ArgumentException("Entity-konfigurationen är ogiltig.");

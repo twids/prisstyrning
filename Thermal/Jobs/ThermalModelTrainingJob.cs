@@ -42,7 +42,9 @@ public sealed class ThermalModelTrainingJob
             .ToListAsync(cancellationToken);
         var selected = ThermalModelTrainingData.SelectThermal(samples, userId, from, now, rooms, entities);
         var observations = selected.Select(x => x.Observation).ToArray();
-        if (observations.Length < 21 * 24 * 12 * 0.98) return;
+        // Initial fitting is not permission to control. Full horizon validation
+        // and the independent active-mode readiness period remain mandatory.
+        if (observations.Length < 288) return;
 
         var result = _model.Train(observations);
         var fittingSampleIds = selected.Take(result.Metrics.TrainingSamples).Select(x => x.Sample.Id).ToHashSet();
@@ -78,6 +80,28 @@ public sealed class ThermalModelTrainingJob
             SourceEvidenceJson = ThermalModelProvenance.Serialize(provenance)
         };
         var accepted = ThermalModelEvidence.Assess(version, DateTimeOffset.UtcNow).Passed;
+        if (accepted && previous is not null)
+        {
+            // Compare both models on the SAME held-out observations, all newer
+            // than the previous model's training. Never replace on incomparable MAEs.
+            var validationStart = observations.Length - result.Metrics.ValidationSamples;
+            var comparison = observations.Skip(validationStart).Where(x => x.TimestampUtc > previous.TrainingToUtc).ToArray();
+            try
+            {
+                var prior = JsonSerializer.Deserialize<GreyBoxParameters>(previous.ParametersJson, CamelCase);
+                if (prior is null) accepted = false;
+                else
+                {
+                    var next2 = _model.HorizonMae(comparison, parameters, 24);
+                    var old2 = _model.HorizonMae(comparison, prior, 24);
+                    var nextDay = _model.HorizonMae(comparison, parameters, 288);
+                    var oldDay = _model.HorizonMae(comparison, prior, 288);
+                    accepted = next2.Windows > 0 && nextDay.Windows > 0 && old2.Windows > 0 && oldDay.Windows > 0 &&
+                        next2.Mae <= old2.Mae && nextDay.Mae <= oldDay.Mae;
+                }
+            }
+            catch (JsonException) { accepted = false; }
+        }
         version.IsActive = accepted;
         if (accepted && previous is not null) previous.IsActive = false;
         _db.ThermalModelVersions.Add(version);

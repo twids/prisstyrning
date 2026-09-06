@@ -233,6 +233,7 @@ export interface ThermalRoomConfig {
 }
 
 export interface ThermalEntityConfig {
+  notApplicable?: boolean;
   averagingPeriod?: string | null;
   freshnessEntityId?: string | null;
   freshnessAttribute?: string | null;
@@ -328,6 +329,19 @@ export interface WeatherForecastTest {
   quality: DataQuality;
   reason: string | null;
   points: { timestampUtc: string; temperatureC: number; windSpeedMps: number | null; solarIrradianceWm2: number | null }[];
+}
+
+export interface ShadowLearningVersion {
+  id: number;
+  issuedAtUtc: string;
+  twoHourErrorC: number | null;
+  dayErrorC: number | null;
+  learning: {
+    stage: string; samples: number; heatingSamples: number;
+    minimumOutsideC: number | null; maximumOutsideC: number | null;
+    trendCPerHour: number; heldOutMaeC: number | null; persistenceMaeC: number | null;
+    forecast: { timestampUtc: string; predictedC: number; actualC: number | null }[];
+  };
 }
 
 export interface SensorFreshnessRequest {

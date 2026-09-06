@@ -352,7 +352,8 @@ internal static class ThermalModelProvenance
             .Concat(entities.Where(x => x.FreshnessEntityId is not null || x.FreshnessAttribute is not null)
                 .Select(x => new { key = $"entity:{x.Id}", x.FreshnessEntityId, x.FreshnessAttribute }))
             .OrderBy(x => x.key, StringComparer.Ordinal).ToArray();
-        return Hash(existingConfiguration + (reportPolicies.Length == 0 ? "" : JsonSerializer.Serialize(reportPolicies, JsonSerializerOptions.Web)) +
+        var declarations = entities.Where(x => x.NotApplicable).OrderBy(x => x.Id).Select(x => new { x.Id, x.Role, x.NotApplicable }).ToArray();
+        return Hash(existingConfiguration + (declarations.Length == 0 ? "" : JsonSerializer.Serialize(declarations, JsonSerializerOptions.Web)) + (reportPolicies.Length == 0 ? "" : JsonSerializer.Serialize(reportPolicies, JsonSerializerOptions.Web)) +
             (livenessPolicies.Length == 0 ? "" : JsonSerializer.Serialize(livenessPolicies, JsonSerializerOptions.Web)));
     }
 

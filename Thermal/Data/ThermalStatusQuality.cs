@@ -68,6 +68,14 @@ internal static class ThermalStatusQuality
         foreach (var entity in enabledEntities)
         {
             var assessment = Property(Property(root, "entities"), entity.Role);
+            var declared = Prisstyrning.Thermal.HomeAssistant.DefrostPolicy.IsDeclared(entity);
+            var declarationRecorded = Property(assessment, "reason").ValueKind == JsonValueKind.String &&
+                Property(assessment, "reason").GetString() == Prisstyrning.Thermal.HomeAssistant.DefrostPolicy.Reason;
+            if (entity.NotApplicable && !declared || declared != declarationRecorded || declared && sample.DefrostActive != false)
+            {
+                qualities.Add(DataQuality.Unavailable);
+                continue;
+            }
             var usage = Property(assessment, "usage");
             if (displayContext && (entity.Role is ThermalEntityRoles.CopRealtime or ThermalEntityRoles.CopAverage ||
                 usage.ValueKind == JsonValueKind.String && usage.GetString() == "HeldWhileIdle" &&

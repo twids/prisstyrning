@@ -61,7 +61,7 @@ describe('sensorernas krav och nytta', () => {
 
   it('förklarar bergvärmebegränsningen i stället för att föreslå påhittade mätvärden', () => {
     render(<SensorRequirement role="defrost_active" selected={false} />);
-    expect(screen.getByText(/Bergvärme har ingen avfrostning/)).toHaveTextContent('Stöd för ”inte tillämpligt” saknas ännu');
+    expect(screen.getByText(/För bergvärme utan avfrostning/)).toHaveTextContent('Ingen HA-hjälpsensor behövs');
   });
 
   it('har läsbara krav utan att förlita sig på enbart färg', async () => {

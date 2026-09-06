@@ -76,7 +76,7 @@ public sealed class HomeAssistantHistoryImportService
         var rooms = await _db.ThermalRoomConfigs.AsNoTracking()
             .Where(x => x.UserId == userId && x.Enabled)
             .ToListAsync(cancellationToken);
-        var entityIds = entityConfigs.Select(x => x.EntityId).Concat(rooms.Select(x => x.EntityId))
+        var entityIds = entityConfigs.Where(x => !DefrostPolicy.IsDeclared(x)).Select(x => x.EntityId).Concat(rooms.Select(x => x.EntityId))
             .Concat(entityConfigs.Select(x => x.FreshnessEntityId).Concat(rooms.Select(x => x.FreshnessEntityId)).OfType<string>())
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (entityIds.Length == 0) throw new ArgumentException("Det finns inga aktiverade HA-entities att importera.");
@@ -110,7 +110,7 @@ public sealed class HomeAssistantHistoryImportService
         var preserved = 0;
         var coverage = new Dictionary<string, CoverageCounter>();
         foreach (var config in entityConfigs)
-            coverage[$"entity|{config.Role}|{config.EntityId}"] = new(config.EntityId, config.Role, cursors[config.EntityId].TimelineIssue);
+            coverage[$"entity|{config.Role}|{config.EntityId}"] = new(config.EntityId, config.Role, DefrostPolicy.IsDeclared(config) ? DefrostPolicy.Reason : cursors[config.EntityId].TimelineIssue);
         foreach (var room in rooms)
             coverage[$"room|{room.EntityId}"] = new(room.EntityId, $"Rum: {room.Name}", cursors[room.EntityId].TimelineIssue);
 
@@ -121,6 +121,14 @@ public sealed class HomeAssistantHistoryImportService
             var entityQuality = new JsonObject();
             foreach (var config in entityConfigs)
             {
+                if (DefrostPolicy.IsDeclared(config))
+                {
+                    var declaration = DefrostPolicy.Assessment();
+                    values[config.Role] = declaration;
+                    entityQuality[config.Role] = Quality(declaration);
+                    coverage[$"entity|{config.Role}|{config.EntityId}"].Add(declaration);
+                    continue;
+                }
                 var raw = cursors[config.EntityId].At(bucket);
                 var assessed = tracker.Assess($"entity|{config.Role}|{config.EntityId}", raw, SensorValueNormalizer.Normalize(raw, config.ExpectedUnit),
                     new(config.MinimumValid, config.MaximumValid, config.MaximumRatePerHour, SensorFreshnessPolicy.ReportAge(config.Role, config.MaximumReportAgeMinutes, staleAfter)), bucket, historyImportedAtUtc: importedAt,
@@ -162,7 +170,7 @@ public sealed class HomeAssistantHistoryImportService
                 role => cursors.GetValueOrDefault(entityConfigs.FirstOrDefault(e => e.Role == role)?.EntityId ?? "")?.At(bucket), bucket, importedAt);
             foreach (var config in entityConfigs)
                 entityQuality[config.Role] = JsonSerializer.SerializeToNode(ThermalSensorUsagePolicy.Describe(
-                    config.Role, values[config.Role], cursors[config.EntityId].At(bucket), bucket, idle, importedAt));
+                    config.Role, values[config.Role], cursors.GetValueOrDefault(config.EntityId)?.At(bucket), bucket, idle, importedAt));
 
             var sample = new ThermalTelemetrySample
             {

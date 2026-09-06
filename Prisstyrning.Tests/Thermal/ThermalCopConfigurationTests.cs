@@ -8,6 +8,22 @@ namespace Prisstyrning.Tests.Thermal;
 
 public sealed class ThermalCopConfigurationTests
 {
+    [Fact]
+    public async Task NoDefrost_RoundTripsOnlyExplicitDeclaration_AndPreservesLegacy()
+    {
+        await using var db = Database();
+        var service = new ThermalDataService(db, new ThermalInstallationRegistry(db));
+        var config = new ThermalConfigDto(new ThermalSiteConfig(), [], [new ThermalEntityConfig
+        { Role = ThermalEntityRoles.DefrostActive, ExpectedUnit = "bool", NotApplicable = true }]);
+        var saved = await service.UpdateConfigAsync("account-a", config);
+        Assert.True(Assert.Single(saved.Entities).NotApplicable);
+        Assert.Equal("", saved.Entities[0].EntityId);
+        Assert.Equal("Legacy", saved.Site.ControlMode);
+        Assert.Equal("Legacy", saved.Site.DhwWriter);
+        config.Entities[0].Role = ThermalEntityRoles.DhwActive;
+        await Assert.ThrowsAsync<ArgumentException>(() => service.UpdateConfigAsync("account-a", config));
+        Assert.True((await service.GetConfigAsync("account-a")).Entities[0].NotApplicable);
+    }
     private static PrisstyrningDbContext Database() => new(new DbContextOptionsBuilder<PrisstyrningDbContext>()
         .UseInMemoryDatabase($"cop-config-{Guid.NewGuid():N}").Options);
     private static ThermalConfigDto Config(string role = ThermalEntityRoles.CopAverage, string? period = "Lifetime", string? unit = "COP") =>
