@@ -141,6 +141,8 @@ export function HomeAssistantConnectionPanel({ ha, connection }: { ha: ReturnTyp
   const [removeOpen, setRemoveOpen] = useState(false);
   const [historyFrom, setHistoryFrom] = useState(() => toLocalDateTimeInput(new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)));
   const [historyTo, setHistoryTo] = useState(() => toLocalDateTimeInput(now));
+  const [lastPreviewContext, setLastPreviewContext] = useState<string | null>(null);
+  const previewContext = JSON.stringify([connection?.updatedAtUtc, historyFrom, historyTo]);
   const connectionErrors = useMemo(() => validateHomeAssistantConnection(connectionDraft, connection), [connectionDraft, connection]);
   const connectionDirty = JSON.stringify(connectionDraft) !== JSON.stringify(initial);
   const saveConnection = () => ha.save.mutate({
@@ -154,6 +156,16 @@ export function HomeAssistantConnectionPanel({ ha, connection }: { ha: ReturnTyp
     fromUtc: new Date(historyFrom).toISOString(),
     toUtc: new Date(historyTo).toISOString(),
   });
+  const previewHistory = () => {
+    setLastPreviewContext(previewContext);
+    ha.previewHistory.mutate({ fromUtc: new Date(historyFrom).toISOString(), toUtc: new Date(historyTo).toISOString() });
+  };
+  const historyDuration = Date.parse(historyTo) - Date.parse(historyFrom);
+  const historyValid = Number.isFinite(historyDuration) && historyDuration >= 300_000 &&
+    historyDuration <= 90 * 86400_000 && Date.parse(historyTo) <= Date.now();
+  const historyBusy = ha.importHistory.isPending || ha.previewHistory.isPending;
+  const historyDisabled = !ha.status.data?.configured || connectionDirty || historyBusy || !historyValid;
+  const resetHistoryResult = () => { setLastPreviewContext(null); ha.previewHistory.reset(); ha.importHistory.reset(); };
   return <Stack spacing={3}>
     <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={2}>
       <Box><Typography component="h2" variant="h5">Ditt kontos Home Assistant</Typography><Typography color="text.secondary">Anslutningen följer det verifierade Daikin-kontot. Telemetritoken bör vara läsande; styrtoken används bara för exakt tillåten P1P2-entity i aktiva lägen.</Typography></Box>
@@ -204,11 +216,25 @@ export function HomeAssistantConnectionPanel({ ha, connection }: { ha: ReturnTyp
       <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={2} alignItems={{ md: 'flex-end' }}>
         <Box sx={{ flex: 1 }}><Typography component="h3" variant="h6">Historik för modellträning</Typography><Typography variant="body2" color="text.secondary">Hämta förändringshistorik från HA och återsampla den till fem minuter. Intervallet får vara högst 90 dagar och befintliga snapshots skrivs aldrig över. Importerade punkter valideras separat; de är inte godkänd liveinsamling eller verifierade Shadow-dygn.</Typography></Box>
         <Stack direction={{ xs: 'column', sm: 'row' }} gap={1.5}>
-          <TextField type="datetime-local" label="Från" value={historyFrom} onChange={(event) => setHistoryFrom(event.target.value)} InputLabelProps={{ shrink: true }} />
-          <TextField type="datetime-local" label="Till" value={historyTo} onChange={(event) => setHistoryTo(event.target.value)} InputLabelProps={{ shrink: true }} />
-          <Button variant="outlined" onClick={importHistory} disabled={!ha.status.data?.configured || ha.importHistory.isPending || !historyFrom || !historyTo}>{ha.importHistory.isPending ? 'Importerar…' : 'Importera'}</Button>
+          <TextField type="datetime-local" label="Från" value={historyFrom} disabled={historyBusy} onChange={(event) => { setHistoryFrom(event.target.value); resetHistoryResult(); }} InputLabelProps={{ shrink: true }} />
+          <TextField type="datetime-local" label="Till" value={historyTo} disabled={historyBusy} onChange={(event) => { setHistoryTo(event.target.value); resetHistoryResult(); }} InputLabelProps={{ shrink: true }} />
+          <Button variant="outlined" onClick={previewHistory} disabled={historyDisabled}>{ha.previewHistory.isPending ? 'Kontrollerar…' : 'Kontrollera historik'}</Button>
+          <Button variant="outlined" onClick={importHistory} disabled={historyDisabled}>{ha.importHistory.isPending ? 'Importerar…' : 'Importera'}</Button>
         </Stack>
       </Stack>
+      <Typography variant="body2" sx={{ mt: 2 }}>Kontrollen använder sparad anslutning och sparade givarmappningar. Den hämtar historik utan att spara mätpunkter, träna modeller eller ändra styrningen.</Typography>
+      {!historyValid && <Alert severity="warning">Välj ett avslutat intervall på 5 minuter–90 dagar.</Alert>}
+      {ha.previewHistory.isError && <Alert severity="error">Historiken kunde inte kontrolleras. Ingen import gjordes.</Alert>}
+      {ha.previewHistory.isSuccess && !ha.previewHistory.isPending && lastPreviewContext === previewContext && !connectionDirty && ha.previewHistory.data && <Stack spacing={1} sx={{ mt: 2 }} aria-label="Historiktäckning">
+        <Typography>{ha.previewHistory.data.expectedSamples} femminuterspunkter i intervallet. {ha.previewHistory.data.existingSamples} befintliga punkter skulle bevaras vid import.</Typography>
+        <Alert severity="info">Täckningen gäller HA-historiken, inte befintliga mätpunkter. Giltiga enskilda givare innebär inte att hela modellunderlaget räcker. Osäker rapportålder kan bero på oförändrade värden; det är inte automatiskt ett sensorfel. Ingen modell eller Shadow-period är godkänd av kontrollen.</Alert>
+        {ha.previewHistory.data.sensors.map(sensor => <Paper key={`${sensor.purpose}|${sensor.entityId}`} variant="outlined" sx={{ p: 1.5, overflowWrap: 'anywhere' }}>
+          <Typography fontWeight={700}>{roles.find(role => role[0] === sensor.purpose)?.[1] ?? sensor.purpose}</Typography>
+          <Typography variant="caption">{sensor.entityId}</Typography>
+          {sensor.timelineIssue && <Alert severity="warning">{sensor.timelineIssue}</Alert>}
+          <Typography variant="body2">Giltiga: {sensor.valid}. Osäker rapportålder: {sensor.stale}. Ogiltiga/exkluderade: {sensor.invalid}. Saknas: {sensor.unavailable}.</Typography>
+        </Paper>)}
+      </Stack>}
       {ha.importHistory.isSuccess && <Alert severity={ha.importHistory.data.entitiesWithoutHistory.length ? 'warning' : 'success'} sx={{ mt: 2 }}>{ha.importHistory.data.importedSamples} nya punkter importerades och {ha.importHistory.data.existingSamplesPreserved} befintliga bevarades.{ha.importHistory.data.entitiesWithoutHistory.length > 0 ? ` Användbar, tidsstämplad historik saknades för: ${ha.importHistory.data.entitiesWithoutHistory.join(', ')}.` : ''}</Alert>}
       {ha.importHistory.isError && <Alert severity="error" sx={{ mt: 2 }}>{ha.importHistory.error.message}</Alert>}
     </Paper>

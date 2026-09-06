@@ -148,5 +148,9 @@ export function useHomeAssistant() {
       void queryClient.invalidateQueries({ queryKey: ['thermal', 'events'] });
     },
   });
-  return { config, status, entities, test, save, remove, importHistory };
+  const previewHistory = useMutation({
+    mutationFn: ({ fromUtc, toUtc }: { fromUtc: string; toUtc: string }) =>
+      apiClient.previewHomeAssistantHistory(fromUtc, toUtc),
+  });
+  return { config, status, entities, test, save, remove, importHistory, previewHistory };
 }

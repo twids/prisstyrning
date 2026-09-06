@@ -9,6 +9,7 @@ const save = vi.fn();
 const remove = vi.fn();
 const testConnection = vi.fn();
 const importHistory = vi.fn();
+const previewHistory = vi.fn();
 
 function homeAssistantHook(): ReturnType<typeof useHomeAssistant> {
   return {
@@ -19,11 +20,38 @@ function homeAssistantHook(): ReturnType<typeof useHomeAssistant> {
     save: { mutate: save, isPending: false, isSuccess: false, isError: false, error: null },
     remove: { mutate: remove, isPending: false },
     importHistory: { mutate: importHistory, isPending: false, isSuccess: false, isError: false, error: null },
+    previewHistory: { mutate: previewHistory, reset: vi.fn(), isPending: false, isSuccess: false, isError: false, error: null },
   } as unknown as ReturnType<typeof useHomeAssistant>;
 }
 
 describe('HomeAssistantConnectionPanel', () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it('kontrollerar sparad historik utan import, träning eller inställningsskrivning', async () => {
+    const ha = homeAssistantHook();
+    ha.status.data!.configured = true;
+    render(<HomeAssistantConnectionPanel ha={ha} connection={null} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Kontrollera historik' }));
+    expect(previewHistory).toHaveBeenCalledOnce();
+    expect(importHistory).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('visar datakvalitet per givare utan att utlova en godkänd modell och återanvänder inte gamla resultat efter ommontering', async () => {
+    const ha = homeAssistantHook();
+    ha.status.data!.configured = true;
+    Object.assign(ha.previewHistory, { isSuccess: true, data: { expectedSamples: 10, existingSamples: 2,
+      sensors: [{ entityId: 'sensor.room', purpose: 'Rum: Vardagsrum', valid: 3, stale: 7, invalid: 0, unavailable: 0,
+        timelineIssue: 'Kontrollera källans tidsstämplar.' }] } });
+    const view = render(<HomeAssistantConnectionPanel key="first-connection" ha={ha} connection={null} />);
+    expect(screen.queryByText(/Giltiga: 3. Osäker rapportålder: 7/)).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Kontrollera historik' }));
+    expect(screen.getByText(/Giltiga: 3. Osäker rapportålder: 7/)).toBeInTheDocument();
+    expect(screen.getByText(/Ingen modell eller Shadow-period är godkänd/)).toBeInTheDocument();
+    expect(screen.getByText('Kontrollera källans tidsstämplar.')).toBeInTheDocument();
+    view.rerender(<HomeAssistantConnectionPanel key="changed-connection" ha={ha} connection={null} />);
+    expect(screen.queryByText(/Giltiga: 3. Osäker rapportålder: 7/)).not.toBeInTheDocument();
+  });
 
   it('sparar en ny HA-anslutning på kontot utan containerinställningar', async () => {
     const user = userEvent.setup();

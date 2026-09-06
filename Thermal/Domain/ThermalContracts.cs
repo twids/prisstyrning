@@ -49,7 +49,10 @@ public sealed record ThermalStatusDto(
     DateTimeOffset? NextControlEventUtc,
     bool ManualOverride,
     string? DataQualityReason = null,
-    bool EmhassEnabled = false);
+    bool EmhassEnabled = false,
+    EmhassConnectionDto? EmhassConnection = null);
+
+public sealed record EmhassConnectionDto(bool? Reachable, DateTimeOffset? CheckedUtc);
 
 public sealed record ReadinessCheck(
     string Key,

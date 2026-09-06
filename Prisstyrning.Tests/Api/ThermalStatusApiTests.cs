@@ -15,6 +15,25 @@ namespace Prisstyrning.Tests.Api;
 public sealed class ThermalStatusApiTests
 {
     [Fact]
+    public async Task Status_ReportsReachableInLegacy_WithoutClaimingSolverSuccess()
+    {
+        await using var host = await AccountApiTestHost.CreateAsync(includeThermalStatus: true);
+        using var browser = host.CreateBrowser();
+        await browser.SignInAsync();
+        await host.WithServicesAsync(services =>
+        {
+            services.GetRequiredService<Microsoft.Extensions.Options.IOptions<EmhassOptions>>().Value.Enabled = true;
+            services.GetRequiredService<EmhassHealthState>().RecordConnection(true, DateTimeOffset.UtcNow);
+            return Task.CompletedTask;
+        });
+        var status = await browser.Client.GetFromJsonAsync<ThermalStatusDto>("/api/thermal/status");
+        Assert.True(status!.EmhassConnection!.Reachable);
+        Assert.False(status.EmhassAvailable);
+        Assert.Equal(ControlMode.Legacy, status.Mode);
+        Assert.Equal(DhwWriter.Legacy, status.DhwWriter);
+    }
+
+    [Fact]
     public async Task Status_ReportsEnabledSeparatelyFromUnverifiedAvailability()
     {
         await using var host = await AccountApiTestHost.CreateAsync(includeThermalStatus: true);

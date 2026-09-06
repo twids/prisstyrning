@@ -178,6 +178,7 @@ builder.Services.AddSingleton<IEmhassOptimizationDispatcher>(services =>
     services.GetRequiredService<ThermalOptimizationQueue>());
 builder.Services.AddHostedService<LwtControlWorker>();
 builder.Services.AddHostedService<EmhassOptimizationWorker>();
+builder.Services.AddHostedService<EmhassConnectionWorker>();
 builder.Services.AddHostedService<JointPlanCoordinator>();
 builder.Services.AddHostedService<DhwLifecycleWorker>();
 builder.Services.AddTransient<ThermalModelTrainingJob>();

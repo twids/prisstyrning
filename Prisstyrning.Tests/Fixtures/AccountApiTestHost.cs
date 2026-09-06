@@ -27,6 +27,7 @@ namespace Prisstyrning.Tests.Fixtures;
 /// are real. Storage and keys are isolated. Selected read-only thermal/HA catalog
 /// routes can be mapped explicitly. Program, migrations, Hangfire, HA/EMHASS/
 /// Daikin integration clients and their workers are never registered or started.
+/// History preview tests may explicitly inject a fake telemetry client; it never uses the network.
 /// </summary>
 internal sealed class AccountApiTestHost : IAsyncDisposable
 {
@@ -47,7 +48,8 @@ internal sealed class AccountApiTestHost : IAsyncDisposable
     public static async Task<AccountApiTestHost> CreateAsync(
         Dictionary<string, string?>? configuration = null,
         bool includeThermalStatus = false,
-        bool includeHomeAssistantEntities = false)
+        bool includeHomeAssistantEntities = false,
+        IHomeAssistantTelemetryClient? historyClient = null)
     {
         var fixture = new AccountApiTestHost(configuration);
         try
@@ -90,6 +92,12 @@ internal sealed class AccountApiTestHost : IAsyncDisposable
                             services.AddScoped<HomeAssistantConnectionService>();
                             services.AddSingleton<IHomeAssistantEndpointValidator, NoNetworkEndpointValidator>();
                         }
+                        if (historyClient is not null)
+                        {
+                            services.AddSingleton(historyClient);
+                            services.AddScoped<ThermalInstallationRegistry>();
+                            services.AddScoped<HomeAssistantHistoryImportService>();
+                        }
                     })
                     .Configure(app =>
                     {
@@ -105,6 +113,7 @@ internal sealed class AccountApiTestHost : IAsyncDisposable
                             endpoints.MapAdminEndpoints();
                             if (includeThermalStatus) endpoints.MapThermalStatusApi();
                             if (includeHomeAssistantEntities) endpoints.MapHomeAssistantEntityCatalogApi();
+                            if (historyClient is not null) endpoints.MapHomeAssistantHistoryPreviewApi();
 
                             // Synthetic identity entry exists ONLY in the test assembly.
                             // No production login/OAuth endpoint is bypassed or replaced.
