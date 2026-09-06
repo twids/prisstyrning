@@ -12,6 +12,7 @@ public class ThermalEntityConfig
     public int? MaximumReportAgeMinutes { get; set; }
     public string? FreshnessEntityId { get; set; }
     public string? FreshnessAttribute { get; set; }
+    public string? AveragingPeriod { get; set; }
     public double? MinimumValid { get; set; }
     public double? MaximumValid { get; set; }
     public double? MaximumRatePerHour { get; set; }

@@ -5,6 +5,7 @@ using Prisstyrning.Data.Entities;
 using Prisstyrning.Thermal.Data;
 using Prisstyrning.Thermal.Domain;
 using Prisstyrning.Thermal.HomeAssistant;
+using Prisstyrning.Thermal.Optimization;
 
 namespace Prisstyrning.Thermal.Jobs;
 
@@ -109,13 +110,22 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
                 entity.MaximumValid,
                 entity.MaximumRatePerHour,
                 now,
-                SensorFreshnessPolicy.ReportAge(entity.MaximumReportAgeMinutes, staleAfter),
+                SensorFreshnessPolicy.ReportAge(entity.Role, entity.MaximumReportAgeMinutes, staleAfter),
                 userId,
                 revision,
                 connectionReady,
                 SensorLiveness.AllowedForRole(entity.Role)
                     ? SensorLiveness.Resolve(raw, entity.FreshnessEntityId, entity.FreshnessAttribute, id => snapshot.GetValueOrDefault(id), now)
                     : null);
+        }
+
+        if (values.TryGetValue(ThermalEntityRoles.SpotPrice, out var spot))
+        {
+            var zone = await ThermalPlanningInputs.PriceZoneAsync(db, userId, cancellationToken);
+            var prices = await db.PriceSnapshots.AsNoTracking().Where(x => x.Zone == zone)
+                .OrderByDescending(x => x.SavedAtUtc).ThenByDescending(x => x.Id).FirstOrDefaultAsync(cancellationToken);
+            var entityId = entities.First(x => x.Role == ThermalEntityRoles.SpotPrice).EntityId;
+            values[ThermalEntityRoles.SpotPrice] = SpotPriceValidity.Assess(spot, snapshot.GetValueOrDefault(entityId), prices, now);
         }
 
         var roomValues = new Dictionary<string, double>();
@@ -179,19 +189,23 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
         sample.BackupHeaterActive = Boolean(values, ThermalEntityRoles.BackupHeaterActive);
         sample.HeatOutputKw = CalculateHeatOutput(sample.FlowLitresPerMinute, sample.LeavingWaterTemperatureC, sample.ReturnWaterTemperatureC);
 
-        sample.Cop = site?.HeatPumpPowerSignVerified == true && sample.BackupHeaterActive == false &&
-                     sample.HeatPumpPowerKw is > 0.1 && sample.HeatOutputKw is { } heatOutput
-            ? heatOutput / sample.HeatPumpPowerKw.Value
-            : null;
-        if (sample.Cop is { } cop && !double.IsFinite(cop)) sample.Cop = null;
+        sample.Cop = ThermalCopSource.Select(sample, entities, values, site?.HeatPumpPowerSignVerified == true);
+        var idle = ThermalSensorUsagePolicy.ReportedIdle(values, site?.HeatPumpPowerSignVerified == true,
+            role => snapshot.GetValueOrDefault(entities.FirstOrDefault(e => e.Role == role)?.EntityId ?? ""), now);
         sample.RoomTemperaturesJson = JsonSerializer.Serialize(roomValues);
         sample.QualityJson = JsonSerializer.Serialize(new
         {
             connectionRevisionUtc = connection.UpdatedAtUtc,
             collectedAtUtc = now,
             heatingDeviationC = Numeric(values, ThermalEntityRoles.HeatingDeviation),
-            entities = values.ToDictionary(x => x.Key, x => new { x.Value.Quality, x.Value.Reason, x.Value.Excluded }),
-            rooms = roomAssessments.ToDictionary(x => x.Key, x => new { x.Value.Quality, x.Value.Reason, x.Value.Excluded }),
+            copSource = ThermalCopSource.IsExternal(entities) ? "HomeAssistantRealtime" : "Derived",
+            copEntityId = entities.FirstOrDefault(x => x.Role == ThermalEntityRoles.CopRealtime)?.EntityId,
+            copAveragePeriod = entities.FirstOrDefault(x => x.Role == ThermalEntityRoles.CopAverage)?.AveragingPeriod ?? "Unknown",
+            copAverageEntityId = entities.FirstOrDefault(x => x.Role == ThermalEntityRoles.CopAverage)?.EntityId,
+            entities = values.ToDictionary(x => x.Key, x => ThermalSensorUsagePolicy.Describe(x.Key, x.Value,
+                snapshot.GetValueOrDefault(entities.First(e => e.Role.Equals(x.Key, StringComparison.OrdinalIgnoreCase)).EntityId), now, idle)),
+            rooms = roomAssessments.ToDictionary(x => x.Key, x => ThermalSensorUsagePolicy.Describe("room", x.Value,
+                snapshot.GetValueOrDefault(x.Key), now, idle)),
             forecast = new { weatherForecast.Quality, weatherForecast.Reason, points = weatherForecast.Points.Count }
         });
 

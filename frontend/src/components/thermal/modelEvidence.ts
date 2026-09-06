@@ -64,7 +64,8 @@ function validProvenance(model: ThermalModelVersion | undefined) {
   const created = Date.parse(model.createdAtUtc);
   const positiveCount = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
   const buildRevision = typeof source.buildRevision === 'string' ? source.buildRevision : '';
-  return source.algorithmVersion === expected[0] && source.selectionVersion === expected[1] &&
+  return source.algorithmVersion === expected[0] && (source.selectionVersion === expected[1] ||
+    model.modelType === 'COP' && source.selectionVersion === 'cop-ha-realtime-history-v1') &&
     (/^[0-9a-f]{40}$/.test(buildRevision) || /^[0-9a-f]{64}$/.test(buildRevision)) && !/^0+$/.test(buildRevision) &&
     [selectionFrom, selectionTo, trainingFrom, trainingTo, created].every(Number.isFinite) &&
     selectionFrom < selectionTo && selectionFrom <= trainingFrom && trainingTo <= selectionTo && selectionTo <= created &&

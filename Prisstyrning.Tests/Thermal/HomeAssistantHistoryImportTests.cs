@@ -9,6 +9,31 @@ namespace Prisstyrning.Tests.Thermal;
 
 public sealed class HomeAssistantHistoryImportTests
 {
+    [Fact]
+    public async Task History_ExternalCopUsesHistoricalOperatingPhase_NotAverageOrTodaysState()
+    {
+        await using var db = HistoryDatabase();
+        var from = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        db.ThermalSiteConfigs.Add(new ThermalSiteConfig { UserId = "test", HeatPumpPowerSignVerified = true });
+        var readings = new[] { (ThermalEntityRoles.CopRealtime, "4.8", "COP"), (ThermalEntityRoles.CopAverage, "3.5", "COP"),
+            (ThermalEntityRoles.DhwActive, "off", "bool"), (ThermalEntityRoles.DefrostActive, "off", "bool"),
+            (ThermalEntityRoles.BackupHeaterActive, "off", "bool"), (ThermalEntityRoles.HeatPumpPower, "2", "kW") };
+        db.ThermalEntityConfigs.AddRange(readings.Select(x => new ThermalEntityConfig { UserId = "test", Role = x.Item1,
+            EntityId = "sensor." + x.Item1, ExpectedUnit = x.Item3 }));
+        await db.SaveChangesAsync();
+        var history = readings.ToDictionary(x => "sensor." + x.Item1,
+            x => (IReadOnlyList<HomeAssistantState>)[State("sensor." + x.Item1, x.Item2, x.Item3, from)]);
+        history["sensor." + ThermalEntityRoles.HeatPumpPower] = [State("sensor." + ThermalEntityRoles.HeatPumpPower, "2", "kW", from),
+            State("sensor." + ThermalEntityRoles.HeatPumpPower, ".05", "kW", from.AddMinutes(5))];
+        await new HomeAssistantHistoryImportService(db, new FakeHistoryClient(history)).ImportAsync("test", from, from.AddMinutes(5));
+        var samples = await db.ThermalTelemetrySamples.OrderBy(x => x.TimestampUtc).ToArrayAsync();
+        Assert.Equal(4.8, samples[0].Cop);
+        Assert.Null(samples[1].Cop);
+        Assert.Null(samples[0].HeatOutputKw); // No hidden flow/delta-T calculation was required for external COP.
+        Assert.Equal("HeldWhileIdle", JsonNode.Parse(samples[1].QualityJson)!["entities"]![ThermalEntityRoles.CopRealtime]!["Usage"]!.GetValue<string>());
+        Assert.Empty(await db.ThermalControlCommands.ToListAsync());
+        Assert.Equal("Legacy", (await db.ThermalSiteConfigs.SingleAsync()).ControlMode);
+    }
 
     [Fact]
     public async Task History_UsesOnlyContemporaneousLivenessAndPreservesOldMeasurementTimestamp()

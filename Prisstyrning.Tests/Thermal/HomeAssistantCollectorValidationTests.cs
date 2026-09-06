@@ -15,6 +15,36 @@ namespace Prisstyrning.Tests.Thermal;
 public sealed class HomeAssistantCollectorValidationTests
 {
     [Fact]
+    public async Task Collect_ExternalRealtimeAndAverageRemainSeparate_WithoutLegacyWrites()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var extras = new[] { (ThermalEntityRoles.CopRealtime, "4.8", "COP"), (ThermalEntityRoles.CopAverage, "3.5", "COP"),
+            (ThermalEntityRoles.DhwActive, "off", "bool"), (ThermalEntityRoles.DefrostActive, "off", "bool") };
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+            (await db.ThermalSiteConfigs.SingleAsync()).HeatPumpPowerSignVerified = true;
+            db.ThermalEntityConfigs.AddRange(extras.Select(x => new ThermalEntityConfig { UserId = "account-a", Role = x.Item1,
+                EntityId = "sensor." + x.Item1, ExpectedUnit = x.Item3, AveragingPeriod = x.Item1 == ThermalEntityRoles.CopAverage ? "Lifetime" : null }));
+            await db.SaveChangesAsync();
+        }
+        foreach (var extra in extras)
+        {
+            var state = new HomeAssistantState("sensor." + extra.Item1, extra.Item2,
+                new JsonObject { ["unit_of_measurement"] = extra.Item3 }, fixture.Now, fixture.Now, fixture.Now);
+            Assert.True(fixture.Cache.ApplyEvent(fixture.Session, new(state.EntityId, state, fixture.Now)));
+        }
+        await fixture.CollectAsync(0);
+        var sample = await fixture.LatestAsync();
+        Assert.Equal(4.8, sample.Cop);
+        var quality = JsonNode.Parse(sample.QualityJson)!;
+        Assert.Equal("HomeAssistantRealtime", quality["copSource"]!.GetValue<string>());
+        Assert.Equal("Lifetime", quality["copAveragePeriod"]!.GetValue<string>());
+        Assert.Equal(3.5, quality["entities"]![ThermalEntityRoles.CopAverage]!["Value"]!.GetValue<double>());
+        await fixture.AssertLegacyAsync();
+    }
+
+    [Fact]
     public async Task Collect_AccountLivenessSupportsUnchangedRoomAndFailsBackWhenHeartbeatStops()
     {
         await using var fixture = await Fixture.CreateAsync(state => state.EntityId == "sensor.room"

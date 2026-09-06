@@ -11,6 +11,7 @@ test('separat livstecken kan förhandsgranskas utan att spara eller aktivera sty
   });
   await page.goto('/settings');
   await page.getByRole('tab', { name: 'Rum', exact: true }).click();
+  await page.getByRole('button', { name: /Avancerat: rapportering för/ }).first().click();
   const attribute = page.getByLabel(/Livstecknets attribut för/).first();
   await attribute.fill('last_seen');
   await expect(page.getByText('Osparade ändringar')).toBeVisible();

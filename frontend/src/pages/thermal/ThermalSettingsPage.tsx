@@ -37,6 +37,8 @@ const roles = [
   ['weather_forecast', 'Väderprognos', 'forecast'],
   ['wind_speed', 'Vindhastighet', 'm/s'],
   ['solar_irradiance', 'Solinstrålning', 'W/m²'],
+  ['cop_realtime', 'Realtids-COP (valfri)', 'COP'],
+  ['cop_average', 'Medel-COP (valfri)', 'COP'],
 ] as const;
 
 export default function ThermalSettingsPage() {
@@ -269,7 +271,7 @@ function EntityCatalogNotice({ catalog, refresh }: { catalog: EntityCatalogView;
   </Stack>;
 }
 
-function EntitiesTab({ draft, setDraft, catalog }: { draft: ThermalConfig; setDraft: (value: ThermalConfig) => void; catalog: EntityCatalogView }) {
+export function EntitiesTab({ draft, setDraft, catalog }: { draft: ThermalConfig; setDraft: (value: ThermalConfig) => void; catalog: EntityCatalogView }) {
   const updateRole = (role: string, selected: HomeAssistantEntity | null, unit: string) => {
     const rest = draft.entities.filter((entity) => entity.role !== role);
     const next: ThermalEntityConfig[] = selected ? [...rest, { id: 0, userId: draft.site.userId, role, entityId: selected.entityId, expectedUnit: unit, enabled: true, minimumValid: null, maximumValid: null, maximumRatePerHour: null }] : rest;
@@ -283,12 +285,19 @@ function EntitiesTab({ draft, setDraft, catalog }: { draft: ThermalConfig; setDr
       return <Box key={role} sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0,1fr)', md: 'minmax(180px,.45fr) minmax(0,1fr)' }, gap: 2, alignItems: 'start', py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
         <Box><Typography fontWeight={700}>{label}</Typography><Typography variant="caption" color="text.secondary">Förväntad enhet {unit}</Typography></Box>
         <Stack spacing={2}>
-          <HomeAssistantEntityPicker catalog={catalog} entityId={mapping?.entityId ?? ''} expectedUnit={unit} rules={{ maximumReportAgeMinutes: mapping?.maximumReportAgeMinutes, minimum: mapping?.minimumValid, maximum: mapping?.maximumValid }} label={`Välj ${label.toLowerCase()}`} onChange={(selected) => updateRole(role, selected, unit)} />
-          {mapping && <ReportAgeField label={`Rapportgräns för ${label.toLowerCase()}`} value={mapping.maximumReportAgeMinutes} maximum={['outside_temperature', 'wind_speed', 'solar_irradiance', 'spot_price'].includes(role) ? 1440 : 10} onChange={(value) => setDraft({ ...draft, entities: draft.entities.map((entity) => entity.role === role ? { ...entity, maximumReportAgeMinutes: value } : entity) })} />}
+          <HomeAssistantEntityPicker catalog={catalog} entityId={mapping?.entityId ?? ''} expectedUnit={unit} rules={{ maximumReportAgeMinutes: mapping?.maximumReportAgeMinutes ?? (role === 'spot_price' ? 15 : undefined), minimum: mapping?.minimumValid, maximum: mapping?.maximumValid }} label={`Välj ${label.toLowerCase()}`} onChange={(selected) => updateRole(role, selected, unit)} />
+          {role === 'cop_realtime' && <Typography variant="body2">Valfri COP från exempelvis P1P2MQTT. Används under verifierad husvärmedrift; vid vila visas det senaste värdet som historiskt. Om du väljer en entity används inte egen COP-beräkning som dold reserv.</Typography>}
+          {role === 'cop_average' && <Typography variant="body2">Endast uppföljning. Medel-COP ersätter aldrig realtids-COP i modellen. Välj Okänd om integrationens medelperiod inte är verifierad.</Typography>}
+          {mapping && role === 'cop_average' && <TextField select label="Medelperiod för COP" value={mapping.averagingPeriod ?? 'Unknown'} SelectProps={{ native: true }} onChange={event => setDraft({ ...draft, entities: draft.entities.map(entity => entity.role === role ? { ...entity, averagingPeriod: event.target.value } : entity) })}>
+            {Object.entries({ Unknown: 'Okänd', Day: 'Dygn', Week: 'Vecka', Month: 'Månad', Year: 'År', Lifetime: 'Livstid', SinceReset: 'Sedan nollställning' }).map(([value, name]) => <option key={value} value={value}>{name}</option>)}
+          </TextField>}
+          {mapping && <Accordion><AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography>Avancerat: rapportering för {label.toLowerCase()}</Typography></AccordionSummary><AccordionDetails><Stack spacing={2}>
+          <ReportAgeField label={`Rapportgräns för ${label.toLowerCase()}`} value={mapping.maximumReportAgeMinutes} maximum={['outside_temperature', 'wind_speed', 'solar_irradiance', 'spot_price', 'cop_average'].includes(role) ? 1440 : 10} onChange={(value) => setDraft({ ...draft, entities: draft.entities.map((entity) => entity.role === role ? { ...entity, maximumReportAgeMinutes: value } : entity) })} />
           {mapping && ['outside_temperature', 'wind_speed', 'solar_irradiance'].includes(role) && <SensorLivenessFields
             key={catalog.connectionRevisionUtc} catalog={catalog} label={label} value={mapping}
             onChange={changes => setDraft({ ...draft, entities: draft.entities.map(entity => entity.role === role ? { ...entity, ...changes } : entity) })} />}
-          {mapping && !['outside_temperature', 'wind_speed', 'solar_irradiance', 'spot_price'].includes(role) && <Typography variant="caption">Driftsignal: egna aktuella rapporter krävs. Ett livstecken från en annan entity kan inte verifiera flöde, effekt, pumpstatus eller hygien. Osäker ålder är fortfarande en varning i Shadow.</Typography>}
+          </Stack></AccordionDetails></Accordion>}
+          {mapping && !['outside_temperature', 'wind_speed', 'solar_irradiance', 'spot_price', 'cop_average', 'cop_realtime'].includes(role) && <Typography variant="caption">Ålderskontrollen här gäller enskild entity. Insamlingen bedömer även driftläget: vid verifierbar vila får flöde noll och oförändrad LWT/RWT visas som vilovärden, utan att räknas som färska träningsmätningar. Osäker ålder är en varning i Shadow.</Typography>}
         </Stack>
       </Box>;
     })}
@@ -304,8 +313,10 @@ function RoomsTab({ draft, setDraft, catalog }: { draft: ThermalConfig; setDraft
       <Stack spacing={2}>
         <TextField label="Namn" value={room.name} onChange={(event) => update(index, { name: event.target.value })} required />
         <HomeAssistantEntityPicker catalog={catalog} entityId={room.entityId} expectedUnit="°C" rules={{ maximumReportAgeMinutes: room.maximumReportAgeMinutes, minimum: room.minimumValidC, maximum: room.maximumValidC }} label={`Temperaturentity för ${room.name}`} required onChange={(entity) => update(index, { entityId: entity?.entityId ?? '' })} />
+        <Accordion><AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography>Avancerat: rapportering för {room.name}</Typography></AccordionSummary><AccordionDetails><Stack spacing={2}>
         <ReportAgeField label={`Rapportgräns för ${room.name}`} value={room.maximumReportAgeMinutes} maximum={1440} onChange={(value) => update(index, { maximumReportAgeMinutes: value })} />
         <SensorLivenessFields key={catalog.connectionRevisionUtc} catalog={catalog} label={room.name} value={{ ...room, role: 'room' }} onChange={changes => update(index, changes)} />
+        </Stack></AccordionDetails></Accordion>
         <Stack direction="row" gap={2} flexWrap="wrap" alignItems="center">
           <TextField type="number" label="Offset °C" value={room.targetOffsetC} onChange={(event) => update(index, { targetOffsetC: Number(event.target.value) })} inputProps={{ step: .1, min: -5, max: 5 }} sx={{ width: 110 }} />
           <TextField type="number" label="Vikt" value={room.weight} onChange={(event) => update(index, { weight: Number(event.target.value) })} inputProps={{ step: .1, min: 0, max: 100 }} sx={{ width: 100 }} />
@@ -341,7 +352,7 @@ function validateSensorMappings(config: ThermalConfig | null, catalog: EntityCat
     if (result.quality === 'Invalid') errors.push(`${label}: ${result.reason}`);
   };
   config.rooms.filter((room) => room.enabled).forEach((room) => check(room.name, room.entityId, '°C', room.maximumReportAgeMinutes, 1440, room.minimumValidC, room.maximumValidC));
-  config.entities.filter((entity) => entity.enabled).forEach((entity) => check(roles.find(([role]) => role === entity.role)?.[1] ?? entity.role, entity.entityId, entity.expectedUnit, entity.maximumReportAgeMinutes, ['outside_temperature', 'wind_speed', 'solar_irradiance', 'spot_price'].includes(entity.role) ? 1440 : 10, entity.minimumValid, entity.maximumValid));
+  config.entities.filter((entity) => entity.enabled).forEach((entity) => check(roles.find(([role]) => role === entity.role)?.[1] ?? entity.role, entity.entityId, entity.expectedUnit, entity.maximumReportAgeMinutes, ['outside_temperature', 'wind_speed', 'solar_irradiance', 'spot_price', 'cop_average'].includes(entity.role) ? 1440 : 10, entity.minimumValid, entity.maximumValid));
   return errors;
 }
 

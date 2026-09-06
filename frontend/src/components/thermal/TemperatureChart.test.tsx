@@ -5,6 +5,15 @@ import TemperatureChart, { temperatureRows } from './TemperatureChart';
 
 vi.mock('@mui/x-charts/LineChart', () => ({ LineChart: () => <div>Diagram</div> }));
 describe('temperaturhistorik', () => {
+  it('håller vilovärden åtskilda från giltiga uppmätta temperaturer', () => {
+    const sample = { timestampUtc: new Date().toISOString(), leavingWaterTemperatureC: null, roomTemperaturesJson: '{}',
+      qualityJson: JSON.stringify({ entities: { leaving_water_temperature: { Quality: 1, Excluded: false, Usage: 'HeldWhileIdle', Value: 23 } } }) } as ThermalTelemetrySample;
+    expect(temperatureRows([sample])[0]).toMatchObject({ lwt: null, heldLwt: 23 });
+    render(<TemperatureChart history={[sample]} />);
+    expect(screen.getByText(/Streckade vilovärden/)).toBeInTheDocument();
+    expect(screen.getByText(/Behållen LWT vid vila: 23.0 °C/)).toBeInTheDocument();
+    expect(temperatureRows([{ ...sample, qualityJson: sample.qualityJson.replace('"Excluded":false', '"Excluded":true') }])[0].heldLwt).toBeNull();
+  });
   it('skiljer ett saknat senaste värde från saknad historik', () => {
     const sample = { timestampUtc: new Date().toISOString(), leavingWaterTemperatureC: null, roomTemperaturesJson: '{}', qualityJson: '{}' } as ThermalTelemetrySample;
     render(<TemperatureChart history={[{ ...sample, timestampUtc: new Date(Date.now() - 300000).toISOString(), leavingWaterTemperatureC: 32 }, sample]} />);
