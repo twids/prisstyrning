@@ -6,7 +6,8 @@ import HomeWorkOutlinedIcon from '@mui/icons-material/HomeWorkOutlined';
 import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import { useThermalConfig, useThermalHistory, useThermalModels } from '../../hooks/thermal/useThermal';
+import { useThermalConfig, useThermalHistory, useThermalModels, useShadowLearning } from '../../hooks/thermal/useThermal';
+import ShadowLearningPanel from '../../components/thermal/ShadowLearningPanel';
 import { MetricCard, PageHeader, formatDateTime } from '../../components/thermal/thermalUi';
 import { finite, modelEvidence, observedCop, parseRecord, record } from '../../components/thermal/modelEvidence';
 import type { ThermalModelVersion } from '../../types/api';
@@ -14,6 +15,7 @@ import { copTelemetry } from '../../components/thermal/copTelemetry';
 
 export default function ThermalModelPage() {
   const models = useThermalModels();
+  const learning = useShadowLearning();
   const history = useThermalHistory(24);
   const config = useThermalConfig();
   const [clock, setClock] = useState(Date.now);
@@ -40,6 +42,7 @@ export default function ThermalModelPage() {
         description="Husmodellen beskriver luft, byggnadsmassa och värmeförlust. Modellfel mäts på separata data som inte använts för träning eller val av vind- och solpåverkan."
         action={<Button variant="outlined" startIcon={<RefreshIcon />} onClick={refresh} disabled={models.isFetching || history.isFetching || config.isFetching}>Hämta underlag igen</Button>} />
       <Alert severity="info">En validerad modell är inte ett godkännande av aktiv styrning. Lägesguiden kontrollerar även verkliga uppvärmningsdygn, rumskomfort, grundkurva och övriga säkerhetskrav.</Alert>
+      <ShadowLearningPanel versions={learning.isError ? [] : learning.data ?? []} failed={learning.isError} refresh={learning.refetch} />
       <Alert severity="info">Vanliga programuppdateringar kräver inte omträning. Modellen kan återanvändas när modellformat, algoritm, urvalsregel och träningsunderlag fortfarande är kompatibla. Träningens kodrevision behålls för spårbarhet. Om modellen underkänns skyddar Daikins grundkurva uppvärmningen; modellen får inte kringgå säkerhetskraven.</Alert>
       {models.isLoading && <Typography role="status">Hämtar modellunderlag…</Typography>}
       {models.isError && <Alert severity="error">Modellunderlaget kunde inte hämtas. Tidigare sparade godkännanden visas inte som aktuella. Försök hämta det igen.</Alert>}

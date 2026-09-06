@@ -93,6 +93,11 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
         var weatherForecast = new NormalizedWeatherForecast([], DataQuality.Unavailable, "Ingen väderprognos är mappad.");
         foreach (var entity in entities)
         {
+            if (DefrostPolicy.IsDeclared(entity))
+            {
+                values[entity.Role] = DefrostPolicy.Assessment();
+                continue;
+            }
             snapshot.TryGetValue(entity.EntityId, out var raw);
             if (entity.Role.Equals(ThermalEntityRoles.WeatherForecast, StringComparison.OrdinalIgnoreCase))
             {

@@ -25,6 +25,8 @@ public static class ThermalSensorUsagePolicy
     public static ThermalSensorUsage Describe(string role, SensorAssessment assessment, HomeAssistantState? raw,
         DateTimeOffset now, bool reportedIdle, DateTimeOffset? historyImportedAtUtc = null)
     {
+        if (role == ThermalEntityRoles.DefrostActive && assessment.Reason == DefrostPolicy.Reason)
+            return new(DataQuality.Valid, DefrostPolicy.Reason, false, 0, null, "NotApplicable");
         var usage = assessment.Quality == DataQuality.Valid && !assessment.Excluded ? "Current" : "Unusable";
         var reason = assessment.Reason;
         var communicable = raw is not null && !assessment.Excluded &&

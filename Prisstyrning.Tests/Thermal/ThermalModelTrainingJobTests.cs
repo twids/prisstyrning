@@ -10,6 +10,20 @@ namespace Prisstyrning.Tests.Thermal;
 
 public sealed class ThermalModelTrainingJobTests
 {
+    [Fact]
+    public async Task FirstThermalCandidateDoesNotWaitForTwentyOneDays_AndDoesNotEnableControl()
+    {
+        await using var db = Database();
+        Configure(db);
+        var end = DateTimeOffset.UtcNow.AddMinutes(-5);
+        db.ThermalTelemetrySamples.AddRange(Enumerable.Range(0, 300).Select(i => ThermalModelTrainingDataTests.ValidSample(end.AddMinutes((i - 299) * 5))));
+        await db.SaveChangesAsync();
+        await new ThermalModelTrainingJob(db, new GreyBoxThermalModel(), ThermalCurrentModelTestData.Build).TrainUserAsync("account-a", CancellationToken.None);
+        var candidate = await db.ThermalModelVersions.SingleAsync();
+        Assert.False(candidate.IsActive);
+        Assert.NotNull(ThermalModelProvenance.Read(candidate));
+        await AssertLegacyAsync(db);
+    }
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

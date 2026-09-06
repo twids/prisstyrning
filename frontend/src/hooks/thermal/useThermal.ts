@@ -2,6 +2,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../api/client';
 import type { ControlMode, ThermalConfig, UpdateHomeAssistantConnection } from '../../types/api';
 
+export function useShadowLearning() {
+  return useQuery({ queryKey: ['thermal', 'learning'], queryFn: () => apiClient.getShadowLearning(), refetchInterval: 60_000 });
+}
+
 export function useThermalStatus() {
   return useQuery({
     queryKey: ['thermal', 'status'],

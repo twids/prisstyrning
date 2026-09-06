@@ -6,7 +6,7 @@ import type { ThermalModelVersion } from '../../types/api';
 import ThermalModelPage from './ThermalModelPage';
 
 const hooks = vi.hoisted(() => ({ models: vi.fn(), history: vi.fn(), config: vi.fn() }));
-vi.mock('../../hooks/thermal/useThermal', () => ({ useThermalModels: hooks.models, useThermalHistory: hooks.history, useThermalConfig: hooks.config }));
+vi.mock('../../hooks/thermal/useThermal', () => ({ useThermalModels: hooks.models, useThermalHistory: hooks.history, useThermalConfig: hooks.config, useShadowLearning: () => ({ data: [], isError: false, refetch: async () => ({}) }) }));
 const now = Date.parse('2026-08-31T08:00:00Z');
 const refresh = vi.fn().mockResolvedValue({});
 function model(): ThermalModelVersion {

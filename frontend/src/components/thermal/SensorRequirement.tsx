@@ -9,7 +9,7 @@ export const sensorRequirements: Record<string, { label: string; required: boole
   return_water_temperature: { label: 'Krävs för husmodellen', required: true, purpose: 'Uppmätt returtemperatur behövs för temperaturdifferensen över värmesystemet.' },
   flow: { label: 'Krävs för husmodellen', required: true, purpose: 'Vattenflöde tillsammans med LWT och RWT ger värmeeffekt. Noll är normalt vid stillestånd.' },
   dhw_active: { label: 'Krävs för husmodellen', required: true, purpose: 'Skiljer faktisk varmvattenproduktion från husvärme. Välj en av/på-signal eller härledd hjälpsensor, inte bara ett tillåtet driftläge.' },
-  defrost_active: { label: 'Krävs i nuvarande kod', required: true, purpose: 'Hindrar att avfrostning blandas in i träning och styrning.', limitation: 'Bergvärme har ingen avfrostning. Stöd för ”inte tillämpligt” saknas ännu; lämna frågan synlig i stället för att skapa en påhittad givare.' },
+  defrost_active: { label: 'Givare eller ej tillämpligt', required: true, purpose: 'Hindrar att avfrostning blandas in i träning och styrning.', limitation: 'För bergvärme utan avfrostning: välj uttryckligen ”Anläggningen har ingen avfrostning”. Ingen HA-hjälpsensor behövs. Saknad givare tolkas aldrig automatiskt som avstängd.' },
   brine_in: { label: 'Krävs för COP och planering', required: true, purpose: 'Ingående köldbärartemperatur används för att modellera och förutsäga verkningsgraden.' },
   tank_temperature: { label: 'Krävs för gemensam plan', required: true, purpose: 'Behövs för att planera varmvatten och reservera tid då kompressorn inte värmer huset.' },
   backup_heater_active: { label: 'Krävs för COP och planering', required: true, purpose: 'Skiljer elpatron från kompressor. Välj av/på-status; en effektgivare kan omvandlas till en HA-hjälpsensor med effekt > 0.' },
@@ -39,7 +39,7 @@ export function SensorRequirement({ role, selected }: { role: string; selected: 
 
 export function SensorRequirementsSummary({ draft, labels }: { draft: ThermalConfig; labels: readonly (readonly [string, string, string])[] }) {
   const required = labels.filter(([role]) => sensorRequirements[role]?.required);
-  const missing = required.filter(([role]) => !draft.entities.some(entity => entity.role === role && entity.enabled && entity.entityId.trim()));
+  const missing = required.filter(([role]) => !draft.entities.some(entity => entity.role === role && entity.enabled && (entity.entityId.trim() || role === 'defrost_active' && entity.notApplicable)));
   const criticalRoom = draft.rooms.some(room => room.enabled && room.isCritical && room.entityId.trim());
   return <Stack spacing={1} component="section" aria-label="Vad behöver fyllas i?">
     <Typography variant="h6" component="h3">Vad behöver fyllas i?</Typography>

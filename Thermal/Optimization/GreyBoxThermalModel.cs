@@ -164,7 +164,7 @@ public sealed class GreyBoxThermalModel
         return count == 0 || !double.IsFinite(total) ? double.MaxValue : total / count;
     }
 
-    private (double Mae, int Windows) HorizonMae(IReadOnlyList<ThermalObservation> observations, GreyBoxParameters parameters, int horizonSteps)
+    internal (double Mae, int Windows) HorizonMae(IReadOnlyList<ThermalObservation> observations, GreyBoxParameters parameters, int horizonSteps)
     {
         var total = 0d;
         var count = 0;

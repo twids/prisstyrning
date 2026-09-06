@@ -10,6 +10,26 @@ namespace Prisstyrning.Tests.Thermal;
 public sealed class HomeAssistantHistoryImportTests
 {
     [Fact]
+    public async Task History_ExplicitNoDefrostDoesNotFetchInventedEntityOrOverwriteExistingRows()
+    {
+        await using var db = HistoryDatabase();
+        var from = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        db.ThermalEntityConfigs.Add(new() { UserId = "test", Role = ThermalEntityRoles.DefrostActive, ExpectedUnit = "bool", NotApplicable = true });
+        db.ThermalRoomConfigs.Add(new() { UserId = "test", EntityId = "sensor.room" });
+        db.ThermalTelemetrySamples.Add(new() { UserId = "test", TimestampUtc = from, DefrostActive = null });
+        await db.SaveChangesAsync();
+        var client = new FakeHistoryClient(new Dictionary<string, IReadOnlyList<HomeAssistantState>>
+        { ["sensor.room"] = [State("sensor.room", "21", "°C", from)] });
+        await new HomeAssistantHistoryImportService(db, client).ImportAsync("test", from, from.AddMinutes(5));
+        Assert.Single(client.Requests);
+        Assert.Equal("sensor.room", client.Requests[0].EntityId);
+        var rows = await db.ThermalTelemetrySamples.OrderBy(x => x.TimestampUtc).ToArrayAsync();
+        Assert.Null(rows[0].DefrostActive);
+        Assert.False(rows[1].DefrostActive);
+        Assert.Contains("NotApplicable", rows[1].QualityJson);
+        Assert.Equal(DefrostPolicy.Reason, JsonNode.Parse(rows[1].QualityJson)!["entities"]![ThermalEntityRoles.DefrostActive]!["Reason"]!.GetValue<string>());
+    }
+    [Fact]
     public async Task History_ExternalCopWithHydraulicLoadNeedsNoElectricityMapping()
     {
         await using var db = HistoryDatabase();

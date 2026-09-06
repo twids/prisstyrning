@@ -182,6 +182,7 @@ builder.Services.AddHostedService<EmhassConnectionWorker>();
 builder.Services.AddHostedService<JointPlanCoordinator>();
 builder.Services.AddHostedService<DhwLifecycleWorker>();
 builder.Services.AddTransient<ThermalModelTrainingJob>();
+builder.Services.AddTransient<ShadowLearningJob>();
 builder.Services.AddTransient<CopModelTrainingJob>();
 builder.Services.AddTransient<ThermalRetentionJob>();
 
@@ -302,6 +303,10 @@ recurringJobs.AddOrUpdate<InitialBatchHangfireJob>("initial-batch-job",
 recurringJobs.AddOrUpdate<ThermalModelTrainingJob>("thermal-model-training-job",
     job => job.ExecuteAsync(CancellationToken.None),
     "20 2 * * *",
+    new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm") });
+
+recurringJobs.AddOrUpdate<ShadowLearningJob>("shadow-learning-job",
+    job => job.ExecuteAsync(CancellationToken.None), "27 * * * *",
     new RecurringJobOptions { TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm") });
 
 recurringJobs.AddOrUpdate<CopModelTrainingJob>("cop-model-training-job",

@@ -218,6 +218,14 @@ class ApiClient {
     return this.post('/api/home-assistant/import-history', { fromUtc, toUtc });
   }
 
+  async getShadowLearning(): Promise<T.ShadowLearningVersion[]> {
+    return this.get('/api/thermal/learning');
+  }
+
+  async updateShadowLearning(): Promise<T.ShadowLearningVersion[]> {
+    return this.post('/api/thermal/learning', {});
+  }
+
   async previewHomeAssistantHistory(fromUtc: string, toUtc: string): Promise<T.HomeAssistantHistoryCoverage> {
     return this.post('/api/home-assistant/history-preview', { fromUtc, toUtc });
   }
