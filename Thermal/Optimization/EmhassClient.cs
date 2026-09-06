@@ -59,6 +59,28 @@ public interface IEmhassClient
 public sealed class EmhassHealthState
 {
     private readonly object _gate = new();
+    private bool? _reachable;
+    private DateTimeOffset? _connectionCheckedUtc;
+
+    public void RecordConnection(bool reachable, DateTimeOffset checkedUtc)
+    {
+        lock (_gate)
+        {
+            _reachable = reachable;
+            _connectionCheckedUtc = checkedUtc;
+        }
+    }
+
+    public Domain.EmhassConnectionDto Connection(DateTimeOffset now)
+    {
+        lock (_gate)
+        {
+            var fresh = _connectionCheckedUtc is { } checkedUtc && checkedUtc <= now &&
+                        now - checkedUtc <= TimeSpan.FromMinutes(2);
+            return new(fresh ? _reachable : null, _connectionCheckedUtc);
+        }
+    }
+
     public bool Available { get; private set; }
     public DateTimeOffset? LastSuccessUtc { get; private set; }
     public int? LastDurationMs { get; private set; }

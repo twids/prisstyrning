@@ -32,6 +32,16 @@ function renderStatus() {
 }
 
 describe('ThermalStatusStrip', () => {
+  it('visar en ansluten tjänst i Legacy även utan lyckad optimering', async () => {
+    mocks.status.mockReturnValue({ data: { ...data, mode: 'Legacy', emhassEnabled: true, emhassAvailable: false,
+      emhassConnection: { reachable: true, checkedUtc: new Date(now).toISOString() } }, isError: false });
+    renderStatus();
+    const chip = screen.getByText('EMHASS ansluten').closest('[tabindex]')!;
+    await userEvent.setup().hover(chip);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Ingen optimering körs i Legacy');
+    expect(mocks.mutateAsync).not.toHaveBeenCalled();
+  });
+
   it.each([
     [false, false, 'EMHASS avstängd'],
     [false, true, 'EMHASS avstängd'],

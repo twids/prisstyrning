@@ -196,6 +196,7 @@ public static class ThermalApiEndpoints
                 ? Results.Ok(new { connected = true })
                 : Results.BadRequest(new { connected = false, error = "Home Assistant kunde inte nås med telemetriidentiteten." });
         });
+        app.MapHomeAssistantHistoryPreviewApi();
         homeAssistant.MapPost("/import-history", async (
             HttpContext context,
             HomeAssistantHistoryImportRequest request,
@@ -218,6 +219,32 @@ public static class ThermalApiEndpoints
             }
         });
         return app;
+    }
+
+    // The same read-only handler is hosted in isolated account/CSRF acceptance tests.
+    internal static void MapHomeAssistantHistoryPreviewApi(this IEndpointRouteBuilder app)
+    {
+        app.MapPost("/api/home-assistant/history-preview", async (
+            HttpContext context,
+            HomeAssistantHistoryImportRequest request,
+            HomeAssistantHistoryImportService importer,
+            ThermalInstallationRegistry registry,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                var userId = await registry.ResolveUserAsync(SessionUserId(context), cancellationToken);
+                return Results.Ok(await importer.PreviewAsync(userId, request.FromUtc, request.ToUtc, cancellationToken));
+            }
+            catch (ArgumentException exception)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["interval"] = [exception.Message] });
+            }
+            catch (Exception exception) when (exception is HttpRequestException or InvalidOperationException)
+            {
+                return Results.BadRequest(new { error = "Home Assistant-historiken kunde inte kontrolleras." });
+            }
+        });
     }
 
     // Isolated HTTP tests host these exact account-scoped read routes with no
@@ -406,7 +433,8 @@ public static class ThermalApiEndpoints
             next,
             state?.ManualOverrideUntilUtc > now,
             quality.Reason,
-            emhassOptions.Value.Enabled));
+            emhassOptions.Value.Enabled,
+            emhass.Connection(now)));
     }
 
     private static string UserId(HttpContext context)

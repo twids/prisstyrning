@@ -214,6 +214,10 @@ class ApiClient {
     return this.post('/api/home-assistant/import-history', { fromUtc, toUtc });
   }
 
+  async previewHomeAssistantHistory(fromUtc: string, toUtc: string): Promise<T.HomeAssistantHistoryCoverage> {
+    return this.post('/api/home-assistant/history-preview', { fromUtc, toUtc });
+  }
+
   async grantAdmin(userId: string): Promise<{ granted: boolean; userId: string }> {
     return this.post(`/api/admin/users/${encodeURIComponent(userId)}/grant`);
   }

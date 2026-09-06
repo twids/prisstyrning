@@ -12,7 +12,16 @@ public sealed record HomeAssistantHistoryImportResult(
     int ImportedSamples,
     int ExistingSamplesPreserved,
     int RequestedEntities,
-    IReadOnlyList<string> EntitiesWithoutHistory);
+    IReadOnlyList<string> EntitiesWithoutHistory,
+    HomeAssistantHistoryCoverage? Coverage = null);
+
+public sealed record HomeAssistantHistoryCoverage(
+    DateTimeOffset FromUtc, DateTimeOffset ToUtc, int ExpectedSamples, int ExistingSamples,
+    IReadOnlyList<HomeAssistantHistorySensorCoverage> Sensors);
+
+public sealed record HomeAssistantHistorySensorCoverage(
+    string EntityId, string Purpose, int Valid, int Stale, int Invalid, int Unavailable,
+    string? TimelineIssue = null);
 
 /// <summary>
 /// Imports change-based HA history and resamples it to the same five-minute
@@ -30,11 +39,19 @@ public sealed class HomeAssistantHistoryImportService
         _client = client;
     }
 
-    public async Task<HomeAssistantHistoryImportResult> ImportAsync(
+    public Task<HomeAssistantHistoryImportResult> ImportAsync(
         string userId,
         DateTimeOffset fromUtc,
         DateTimeOffset toUtc,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        ProcessAsync(userId, fromUtc, toUtc, persist: true, cancellationToken);
+
+    public async Task<HomeAssistantHistoryCoverage> PreviewAsync(
+        string userId, DateTimeOffset fromUtc, DateTimeOffset toUtc, CancellationToken cancellationToken = default) =>
+        (await ProcessAsync(userId, fromUtc, toUtc, persist: false, cancellationToken)).Coverage!;
+
+    private async Task<HomeAssistantHistoryImportResult> ProcessAsync(
+        string userId, DateTimeOffset fromUtc, DateTimeOffset toUtc, bool persist, CancellationToken cancellationToken)
     {
         fromUtc = fromUtc.ToUniversalTime();
         toUtc = toUtc.ToUniversalTime();
@@ -81,9 +98,15 @@ public sealed class HomeAssistantHistoryImportService
         var existing = existingTimestamps.ToHashSet();
         var imported = 0;
         var preserved = 0;
+        var coverage = new Dictionary<string, CoverageCounter>();
+        foreach (var config in entityConfigs)
+            coverage[$"entity|{config.Role}|{config.EntityId}"] = new(config.EntityId, config.Role, cursors[config.EntityId].TimelineIssue);
+        foreach (var room in rooms)
+            coverage[$"room|{room.EntityId}"] = new(room.EntityId, $"Rum: {room.Name}", cursors[room.EntityId].TimelineIssue);
 
         for (var bucket = firstBucket; bucket <= lastBucket; bucket = bucket.Add(Step))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var values = new Dictionary<string, SensorAssessment>(StringComparer.OrdinalIgnoreCase);
             var entityQuality = new JsonObject();
             foreach (var config in entityConfigs)
@@ -93,6 +116,7 @@ public sealed class HomeAssistantHistoryImportService
                     new(config.MinimumValid, config.MaximumValid, config.MaximumRatePerHour, SensorFreshnessPolicy.ReportAge(config.MaximumReportAgeMinutes, staleAfter)), bucket, historyImportedAtUtc: importedAt);
                 values[config.Role] = assessed;
                 entityQuality[config.Role] = Quality(assessed);
+                coverage[$"entity|{config.Role}|{config.EntityId}"].Add(assessed);
             }
 
             var roomValues = new Dictionary<string, double>();
@@ -103,6 +127,7 @@ public sealed class HomeAssistantHistoryImportService
                 var assessed = tracker.Assess($"room|{room.EntityId}", raw, SensorValueNormalizer.Normalize(raw, "°C"),
                     new(room.MinimumValidC, room.MaximumValidC, room.MaximumRateCPerHour, SensorFreshnessPolicy.ReportAge(room.MaximumReportAgeMinutes, staleAfter)), bucket, historyImportedAtUtc: importedAt);
                 roomQuality[room.EntityId] = Quality(assessed);
+                coverage[$"room|{room.EntityId}"].Add(assessed);
                 if (assessed.Quality == DataQuality.Valid && !assessed.Excluded && assessed.Value is { } value)
                     roomValues[room.EntityId] = value;
             }
@@ -114,6 +139,8 @@ public sealed class HomeAssistantHistoryImportService
                 preserved++;
                 continue;
             }
+
+            if (!persist) continue;
 
             var sample = new ThermalTelemetrySample
             {
@@ -158,6 +185,11 @@ public sealed class HomeAssistantHistoryImportService
             if (imported % 1000 == 0) await _db.SaveChangesAsync(cancellationToken);
         }
 
+        var report = new HomeAssistantHistoryCoverage(fromUtc, toUtc,
+            (int)((lastBucket - firstBucket).Ticks / Step.Ticks) + 1, preserved,
+            coverage.Values.Select(x => x.Report()).ToArray());
+        if (!persist) return new(0, preserved, entityIds.Length, missing, report);
+
         await _db.SaveChangesAsync(cancellationToken);
         _db.ThermalEvents.Add(new ThermalEvent
         {
@@ -170,7 +202,20 @@ public sealed class HomeAssistantHistoryImportService
         });
         await _db.SaveChangesAsync(cancellationToken);
 
-        return new HomeAssistantHistoryImportResult(imported, preserved, entityIds.Length, missing);
+        return new HomeAssistantHistoryImportResult(imported, preserved, entityIds.Length, missing, report);
+    }
+
+    private sealed class CoverageCounter(string entityId, string purpose, string? timelineIssue)
+    {
+        private int _valid, _stale, _invalid, _unavailable;
+        public void Add(SensorAssessment assessment)
+        {
+            if (assessment.Excluded || assessment.Quality == DataQuality.Invalid) _invalid++;
+            else if (assessment.Quality == DataQuality.Valid) _valid++;
+            else if (assessment.Quality == DataQuality.Stale) _stale++;
+            else _unavailable++;
+        }
+        public HomeAssistantHistorySensorCoverage Report() => new(entityId, purpose, _valid, _stale, _invalid, _unavailable, timelineIssue);
     }
 
     private static JsonObject Quality(SensorAssessment value) => new()
@@ -204,6 +249,7 @@ public sealed class HomeAssistantHistoryImportService
         private int _index = -1;
 
         public bool HasUsableTimeline => _states.Length > 0;
+        public string? TimelineIssue { get; }
 
         public HistoryCursor(IEnumerable<HomeAssistantState> states, DateTimeOffset importedAt)
         {
@@ -213,6 +259,20 @@ public sealed class HomeAssistantHistoryImportService
             _states = materialized.Any(x => x.LastUpdatedUtc is null || x.LastUpdatedUtc == default(DateTimeOffset) ||
                                            x.LastUpdatedUtc > importedAt.AddSeconds(30))
                 ? [] : materialized.OrderBy(Timestamp).ToArray();
+            if (_states.Length == 0 && materialized.Length > 0)
+                TimelineIssue = "Historiken innehåller saknade eller framtida tidsstämplar. Givarens intervall kan inte användas; kontrollera källans historik och klocka.";
+            // Multiple pages may repeat the same record. Identical observations are harmless,
+            // but contradictory records at the same instant have no trustworthy ordering.
+            // Never choose a valid value merely because it happens to be the last entry.
+            if (_states.GroupBy(Timestamp).Any(group => group.Skip(1).Any(state =>
+                    state.State != group.First().State ||
+                    state.LastChangedUtc != group.First().LastChangedUtc ||
+                    state.ReportTimestampMalformed != group.First().ReportTimestampMalformed ||
+                    !JsonNode.DeepEquals(state.Attributes, group.First().Attributes))))
+            {
+                _states = [];
+                TimelineIssue = "Historiken innehåller motstridiga uppgifter vid samma tidsstämpel. Givarens intervall kan inte användas; kontrollera källans historik eller välj ett annat intervall.";
+            }
         }
 
         public HomeAssistantState? At(DateTimeOffset timestampUtc)

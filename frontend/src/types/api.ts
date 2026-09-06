@@ -257,6 +257,7 @@ export interface ThermalStatus {
   dataQualityReason?: string | null;
   emhassAvailable: boolean;
   emhassEnabled?: boolean;
+  emhassConnection?: { reachable: boolean | null; checkedUtc: string | null } | null;
   planCreatedUtc: string | null;
   planAgeMinutes: number | null;
   currentLwtDeviationC: number;
@@ -481,4 +482,13 @@ export interface HomeAssistantHistoryImportResult {
   existingSamplesPreserved: number;
   requestedEntities: number;
   entitiesWithoutHistory: string[];
+  coverage?: HomeAssistantHistoryCoverage | null;
+}
+
+export interface HomeAssistantHistoryCoverage {
+  fromUtc: string;
+  toUtc: string;
+  expectedSamples: number;
+  existingSamples: number;
+  sensors: { entityId: string; purpose: string; valid: number; stale: number; invalid: number; unavailable: number; timelineIssue?: string | null }[];
 }
