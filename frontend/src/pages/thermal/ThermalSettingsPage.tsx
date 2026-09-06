@@ -14,6 +14,7 @@ import HomeAssistantEntityPicker, { type EntityCatalogView } from '../../compone
 import WeatherSourcePicker from '../../components/thermal/WeatherSourcePicker';
 import HomeAssistantLiveStatus from '../../components/thermal/HomeAssistantLiveStatus';
 import SensorLivenessFields, { livenessConfigError } from '../../components/thermal/SensorLivenessFields';
+import { SensorRequirement, SensorRequirementsSummary } from '../../components/thermal/SensorRequirement';
 import { assessEntityChoice } from '../../components/thermal/entityCatalog';
 import { assessHomeAssistantLive } from '../../components/thermal/homeAssistantConnectionStatus';
 import ConfirmDialog from '../../components/ConfirmDialog';
@@ -37,7 +38,7 @@ const roles = [
   ['weather_forecast', 'Väderprognos', 'forecast'],
   ['wind_speed', 'Vindhastighet', 'm/s'],
   ['solar_irradiance', 'Solinstrålning', 'W/m²'],
-  ['cop_realtime', 'Realtids-COP (valfri)', 'COP'],
+  ['cop_realtime', 'Realtids-COP', 'COP'],
   ['cop_average', 'Medel-COP (valfri)', 'COP'],
 ] as const;
 
@@ -191,9 +192,9 @@ export function HomeAssistantConnectionPanel({ ha, connection }: { ha: ReturnTyp
           </Paper>
           <Paper variant="outlined" sx={{ p: 2 }}>
             <Typography fontWeight={750}>P1P2-styrning</Typography>
-            <Typography variant="body2" color="text.secondary" mb={2}>Endast <code>number.set_value</code> till entityn nedan är tillåtet.</Typography>
+            <Typography variant="body2" color="text.secondary" mb={2}>Endast <code>number.set_value</code> eller <code>climate.set_temperature</code> till exakt reglaget nedan är tillåtet. Detta är skrivmålet. Välj den numeriska återkopplingssensorn separat under Entities → P1P2 LWT-avvikelse. Inga anrop ändrar HVAC-läge.</Typography>
             <TextField fullWidth type="password" autoComplete="new-password" label={connection?.controlTokenConfigured ? 'Ny styrtoken (valfritt)' : 'Styrtoken'} value={connectionDraft.controlToken ?? ''} onChange={(event) => setConnectionDraft({ ...connectionDraft, controlToken: event.target.value || null, clearControlToken: false })} helperText={connection?.controlTokenConfigured ? 'En styrtoken är sparad. Lämna tomt för att behålla den.' : 'Behövs först när styrning ska aktiveras.'} />
-            <TextField fullWidth sx={{ mt: 2 }} label="Tillåten LWT-avvikelse-entity" placeholder="number.daikin_deviation_heating" value={connectionDraft.heatingDeviationEntityId} onChange={(event) => setConnectionDraft({ ...connectionDraft, heatingDeviationEntityId: event.target.value })} />
+            <TextField fullWidth sx={{ mt: 2 }} label="Tillåten LWT-avvikelse-entity" placeholder="climate.bridge0_lwt_deviation_heating" helperText="Skrivreglage: number.* eller climate.* för avvikelsen, aldrig ett absolut LWT-börvärde eller rumstermostat. Climate-reglagets aktuella gränser och steg kontrolleras före skrivning." value={connectionDraft.heatingDeviationEntityId} onChange={(event) => setConnectionDraft({ ...connectionDraft, heatingDeviationEntityId: event.target.value })} />
             <FormControlLabel sx={{ mt: 1 }} control={<Switch checked={connectionDraft.controlEnabled} onChange={(event) => setConnectionDraft({ ...connectionDraft, controlEnabled: event.target.checked })} />} label="Tillåt styrklienten" />
             {connection?.controlTokenConfigured && <FormControlLabel control={<Switch checked={connectionDraft.clearControlToken} onChange={(event) => setConnectionDraft({ ...connectionDraft, clearControlToken: event.target.checked, controlEnabled: event.target.checked ? false : connectionDraft.controlEnabled, controlToken: null })} />} label="Ta bort sparad styrtoken vid nästa sparande" />}
           </Paper>
@@ -258,7 +259,7 @@ export function validateHomeAssistantConnection(draft: UpdateHomeAssistantConnec
   if (!saved?.telemetryTokenConfigured && !draft.telemetryToken?.trim()) errors.push('En separat telemetritoken krävs första gången.');
   const controlTokenAvailable = !draft.clearControlToken && (Boolean(draft.controlToken?.trim()) || saved?.controlTokenConfigured === true);
   if (draft.controlEnabled && !controlTokenAvailable) errors.push('Aktiv styrklient kräver en separat styrtoken.');
-  if (draft.controlEnabled && !/^number\.[a-z0-9_.]+$/.test(draft.heatingDeviationEntityId.trim())) errors.push('Styrning kräver ett giltigt number-entity-ID för LWT-avvikelsen.');
+  if ((draft.controlEnabled || draft.heatingDeviationEntityId.trim()) && (!/^(number|climate)\.[a-z0-9_]+$/.test(draft.heatingDeviationEntityId.trim()) || draft.heatingDeviationEntityId.trim().length > 255)) errors.push('Välj ett giltigt number- eller climate-entity-ID för LWT-reglaget.');
   return [...new Set(errors)];
 }
 
@@ -278,15 +279,17 @@ export function EntitiesTab({ draft, setDraft, catalog }: { draft: ThermalConfig
     setDraft({ ...draft, entities: next });
   };
   return <Stack spacing={2}>
-    <Box><Typography variant="h5">Entity-mappning</Typography><Typography color="text.secondary">Välj datakälla för varje roll. Senast mottaget värde och preliminär kontroll visas även efter valet.</Typography></Box>
+    <Box><Typography variant="h5" component="h2">Entity-mappning</Typography><Typography color="text.secondary">Välj datakälla för varje roll. Senast mottaget värde och preliminär kontroll visas även efter valet.</Typography></Box>
+    <SensorRequirementsSummary draft={draft} labels={roles} />
+    <SensorRequirement role="weather_forecast" selected={draft.entities.some(entity => entity.role === 'weather_forecast' && entity.enabled && Boolean(entity.entityId.trim()))} />
     <WeatherSourcePicker key={draft.entities.find((entity) => entity.role === 'weather_forecast')?.entityId ?? ''} catalog={catalog} entityId={draft.entities.find((entity) => entity.role === 'weather_forecast')?.entityId ?? ''} onChange={(selected) => updateRole('weather_forecast', selected, 'forecast')} />
     {roles.filter(([role]) => role !== 'weather_forecast').map(([role, label, unit]) => {
       const mapping = draft.entities.find((entity) => entity.role === role);
       return <Box key={role} sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0,1fr)', md: 'minmax(180px,.45fr) minmax(0,1fr)' }, gap: 2, alignItems: 'start', py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
-        <Box><Typography fontWeight={700}>{label}</Typography><Typography variant="caption" color="text.secondary">Förväntad enhet {unit}</Typography></Box>
+        <Stack spacing={1}><Typography fontWeight={700}>{label}</Typography><Typography variant="caption" color="text.secondary">Förväntad enhet {unit}</Typography><SensorRequirement role={role} selected={Boolean(mapping?.enabled && mapping.entityId.trim())} /></Stack>
         <Stack spacing={2}>
           <HomeAssistantEntityPicker catalog={catalog} entityId={mapping?.entityId ?? ''} expectedUnit={unit} rules={{ maximumReportAgeMinutes: mapping?.maximumReportAgeMinutes ?? (role === 'spot_price' ? 15 : undefined), minimum: mapping?.minimumValid, maximum: mapping?.maximumValid }} label={`Välj ${label.toLowerCase()}`} onChange={(selected) => updateRole(role, selected, unit)} />
-          {role === 'cop_realtime' && <Typography variant="body2">Valfri COP från exempelvis P1P2MQTT. Kräver inte separat fasmätning när flöde, LWT och RWT ger giltigt belastningsunderlag. Elförbrukning som uppskattas från COP är inte uppmätt. Används under verifierad husvärmedrift; vid vila visas det senaste värdet som historiskt. Om du väljer en entity används inte egen COP-beräkning som dold reserv.</Typography>}
+          {role === 'cop_realtime' && <Typography variant="body2">Extern COP från exempelvis P1P2MQTT. Kräver inte separat fasmätning för COP-träning när flöde, LWT och RWT ger giltigt belastningsunderlag. Elförbrukning som uppskattas från COP är inte uppmätt. Används under verifierad husvärmedrift; vid vila visas det senaste värdet som historiskt. Om du väljer en entity används inte egen COP-beräkning som dold reserv.</Typography>}
           {role === 'cop_average' && <Typography variant="body2">Endast uppföljning. Medel-COP ersätter aldrig realtids-COP i modellen. Välj Okänd om integrationens medelperiod inte är verifierad.</Typography>}
           {mapping && role === 'cop_average' && <TextField select label="Medelperiod för COP" value={mapping.averagingPeriod ?? 'Unknown'} SelectProps={{ native: true }} onChange={event => setDraft({ ...draft, entities: draft.entities.map(entity => entity.role === role ? { ...entity, averagingPeriod: event.target.value } : entity) })}>
             {Object.entries({ Unknown: 'Okänd', Day: 'Dygn', Week: 'Vecka', Month: 'Månad', Year: 'År', Lifetime: 'Livstid', SinceReset: 'Sedan nollställning' }).map(([value, name]) => <option key={value} value={value}>{name}</option>)}

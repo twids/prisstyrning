@@ -19,7 +19,7 @@ function Harness() {
 describe('COP-inställningar', () => {
   it('separerar realtid och medel och kan spara val av period i utkastet', async () => {
     render(<Harness />);
-    expect(screen.getByText('Realtids-COP (valfri)')).toBeInTheDocument();
+    expect(screen.getByText('Realtids-COP')).toBeInTheDocument();
     expect(screen.getByText('Medel-COP (valfri)')).toBeInTheDocument();
     await userEvent.setup().selectOptions(screen.getByLabelText('Medelperiod för COP'), 'Lifetime');
     expect(screen.getByLabelText('Vald COP-medelperiod')).toHaveTextContent('Lifetime');
@@ -29,7 +29,7 @@ describe('COP-inställningar', () => {
   });
   it('har tillgängliga val och lägger rapportinställningar under Avancerat', async () => {
     const { container } = render(<Harness />);
-    expect(screen.getByRole('button', { name: 'Avancerat: rapportering för realtids-cop (valfri)' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('button', { name: 'Avancerat: rapportering för realtids-cop' })).toHaveAttribute('aria-expanded', 'false');
     expect((await axe(container, { rules: { 'color-contrast': { enabled: false } } })).violations).toEqual([]);
   });
 });

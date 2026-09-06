@@ -93,12 +93,13 @@ public sealed class LwtControlWorker : BackgroundService
         var heatingDeviationEntityId = haConnection?.HeatingDeviationEntityId ?? string.Empty;
         var controlTelemetry = ThermalControlTelemetry.Assess(telemetry, rooms, entities, site, now);
         var writeFailureLatched = state.FallbackReason.StartsWith("P1P2-skrivningen", StringComparison.Ordinal);
+        _cache.TryGet(userId, heatingDeviationEntityId, out var p1p2State);
+        var deviationStep = LwtControlBinding.Step(heatingDeviationEntityId, p1p2State, now, site?.ActiveDeviationLimitC ?? 1);
+        var feedbackId = LwtControlBinding.FeedbackEntity(heatingDeviationEntityId, entities);
         var p1p2Healthy = !writeFailureLatched &&
                           haConnection?.ControlEnabled == true &&
-                          _cache.TryGet(userId, heatingDeviationEntityId, out var p1p2State) &&
-                          p1p2State?.LastUpdatedUtc is { } p1p2Updated &&
-                          now - p1p2Updated <= TimeSpan.FromMinutes(10) &&
-                          !p1p2State.State.Equals("unavailable", StringComparison.OrdinalIgnoreCase);
+                          deviationStep is not null && feedbackId is not null &&
+                          _cache.TryGet(userId, feedbackId, out var feedback) && LwtControlBinding.NumericFeedback(feedback, now);
 
         var input = new LwtRegulatorInput(
             mode,
@@ -118,7 +119,8 @@ public sealed class LwtControlWorker : BackgroundService
             state.LastDeviationWriteUtc,
             state.PiIntegral,
             site?.ActiveDeviationLimitC ?? 1,
-            invalidPlanReason ?? controlTelemetry.InvalidReason);
+            invalidPlanReason ?? controlTelemetry.InvalidReason,
+            DeviationStepC: deviationStep ?? .5);
         var decision = _regulator.Evaluate(input);
         if (decision.ShouldWrite && !decision.IsFallback && validatedPlan is not null)
         {

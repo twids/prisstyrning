@@ -22,7 +22,8 @@ public sealed record LwtRegulatorInput(
     double DeviationLimitC,
     string? SafetyInvalidReason = null,
     double Kp = 0.8,
-    double KiPerHour = 0.08);
+    double KiPerHour = 0.08,
+    double DeviationStepC = 0.5);
 
 public sealed record LwtRegulatorDecision(
     bool ShouldWrite,
@@ -55,9 +56,9 @@ public sealed class LwtRegulator
         var integral = Math.Clamp(input.Integral - input.RepresentativeTemperatureErrorC * elapsedHours, -10, 10);
         var correction = -input.Kp * input.RepresentativeTemperatureErrorC + input.KiPerHour * integral;
         if (input.CriticalRoomBelowMinimum) correction = Math.Max(correction, 0.5);
-        var limit = Math.Clamp(input.DeviationLimitC, 0, 3);
+        var limit = Math.Floor(Math.Clamp(input.DeviationLimitC, 0, 3) / input.DeviationStepC) * input.DeviationStepC;
         var requested = Math.Clamp(input.PlannedDeviationC + correction, -limit, limit);
-        requested = Math.Round(requested * 2, MidpointRounding.AwayFromZero) / 2;
+        requested = Math.Clamp(Math.Round(requested / input.DeviationStepC, MidpointRounding.AwayFromZero) * input.DeviationStepC, -limit, limit);
 
         var rateLimited = input.LastWriteUtc is { } written && input.NowUtc - written < TimeSpan.FromMinutes(30);
         var materialChange = Math.Abs(requested - input.CurrentDeviationC) >= 0.5;
@@ -72,7 +73,8 @@ public sealed class LwtRegulator
     private static string? FallbackReason(LwtRegulatorInput input)
     {
         if (input.Mode is not (ControlMode.LwtActive or ControlMode.FullActive)) return "LWT-styrning är inte aktiv.";
-        if (!double.IsFinite(input.PlannedDeviationC) || !double.IsFinite(input.RepresentativeTemperatureErrorC) ||
+        if (!double.IsFinite(input.DeviationStepC) || input.DeviationStepC is < .5 or > 3 ||
+            !double.IsFinite(input.PlannedDeviationC) || !double.IsFinite(input.RepresentativeTemperatureErrorC) ||
             !double.IsFinite(input.CurrentDeviationC) || Math.Abs(input.CurrentDeviationC) > 3.001 ||
             !double.IsFinite(input.Integral) || !double.IsFinite(input.DeviationLimitC) || input.DeviationLimitC is < 0 or > 3 ||
             !double.IsFinite(input.Kp) || input.Kp is < 0 or > 10 ||

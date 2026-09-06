@@ -9,8 +9,6 @@ namespace Prisstyrning.Thermal.HomeAssistant;
 
 public sealed class HomeAssistantControlClient : IHomeAssistantControlClient
 {
-    private const string AllowedDomain = "number";
-    private const string AllowedService = "set_value";
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly HomeAssistantConnectionService _connections;
     private readonly IHomeAssistantStateCache _cache;
@@ -34,6 +32,7 @@ public sealed class HomeAssistantControlClient : IHomeAssistantControlClient
     public async Task SetHeatingDeviationAsync(string userId, double deviationC, CancellationToken cancellationToken = default)
     {
         if (!AdminService.IsValidUserId(userId)) throw new ArgumentException("Invalid thermal installation user id.", nameof(userId));
+        if (!double.IsFinite(deviationC)) throw new ArgumentOutOfRangeException(nameof(deviationC));
         var site = await _db.ThermalSiteConfigs.AsNoTracking()
             .SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
         var mode = ThermalEnumParser.ControlModeOrLegacy(site?.ControlMode);
@@ -47,7 +46,9 @@ public sealed class HomeAssistantControlClient : IHomeAssistantControlClient
             throw new InvalidOperationException("LWT writes are disabled by the deployment kill switch.");
         }
 
-        var configuredLimit = Math.Clamp(site?.ActiveDeviationLimitC ?? 1, 0, 3);
+        if (site is null || !double.IsFinite(site.ActiveDeviationLimitC) || site.ActiveDeviationLimitC is < 0 or > 3)
+            throw new InvalidOperationException("LWT-säkerhetsgränsen är ogiltig.");
+        var configuredLimit = site.ActiveDeviationLimitC;
         if (Math.Abs(deviationC) > configuredLimit)
         {
             throw new ArgumentOutOfRangeException(nameof(deviationC), $"Deviation exceeds the configured ±{configuredLimit:0.0} °C limit.");
@@ -57,7 +58,7 @@ public sealed class HomeAssistantControlClient : IHomeAssistantControlClient
         var entityId = connection?.HeatingDeviationEntityId ?? string.Empty;
         var token = connection is { ControlEnabled: true } ? connection.ControlToken : null;
         var baseUri = connection?.BaseUri;
-        if (!IsAllowedNumberEntity(entityId) ||
+        if (!LwtControlBinding.IsActuator(entityId) ||
             string.IsNullOrWhiteSpace(token) ||
             baseUri is null)
         {
@@ -66,42 +67,59 @@ public sealed class HomeAssistantControlClient : IHomeAssistantControlClient
 
         var client = _httpClientFactory.CreateClient("HomeAssistantControl");
         var sentAtUtc = DateTimeOffset.UtcNow;
-        var alreadyAtRequestedValue = _cache.TryGet(userId, entityId, out var beforeWrite) &&
+        var mappings = await _db.ThermalEntityConfigs.AsNoTracking().Where(x => x.UserId == userId).ToListAsync(cancellationToken);
+        var feedbackId = LwtControlBinding.FeedbackEntity(entityId, mappings)
+            ?? throw new InvalidOperationException("P1P2 kräver en separat numerisk återkoppling i °C under Entities.");
+        var climate = LwtControlBinding.IsEntity(entityId, "climate");
+        if (climate)
+        {
+            // Loss of feedback must stop optimization, not the attempt to restore the base curve.
+            // An exact zero still requires a valid actuator and fresh feedback AFTER the command
+            // before it can be reported as accepted; HTTP success alone is never sufficient.
+            if (deviationC != 0 && (!_cache.TryGet(userId, feedbackId, out var numericFeedback) || !LwtControlBinding.NumericFeedback(numericFeedback, sentAtUtc)))
+                throw new InvalidOperationException("LWT-återkopplingen saknar ett aktuellt numeriskt värde i °C.");
+            _cache.TryGet(userId, entityId, out var actuator);
+            var step = LwtControlBinding.Step(entityId, actuator, sentAtUtc, configuredLimit);
+            if (step is null || Math.Abs(deviationC / step.Value - Math.Round(deviationC / step.Value)) > 1e-6)
+                throw new InvalidOperationException("LWT-reglagets aktuella intervall eller temperatursteg tillåter inte värdet.");
+        }
+        var alreadyAtRequestedValue = _cache.TryGet(userId, feedbackId, out var beforeWrite) &&
                                       IsRecentMatchingState(beforeWrite, deviationC, sentAtUtc);
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
-            new Uri(baseUri, $"/api/services/{AllowedDomain}/{AllowedService}"));
+            new Uri(baseUri, climate ? "/api/services/climate/set_temperature" : "/api/services/number/set_value"));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        request.Content = JsonContent.Create(new { entity_id = entityId, value = Math.Round(deviationC, 1) });
+        request.Content = climate
+            ? JsonContent.Create(new { entity_id = entityId, temperature = deviationC })
+            : JsonContent.Create(new { entity_id = entityId, value = Math.Round(deviationC, 1) });
         using var response = await client.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
         if (alreadyAtRequestedValue) return;
 
         for (var attempt = 0; attempt < 20; attempt++)
         {
-            if (_cache.TryGet(userId, entityId, out var observed) && IsVerifiedState(observed, deviationC, sentAtUtc)) return;
+            if (_cache.TryGet(userId, feedbackId, out var observed) && IsVerifiedState(observed, deviationC, sentAtUtc)) return;
             await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken);
         }
         throw new InvalidOperationException("Home Assistant accepterade anropet men P1P2-värdet kunde inte verifieras inom tio sekunder.");
     }
 
     internal static bool IsAllowedNumberEntity(string? entityId) =>
-        !string.IsNullOrWhiteSpace(entityId) &&
-        entityId.StartsWith("number.", StringComparison.Ordinal) &&
-        entityId.Length <= 255 &&
-        entityId.All(character => char.IsLetterOrDigit(character) || character is '_' or '.');
+        LwtControlBinding.IsEntity(entityId, "number");
 
     internal static bool IsVerifiedState(HomeAssistantState? state, double requestedValue, DateTimeOffset sentAtUtc) =>
         state is not null &&
         state.ReceivedAtUtc >= sentAtUtc &&
+        LwtControlBinding.Recent(state, sentAtUtc.AddSeconds(10)) && state.Unit == "°C" &&
         IsMatchingValue(state.State, requestedValue);
 
     private static bool IsRecentMatchingState(HomeAssistantState? state, double requestedValue, DateTimeOffset nowUtc) =>
         state is not null &&
-        nowUtc - state.ReceivedAtUtc <= TimeSpan.FromMinutes(10) &&
+        LwtControlBinding.Recent(state, nowUtc) && state.Unit == "°C" &&
         IsMatchingValue(state.State, requestedValue);
 
     private static bool IsMatchingValue(string value, double requestedValue) =>
         double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var observedValue) &&
+        double.IsFinite(observedValue) && double.IsFinite(requestedValue) &&
         Math.Abs(observedValue - requestedValue) <= 0.11;
 }
