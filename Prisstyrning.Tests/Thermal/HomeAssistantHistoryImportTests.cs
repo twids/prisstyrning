@@ -10,6 +10,33 @@ namespace Prisstyrning.Tests.Thermal;
 public sealed class HomeAssistantHistoryImportTests
 {
     [Fact]
+    public async Task History_ExternalCopWithHydraulicLoadNeedsNoElectricityMapping()
+    {
+        await using var db = HistoryDatabase();
+        var from = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        db.ThermalSiteConfigs.Add(new ThermalSiteConfig { UserId = "test" });
+        var readings = new[] { (ThermalEntityRoles.CopRealtime, "4.8", "COP"),
+            (ThermalEntityRoles.DhwActive, "off", "bool"), (ThermalEntityRoles.DefrostActive, "off", "bool"),
+            (ThermalEntityRoles.BackupHeaterActive, "off", "bool"), (ThermalEntityRoles.Flow, "12", "l/min"),
+            (ThermalEntityRoles.LeavingWaterTemperature, "35", "°C"), (ThermalEntityRoles.ReturnWaterTemperature, "30", "°C") };
+        db.ThermalEntityConfigs.AddRange(readings.Select(x => new ThermalEntityConfig { UserId = "test", Role = x.Item1,
+            EntityId = "sensor." + x.Item1, ExpectedUnit = x.Item3 }));
+        await db.SaveChangesAsync();
+        var history = readings.ToDictionary(x => "sensor." + x.Item1,
+            x => (IReadOnlyList<HomeAssistantState>)[State("sensor." + x.Item1, x.Item2, x.Item3, from)]);
+        history["sensor." + ThermalEntityRoles.Flow] = [State("sensor." + ThermalEntityRoles.Flow, "12", "l/min", from),
+            State("sensor." + ThermalEntityRoles.Flow, "0", "l/min", from.AddMinutes(5))];
+        await new HomeAssistantHistoryImportService(db, new FakeHistoryClient(history)).ImportAsync("test", from, from.AddMinutes(5));
+        var samples = await db.ThermalTelemetrySamples.OrderBy(x => x.TimestampUtc).ToArrayAsync();
+        Assert.Equal(4.8, samples[0].Cop);
+        Assert.Equal(4.186, samples[0].HeatOutputKw!.Value, 6);
+        Assert.Null(samples[0].HeatPumpPowerKw);
+        Assert.Null(samples[1].Cop);
+        Assert.False((await db.ThermalSiteConfigs.SingleAsync()).HeatPumpPowerSignVerified);
+        Assert.Empty(await db.ThermalControlCommands.ToListAsync());
+    }
+
+    [Fact]
     public async Task History_ExternalCopUsesHistoricalOperatingPhase_NotAverageOrTodaysState()
     {
         await using var db = HistoryDatabase();

@@ -11,13 +11,24 @@ public static class ThermalCopSource
     public static bool IsExternal(IEnumerable<ThermalEntityConfig> entities) => entities.Any(x =>
         x.Enabled && x.Role.Equals(ThermalEntityRoles.CopRealtime, StringComparison.OrdinalIgnoreCase));
 
+    public static bool HasHydraulicSource(IEnumerable<ThermalEntityConfig> entities) =>
+        new[] { ThermalEntityRoles.Flow, ThermalEntityRoles.LeavingWaterTemperature, ThermalEntityRoles.ReturnWaterTemperature }
+            .All(role => entities.Any(x => x.Enabled && x.Role.Equals(role, StringComparison.OrdinalIgnoreCase)));
+
+    public static bool HasCostSource(IEnumerable<ThermalEntityConfig> entities, bool powerVerified) =>
+        powerVerified || IsExternal(entities) && HasHydraulicSource(entities);
+
     public static double? Select(ThermalTelemetrySample sample, IEnumerable<ThermalEntityConfig> entities,
         IReadOnlyDictionary<string, SensorAssessment> values, bool powerVerified)
     {
         if (IsExternal(entities))
         {
             // Never replace an unavailable selected entity with our own formula or a mean.
-            if (!powerVerified || sample.HeatPumpPowerKw is not > .1 || sample.DhwActive != false ||
+            var hasLoad = powerVerified ? sample.HeatPumpPowerKw is > .1 :
+                sample.HeatOutputKw is > .5 && double.IsFinite(sample.HeatOutputKw.Value) &&
+                new[] { ThermalEntityRoles.Flow, ThermalEntityRoles.LeavingWaterTemperature, ThermalEntityRoles.ReturnWaterTemperature }
+                    .All(role => values.TryGetValue(role, out var sensor) && !sensor.Excluded && sensor.Quality == DataQuality.Valid);
+            if (!hasLoad || sample.DhwActive != false ||
                 sample.BackupHeaterActive != false || sample.DefrostActive != false ||
                 !values.TryGetValue(ThermalEntityRoles.CopRealtime, out var realtime) ||
                 realtime.Excluded || realtime.Quality != DataQuality.Valid ||

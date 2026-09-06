@@ -22,6 +22,27 @@ function picker(view = catalog, entityId = temperature.entityId, onChange = vi.f
 }
 
 describe('Home Assistant-väljare', () => {
+  it('döljer fel enhet som standard men låter användaren visa den utan att ändra valet', async () => {
+    const change = vi.fn();
+    const user = userEvent.setup();
+    render(picker(catalog, '', change));
+    await user.click(screen.getByRole('combobox'));
+    expect(screen.getByRole('option', { name: /Vardagsrum/ })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /Värmepump/ })).not.toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByRole('checkbox', { name: /Visa även olämpliga/ }));
+    await user.click(screen.getByRole('combobox'));
+    expect(screen.getByRole('option', { name: /Värmepump/ })).toHaveTextContent('Ogiltig');
+    expect(change).not.toHaveBeenCalled();
+  });
+  it('behåller otillgängliga alternativ och redan sparat felaktigt val', async () => {
+    const user = userEvent.setup();
+    render(picker({ ...catalog, entities: [power, { ...temperature, state: 'unavailable', quality: 'Unavailable', compatibleUnits: [] }] }, power.entityId));
+    await user.click(screen.getByRole('combobox'));
+    await user.clear(screen.getByRole('combobox'));
+    expect(screen.getByRole('option', { name: /Värmepump/ })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Vardagsrum/ })).toBeInTheDocument();
+  });
   it('skiljer gammal ändring från färsk rapportering i den tillgängliga statusen', () => {
     render(picker({ ...catalog, entities: [{ ...temperature, lastUpdatedUtc: iso(-240), lastReportedUtc: iso(-1),
       qualityReason: 'Oförändrat värde med aktuell rapportering från HA-integrationen.' }] }));

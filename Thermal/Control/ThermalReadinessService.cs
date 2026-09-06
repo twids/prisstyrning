@@ -143,7 +143,7 @@ public sealed class ThermalReadinessService
             var modelEvidence = ThermalModelEvidence.AssessCurrent(activeModel, activeModelSource, now);
             checks.Add(Check("model", "En validerad 2R2C-modell är aktiv", modelEvidence.Passed, modelEvidence.Reason));
             var copEvidence = ThermalModelEvidence.AssessCurrent(activeCopModel, activeCopModelSource, now);
-            checks.Add(Check("power-sign", "Shelly-tecken, CT-riktning och fasmappning är verifierade", site?.HeatPumpPowerSignVerified == true, "Verifiera mätningen under känd kompressordrift före kostnadsoptimering."));
+            checks.Add(Check("power-sign", "Kostnadsunderlag: separat effektmätning eller extern COP med flöde och temperaturer", ThermalCopSource.HasCostSource(entities, site?.HeatPumpPowerSignVerified == true), "Välj extern realtids-COP med flöde, LWT och RWT, eller verifiera den separata effektmätningen. Giltiga mätningar och validerade modeller kontrolleras separat. COP-baserad elförbrukning är uppskattad, inte uppmätt."));
             checks.Add(Check("cop-model", "En separat validerad COP-modell är aktiv", copEvidence.Passed, copEvidence.Reason));
             checks.Add(Check(
                 "p1p2-control",

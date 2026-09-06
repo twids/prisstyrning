@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json.Nodes;
+using Prisstyrning.Thermal.Domain;
 using Prisstyrning.Data;
 using Prisstyrning.Data.Entities;
 using Prisstyrning.Thermal.Jobs;
@@ -8,6 +10,45 @@ namespace Prisstyrning.Tests.Thermal;
 
 public sealed class ThermalModelTrainingJobTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExternalCop_TrainsAndRevalidatesWithoutRequiringPhaseVerification(bool verified)
+    {
+        await using var db = Database();
+        Configure(db, verified);
+        if (!verified) db.ThermalEntityConfigs.RemoveRange(db.ThermalEntityConfigs.Local.Where(x => x.Role == ThermalEntityRoles.HeatPumpPower).ToArray());
+        db.ThermalEntityConfigs.Add(new ThermalEntityConfig { UserId = "account-a", Role = ThermalEntityRoles.CopRealtime, EntityId = "sensor.cop", ExpectedUnit = "COP" });
+        var end = DateTimeOffset.UtcNow.AddMinutes(-5);
+        db.ThermalTelemetrySamples.AddRange(Enumerable.Range(0, 600).Select(index =>
+        {
+            var sample = ThermalModelTrainingDataTests.ValidSample(end.AddMinutes((index - 599) * 5));
+            sample.Cop = 4;
+            if (!verified) sample.HeatPumpPowerKw = null;
+            var quality = JsonNode.Parse(sample.QualityJson)!.AsObject();
+            quality["copSource"] = "HomeAssistantRealtime";
+            quality["copEntityId"] = "sensor.cop";
+            quality["entities"]![ThermalEntityRoles.CopRealtime] = JsonNode.Parse("{\"quality\":0,\"excluded\":false,\"value\":4}");
+            sample.QualityJson = quality.ToJsonString();
+            return sample;
+        }));
+        await db.SaveChangesAsync();
+
+        await new CopModelTrainingJob(db, new CopModel(), ThermalCurrentModelTestData.Build).ExecuteAsync();
+
+        var model = await db.ThermalModelVersions.SingleAsync();
+        Assert.True(model.IsActive);
+        var source = ThermalModelProvenance.Read(model);
+        Assert.NotNull(source);
+        Assert.Equal(verified ? ThermalModelProvenance.ExternalCopSelectionVersion : ThermalModelProvenance.HydraulicCopSelectionVersion, source.SelectionVersion);
+        var validation = await ThermalModelProvenance.VerifyCurrentAsync(db, "account-a", [model],
+            await db.ThermalRoomConfigs.ToArrayAsync(), await db.ThermalEntityConfigs.ToArrayAsync(), verified,
+            DateTimeOffset.UtcNow, CancellationToken.None, ThermalCurrentModelTestData.Build);
+        Assert.True(validation[model.Id].Passed);
+        Assert.Equal(verified, (await db.ThermalSiteConfigs.SingleAsync()).HeatPumpPowerSignVerified);
+        await AssertLegacyAsync(db);
+    }
+
     [Fact]
     public async Task ThermalTraining_ValidDailyDhwDataProducesAuditableModelWithoutChangingLegacy()
     {

@@ -14,8 +14,10 @@ namespace Prisstyrning.Tests.Thermal;
 
 public sealed class HomeAssistantCollectorValidationTests
 {
-    [Fact]
-    public async Task Collect_ExternalRealtimeAndAverageRemainSeparate_WithoutLegacyWrites()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Collect_ExternalRealtimeAndAverageRemainSeparate_WithoutLegacyWrites(bool meterVerified)
     {
         await using var fixture = await Fixture.CreateAsync();
         var extras = new[] { (ThermalEntityRoles.CopRealtime, "4.8", "COP"), (ThermalEntityRoles.CopAverage, "3.5", "COP"),
@@ -23,7 +25,8 @@ public sealed class HomeAssistantCollectorValidationTests
         using (var scope = fixture.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
-            (await db.ThermalSiteConfigs.SingleAsync()).HeatPumpPowerSignVerified = true;
+            (await db.ThermalSiteConfigs.SingleAsync()).HeatPumpPowerSignVerified = meterVerified;
+            if (!meterVerified) db.ThermalEntityConfigs.Remove(await db.ThermalEntityConfigs.SingleAsync(x => x.Role == ThermalEntityRoles.HeatPumpPower));
             db.ThermalEntityConfigs.AddRange(extras.Select(x => new ThermalEntityConfig { UserId = "account-a", Role = x.Item1,
                 EntityId = "sensor." + x.Item1, ExpectedUnit = x.Item3, AveragingPeriod = x.Item1 == ThermalEntityRoles.CopAverage ? "Lifetime" : null }));
             await db.SaveChangesAsync();
@@ -37,6 +40,7 @@ public sealed class HomeAssistantCollectorValidationTests
         await fixture.CollectAsync(0);
         var sample = await fixture.LatestAsync();
         Assert.Equal(4.8, sample.Cop);
+        if (!meterVerified) Assert.Null(sample.HeatPumpPowerKw);
         var quality = JsonNode.Parse(sample.QualityJson)!;
         Assert.Equal("HomeAssistantRealtime", quality["copSource"]!.GetValue<string>());
         Assert.Equal("Lifetime", quality["copAveragePeriod"]!.GetValue<string>());

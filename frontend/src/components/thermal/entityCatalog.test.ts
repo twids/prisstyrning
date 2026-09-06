@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { HomeAssistantEntity } from '../../types/api';
-import { assessEntityChoice } from './entityCatalog';
+import { assessEntityChoice, entityRelevance } from './entityCatalog';
 
 const now = Date.parse('2026-08-31T04:00:00Z');
 const iso = (offsetSeconds: number) => new Date(now + offsetSeconds * 1000).toISOString();
@@ -11,6 +11,19 @@ const entity: HomeAssistantEntity = {
 };
 
 describe('preliminär entity-kontroll', () => {
+  it('filtrerar på konverterbar enhet, inte råenhet eller rapportålder', () => {
+    expect(entityRelevance({ ...entity, unit: '°F', quality: 'Stale' }, '°C')).toBe('Compatible');
+    expect(entityRelevance({ ...entity, unit: 'km/h', compatibleUnits: ['m/s'] }, 'm/s')).toBe('Compatible');
+    expect(entityRelevance({ ...entity, unit: 'kWh', compatibleUnits: ['kWh'] }, 'kW')).toBe('Unsuitable');
+    expect(entityRelevance({ ...entity, state: '0' }, 'bool')).toBe('Unsuitable');
+  });
+  it('bevarar osäkra givare och bedömer gränser först efter omräkning', () => {
+    expect(entityRelevance({ ...entity, state: 'unavailable', compatibleUnits: [] }, '°C')).toBe('Uncertain');
+    expect(entityRelevance({ ...entity, quality: 'Invalid', compatibleUnits: [] }, '°C')).toBe('Uncertain');
+    expect(entityRelevance({ ...entity, compatibleUnits: undefined }, '°C')).toBe('Uncertain');
+    expect(entityRelevance({ ...entity, unit: '°F', normalizedValues: { '°C': 90 } }, '°C', { minimum: 5, maximum: 35 })).toBe('Unsuitable');
+    expect(entityRelevance({ ...entity, unit: '°F', normalizedValues: { '°C': 20 } }, '°C', { minimum: 5, maximum: 35 })).toBe('Compatible');
+  });
   it('tillåter angiven rapportperiod men aldrig gammal HA-avläsning', () => {
     const slow = { ...entity, lastUpdatedUtc: iso(-2400), quality: 'Stale' as const, validUntilUtc: iso(-1800) };
     expect(assessEntityChoice(slow, '°C', now, undefined, { maximumReportAgeMinutes: 60 }).quality).toBe('Valid');

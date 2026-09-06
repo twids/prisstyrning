@@ -42,6 +42,10 @@ test('sensorval bevarar mappningar, förklarar kvalitet och återhämtar läsfel
   await expect(page.getByText('Osparade ändringar')).toHaveCount(0);
 
   await outside.fill('Värmepump');
+  await expect(page.getByRole('option', { name: /Värmepump effekt/ })).toHaveCount(0);
+  await outside.press('Escape');
+  await outsideGroup.getByRole('checkbox', { name: /Visa även olämpliga/ }).check();
+  await outside.click();
   await page.getByRole('option', { name: /Värmepump effekt/ }).click();
   await expect(outsideGroup.getByRole('status')).toContainText('Värdet kan inte läsas som °C');
   await expect(outside).toHaveAttribute('aria-invalid', 'true');

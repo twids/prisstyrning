@@ -16,6 +16,27 @@ namespace Prisstyrning.Tests.Thermal;
 
 public sealed class JointPlanModelConsumptionTests
 {
+    [Fact]
+    public async Task Planning_ExternalCopRequiresModelsInsteadOfUnrelatedMeterVerification()
+    {
+        await using var db = new PrisstyrningDbContext(new DbContextOptionsBuilder<PrisstyrningDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
+        var site = new ThermalSiteConfig { UserId = "account-a", ControlMode = "Shadow" };
+        db.ThermalSiteConfigs.Add(site);
+        db.ThermalEntityConfigs.AddRange(new[] { ThermalEntityRoles.CopRealtime, ThermalEntityRoles.Flow,
+            ThermalEntityRoles.LeavingWaterTemperature, ThermalEntityRoles.ReturnWaterTemperature }.Select(role =>
+            new ThermalEntityConfig { UserId = "account-a", Role = role, EntityId = "sensor." + role }));
+        await db.SaveChangesAsync();
+        var now = DateTimeOffset.UtcNow;
+        var error = await Assert.ThrowsAsync<ThermalPlanningEvidenceException>(() => ThermalPlanningModels.ReadAsync(
+            db, "account-a", now, now, ThermalCurrentModelTestData.Build, CancellationToken.None));
+        Assert.DoesNotContain("Kostnadsunderlag saknas", error.Message);
+        Assert.Contains("Husmodellen", error.Message);
+        Assert.False(site.HeatPumpPowerSignVerified);
+        Assert.Equal("Legacy", site.DhwWriter);
+        Assert.Empty(await db.ThermalControlCommands.ToArrayAsync());
+    }
+
     [Theory]
     [InlineData("missing-thermal")]
     [InlineData("missing-cop")]

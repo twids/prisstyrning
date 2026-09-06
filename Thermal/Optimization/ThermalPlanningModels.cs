@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Prisstyrning.Data;
 using Prisstyrning.Data.Entities;
 using Prisstyrning.Thermal.Domain;
+using Prisstyrning.Thermal.HomeAssistant;
 
 namespace Prisstyrning.Thermal.Optimization;
 
@@ -31,15 +32,15 @@ internal sealed record ThermalPlanningModels(
         if (telemetryTimestampUtc == default || telemetryTimestampUtc > now ||
             requireFreshTelemetry && now - telemetryTimestampUtc > TimeSpan.FromMinutes(10))
             throw new ThermalPlanningEvidenceException("Beräkningens telemetri är för gammal eller har ogiltig tid. Invänta ny insamling.");
-        if (!site.HeatPumpPowerSignVerified)
-            throw new ThermalPlanningEvidenceException("Effektmätningens tecken, CT-riktning och fasmappning måste verifieras före kostnadsoptimering.");
+        var entities = await db.ThermalEntityConfigs.AsNoTracking().Where(x => x.UserId == userId).OrderBy(x => x.Id).ToListAsync(cancellationToken);
+        if (!ThermalCopSource.HasCostSource(entities, site.HeatPumpPowerSignVerified))
+            throw new ThermalPlanningEvidenceException("Kostnadsunderlag saknas. Välj extern realtids-COP tillsammans med flöde, LWT och RWT, eller verifiera en separat effektmätning. COP ensamt anger inte värmeeffekt eller kWh.");
         var active = await db.ThermalModelVersions.AsNoTracking()
             .Where(x => x.UserId == userId && x.IsActive && (x.ModelType == "2R2C" || x.ModelType == "COP"))
             .OrderByDescending(x => x.CreatedAtUtc).ThenByDescending(x => x.Id).ToListAsync(cancellationToken);
         var thermalCandidate = active.FirstOrDefault(x => x.ModelType == "2R2C");
         var copCandidate = active.FirstOrDefault(x => x.ModelType == "COP");
         var rooms = await db.ThermalRoomConfigs.AsNoTracking().Where(x => x.UserId == userId).OrderBy(x => x.Id).ToListAsync(cancellationToken);
-        var entities = await db.ThermalEntityConfigs.AsNoTracking().Where(x => x.UserId == userId).OrderBy(x => x.Id).ToListAsync(cancellationToken);
         var selectedModels = new[] { thermalCandidate, copCandidate }.Where(x => x is not null).Select(x => x!).ToArray();
         var sourceValidations = await ThermalModelProvenance.VerifyCurrentAsync(
             db,

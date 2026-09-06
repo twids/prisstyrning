@@ -4,6 +4,8 @@ using Microsoft.EntityFrameworkCore;
 using Prisstyrning.Data;
 using Prisstyrning.Data.Entities;
 using Prisstyrning.Thermal.Optimization;
+using Prisstyrning.Thermal.HomeAssistant;
+using Prisstyrning.Thermal.Domain;
 
 namespace Prisstyrning.Thermal.Jobs;
 
@@ -27,7 +29,7 @@ public sealed class CopModelTrainingJob
     public async Task ExecuteAsync(CancellationToken cancellationToken = default)
     {
         var sites = await _db.ThermalSiteConfigs.AsNoTracking()
-            .Where(x => x.HeatPumpPowerSignVerified)
+            .Where(x => x.HeatPumpPowerSignVerified || _db.ThermalEntityConfigs.Any(e => e.UserId == x.UserId && e.Enabled && e.Role == ThermalEntityRoles.CopRealtime))
             .Select(x => x.UserId)
             .ToListAsync(cancellationToken);
         foreach (var userId in sites) await TrainUserAsync(userId, cancellationToken);
@@ -35,15 +37,17 @@ public sealed class CopModelTrainingJob
 
     internal async Task TrainUserAsync(string userId, CancellationToken cancellationToken)
     {
-        if (!await _db.ThermalSiteConfigs.AsNoTracking().AnyAsync(x => x.UserId == userId && x.HeatPumpPowerSignVerified, cancellationToken)) return;
+        var site = await _db.ThermalSiteConfigs.AsNoTracking().SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
+        if (site is null) return;
         var now = DateTimeOffset.UtcNow;
         var from = now.AddDays(-60);
         var entities = await _db.ThermalEntityConfigs.AsNoTracking().Where(x => x.UserId == userId && x.Enabled).ToListAsync(cancellationToken);
+        if (!ThermalCopSource.HasCostSource(entities, site.HeatPumpPowerSignVerified)) return;
         var samples = await ThermalModelTrainingData.CopCandidates(
                 _db.ThermalTelemetrySamples.AsNoTracking(), userId, from, now)
             .OrderBy(x => x.TimestampUtc)
             .ToListAsync(cancellationToken);
-        var selected = ThermalModelTrainingData.SelectCop(samples, userId, from, now, entities);
+        var selected = ThermalModelTrainingData.SelectCop(samples, userId, from, now, entities, site.HeatPumpPowerSignVerified);
         var observations = selected.Select(x => x.Observation).ToArray();
         if (observations.Length < 500) return;
 
@@ -58,7 +62,7 @@ public sealed class CopModelTrainingJob
             entities,
             result.Metrics.TrainingSamples,
             result.Metrics.ValidationSamples,
-            heatPumpPowerSignVerified: true,
+            heatPumpPowerSignVerified: site.HeatPumpPowerSignVerified,
             _build.RequireRevision());
         var previous = await _db.ThermalModelVersions
             .Where(x => x.UserId == userId && x.ModelType == "COP" && x.IsActive)
