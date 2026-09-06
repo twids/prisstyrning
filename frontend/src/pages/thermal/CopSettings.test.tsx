@@ -24,6 +24,8 @@ describe('COP-inställningar', () => {
     await userEvent.setup().selectOptions(screen.getByLabelText('Medelperiod för COP'), 'Lifetime');
     expect(screen.getByLabelText('Vald COP-medelperiod')).toHaveTextContent('Lifetime');
     expect(screen.getByText(/dold reserv/)).toBeInTheDocument();
+    expect(screen.getByText(/Kräver inte separat fasmätning/)).toBeInTheDocument();
+    expect(screen.getByText(/inte uppmätt/)).toBeInTheDocument();
   });
   it('har tillgängliga val och lägger rapportinställningar under Avancerat', async () => {
     const { container } = render(<Harness />);

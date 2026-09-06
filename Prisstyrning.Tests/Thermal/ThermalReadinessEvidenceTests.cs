@@ -12,6 +12,22 @@ namespace Prisstyrning.Tests.Thermal;
 
 public sealed class ThermalReadinessEvidenceTests
 {
+    [Fact]
+    public async Task Readiness_ExternalCopRemovesMeterGateButNotModelRequirements()
+    {
+        await using var fixture = new Fixture();
+        fixture.Db.ThermalEntityConfigs.AddRange(new[] { ThermalEntityRoles.CopRealtime, ThermalEntityRoles.Flow,
+            ThermalEntityRoles.LeavingWaterTemperature, ThermalEntityRoles.ReturnWaterTemperature }.Select(role =>
+            new ThermalEntityConfig { UserId = "account-a", Role = role, EntityId = "sensor." + role }));
+        await fixture.Db.SaveChangesAsync();
+        var checks = await fixture.EvaluateAsync(ControlMode.LwtActive);
+        Assert.True(checks.Single(x => x.Key == "power-sign").Passed);
+        Assert.False(checks.Single(x => x.Key == "cop-model").Passed);
+        Assert.False(checks.Single(x => x.Key == "model").Passed);
+        Assert.False((await fixture.Db.ThermalSiteConfigs.SingleAsync()).HeatPumpPowerSignVerified);
+        await fixture.AssertLegacyAsync();
+    }
+
     [Theory]
     [InlineData("null")]
     [InlineData("[]")]

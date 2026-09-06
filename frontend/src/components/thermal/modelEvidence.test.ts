@@ -22,6 +22,16 @@ function sample(minutes = -5): ThermalTelemetrySample {
 }
 
 describe('modelEvidence', () => {
+  it.each(['cop-validated-history-v1', 'cop-ha-realtime-history-v1', 'cop-ha-hydraulic-load-v1'])('accepts validated COP source %s', selectionVersion => {
+    const model = structuredClone(validModel);
+    model.modelType = 'COP';
+    model.provenance!.algorithmVersion = 'ridge-cop-v1';
+    model.provenance!.selectionVersion = selectionVersion;
+    model.validation!.copMae = .2;
+    expect(modelEvidence(model, now)).toMatchObject({ passed: true, sourceVerified: true });
+    model.sourceValidation!.passed = false;
+    expect(modelEvidence(model, now).passed).toBe(false);
+  });
   it('shows explicit full-horizon evidence without equating it to control activation', () => {
     expect(modelEvidence(validModel, now)).toMatchObject({ passed: true, day: .2, dayWindows: 4 });
   });

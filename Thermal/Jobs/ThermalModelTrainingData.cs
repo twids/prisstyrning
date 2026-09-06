@@ -48,14 +48,14 @@ internal static class ThermalModelTrainingData
         string userId,
         DateTimeOffset selectionFromUtc,
         DateTimeOffset selectionToUtc,
-        IReadOnlyCollection<ThermalEntityConfig> entities) => samples
+        IReadOnlyCollection<ThermalEntityConfig> entities, bool powerVerified = false) => samples
         .Where(CopCandidate(userId, selectionFromUtc, selectionToUtc).Compile())
         .GroupBy(x => x.TimestampUtc)
         .Where(x => x.Count() == 1)
         .Select(group =>
         {
             var sample = group.Single();
-            return (Sample: sample, Observation: Cop(sample, entities, selectionToUtc));
+            return (Sample: sample, Observation: Cop(sample, entities, selectionToUtc, powerVerified));
         })
         .Where(x => x.Observation is not null)
         .Select(x => (x.Sample, x.Observation!))
@@ -108,22 +108,34 @@ internal static class ThermalModelTrainingData
     }
 
     internal static CopObservation? Cop(
-        ThermalTelemetrySample sample, IReadOnlyCollection<ThermalEntityConfig> entities, DateTimeOffset now)
+        ThermalTelemetrySample sample, IReadOnlyCollection<ThermalEntityConfig> entities, DateTimeOffset now, bool powerVerified = false)
     {
         if (ThermalCopSource.IsExternal(entities))
         {
             using var quality = Object(sample.QualityJson);
             if (quality is null || sample.DhwActive != false || sample.BackupHeaterActive != false ||
-                sample.DefrostActive != false || sample.HeatPumpPowerKw is not > .1 || sample.Cop is not > 0 ||
+                sample.DefrostActive != false || sample.Cop is not > 0 ||
                 Property(quality.RootElement, "copSource").ToString() != "HomeAssistantRealtime" ||
                 Property(quality.RootElement, "copEntityId").ToString() != entities.First(x => x.Enabled &&
                     x.Role.Equals(ThermalEntityRoles.CopRealtime, StringComparison.OrdinalIgnoreCase)).EntityId ||
                 Number(Property(Property(quality.RootElement, "entities"), ThermalEntityRoles.CopRealtime), "value") != sample.Cop ||
                 !HasQuality(sample, [], entities, now, ThermalEntityRoles.CopRealtime, ThermalEntityRoles.BrineIn,
-                    ThermalEntityRoles.LeavingWaterTemperature, ThermalEntityRoles.HeatPumpPower,
+                    ThermalEntityRoles.LeavingWaterTemperature,
                     ThermalEntityRoles.DhwActive, ThermalEntityRoles.DefrostActive, ThermalEntityRoles.BackupHeaterActive)) return null;
+            double load;
+            if (powerVerified)
+            {
+                if (sample.HeatPumpPowerKw is not > .1 || !HasQuality(sample, [], entities, now, ThermalEntityRoles.HeatPumpPower)) return null;
+                load = sample.Cop.Value * sample.HeatPumpPowerKw.Value;
+            }
+            else
+            {
+                if (sample.HeatOutputKw is not > .5 || !HasConsistentHeat(sample) ||
+                    !HasQuality(sample, [], entities, now, ThermalEntityRoles.Flow, ThermalEntityRoles.ReturnWaterTemperature)) return null;
+                load = sample.HeatOutputKw.Value;
+            }
             var external = new CopObservation(sample.TimestampUtc, sample.BrineInC!.Value,
-                sample.LeavingWaterTemperatureC!.Value, sample.Cop.Value * sample.HeatPumpPowerKw.Value, sample.Cop.Value);
+                sample.LeavingWaterTemperatureC!.Value, load, sample.Cop.Value);
             return CopModel.IsUsableObservation(external) ? external : null;
         }
         using var savedQuality = Object(sample.QualityJson);

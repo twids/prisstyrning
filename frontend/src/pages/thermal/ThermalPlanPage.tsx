@@ -25,7 +25,7 @@ export default function ThermalPlanPage() {
       {plan.isError && <Alert severity="error">Planen kunde inte hämtas: {plan.error.message}</Alert>}
       {history.isError && <Alert severity="error">Temperaturhistoriken kunde inte hämtas.</Alert>}
       <TemperatureChart history={history.data ?? []} plan={plan.data} />
-      {!plan.isLoading && !plan.data && <Alert severity="info">Ingen plan finns ännu. I Legacy är det väntat; starta Telemetry Shadow när HA-entities är konfigurerade.</Alert>}
+      {!plan.isLoading && !plan.data && <Alert severity="info">Ingen plan finns ännu. I Legacy körs ingen optimering. Om Shadow redan är igång, kontrollera modellunderlaget på Modell och orsakerna under Händelser. Shadow-start innebär inte att en validerad modell eller ett beräkningsförslag redan finns.</Alert>}
       {plan.data && (
         <>
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, 1fr)' }, gap: 2 }}>

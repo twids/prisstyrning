@@ -31,6 +31,15 @@ describe('ThermalModelPage', () => {
   });
   afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
+  it('does not demand phase verification for external COP without a trained model', () => {
+    hooks.config.mockReturnValue(query({ site: { heatPumpPowerSignVerified: false }, entities: [
+      { role: 'cop_realtime', entityId: 'sensor.cop', enabled: true },
+    ] }));
+    view();
+    expect(screen.getByText(/Extern COP kräver inte fasmätning/)).toBeInTheDocument();
+    expect(screen.queryByText(/Verifiera effektmätningen och samla/)).not.toBeInTheDocument();
+  });
+
   it('separates validated metrics, model data period and control approval in Swedish', () => {
     view();
     expect(screen.getByText('Husmodell: validerad')).toBeInTheDocument();

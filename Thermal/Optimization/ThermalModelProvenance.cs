@@ -53,6 +53,7 @@ internal static class ThermalModelProvenance
     internal const string ThermalSelectionVersion = "thermal-validated-history-v1";
     internal const string CopSelectionVersion = "cop-validated-history-v1";
     internal const string ExternalCopSelectionVersion = "cop-ha-realtime-history-v1";
+    internal const string HydraulicCopSelectionVersion = "cop-ha-hydraulic-load-v1";
 
     internal static ThermalModelSourceEvidence Create(
         string userId,
@@ -72,7 +73,8 @@ internal static class ThermalModelProvenance
         if (normalizedBuildRevision is null)
             throw new ArgumentException("A valid 40- or 64-character build revision is required.", nameof(buildRevision));
         var (algorithmVersion, selectionVersion) = Versions(modelType);
-        if (modelType == "COP" && ThermalCopSource.IsExternal(entities)) selectionVersion = ExternalCopSelectionVersion;
+        if (modelType == "COP" && ThermalCopSource.IsExternal(entities))
+            selectionVersion = heatPumpPowerSignVerified ? ExternalCopSelectionVersion : HydraulicCopSelectionVersion;
         if (selectionFromUtc == default || selectionToUtc <= selectionFromUtc)
             throw new ArgumentException("The source selection window is invalid.", nameof(selectionFromUtc));
         if (rooms.Any(x => x.Id <= 0 || x.UserId != userId || !x.Enabled) ||
@@ -134,7 +136,7 @@ internal static class ThermalModelProvenance
             return null;
         }
         if (evidence.SchemaVersion != SchemaVersion || evidence.AlgorithmVersion != algorithm ||
-            (evidence.SelectionVersion != selection && !(model.ModelType == "COP" && evidence.SelectionVersion == ExternalCopSelectionVersion)) ||
+            (evidence.SelectionVersion != selection && !(model.ModelType == "COP" && evidence.SelectionVersion is ExternalCopSelectionVersion or HydraulicCopSelectionVersion)) ||
             RuntimeBuildProvenance.Normalize(evidence.BuildRevision) is null ||
             RuntimeBuildProvenance.Normalize(evidence.BuildRevision) != evidence.BuildRevision ||
             evidence.SelectionFromUtc == default ||
@@ -227,7 +229,7 @@ internal static class ThermalModelProvenance
                         samples, userId, source.SelectionFromUtc, source.SelectionToUtc, enabledRooms, enabledEntities)
                         .Select(x => x.Sample).ToArray(),
                     "COP" => ThermalModelTrainingData.SelectCop(
-                        samples, userId, source.SelectionFromUtc, source.SelectionToUtc, enabledEntities)
+                        samples, userId, source.SelectionFromUtc, source.SelectionToUtc, enabledEntities, heatPumpPowerSignVerified)
                         .Select(x => x.Sample).ToArray(),
                     _ => []
                 };

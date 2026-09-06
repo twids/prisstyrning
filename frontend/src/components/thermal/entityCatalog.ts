@@ -5,6 +5,19 @@ export interface EntityChoiceQuality {
   reason: string;
 }
 
+/** Search relevance only: never replaces validation or proves the sensor's physical role. */
+export function entityRelevance(entity: HomeAssistantEntity, expectedUnit: string,
+  rules?: { minimum?: number | null; maximum?: number | null }): 'Compatible' | 'Uncertain' | 'Unsuitable' {
+  // Missing data, old API responses and failed checks must remain discoverable.
+  if (!['Valid', 'Stale'].includes(entity.quality) || !entity.state.trim() ||
+      /^(unknown|unavailable)$/i.test(entity.state.trim()) || !Array.isArray(entity.compatibleUnits)) return 'Uncertain';
+  if (!entity.compatibleUnits.includes(expectedUnit)) return 'Unsuitable';
+  const value = entity.normalizedValues?.[expectedUnit];
+  if (value != null && (!Number.isFinite(value) || rules?.minimum != null && value < rules.minimum ||
+      rules?.maximum != null && value > rules.maximum)) return 'Unsuitable';
+  return 'Compatible';
+}
+
 /** Catalog checks are preliminary. Never infer collector health or readiness here. */
 export function assessEntityChoice(
   entity: HomeAssistantEntity | null,

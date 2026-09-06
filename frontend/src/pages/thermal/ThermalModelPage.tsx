@@ -51,7 +51,9 @@ export default function ThermalModelPage() {
         </Alert>
         <Alert severity={copEvidence.passed ? 'success' : 'warning'}>
           <Typography fontWeight={700}>{copEvidence.passed ? 'COP-modell: validerad' : 'COP-modell: ej verifierad'}</Typography>
-          {cop ? copEvidence.reason : 'Ingen separat COP-modell finns ännu. Verifiera effektmätningen och samla kompressordata utan elpatron.'}
+          {cop ? copEvidence.reason : sensorCop.external
+            ? 'Ingen separat COP-modell finns ännu. Samla realtids-COP under husvärmedrift utan elpatron, med giltigt flöde, LWT och RWT eller separat verifierad effektmätning. Extern COP kräver inte fasmätning när belastningen kan bestämmas från flöde och temperaturer.'
+            : 'Ingen separat COP-modell finns ännu. Verifiera effektmätningen och samla kompressordata utan elpatron.'}
           {cop && <Typography variant="body2" mt={.75}>{sourceSummary(cop, copEvidence.sourceStatus)}</Typography>}
         </Alert>
       </>}

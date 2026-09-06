@@ -1,8 +1,8 @@
-import { useMemo } from 'react';
-import { Autocomplete, Box, Chip, Stack, TextField, Typography } from '@mui/material';
+import { useMemo, useState } from 'react';
+import { Autocomplete, Box, Checkbox, Chip, FormControlLabel, Stack, TextField, Typography } from '@mui/material';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import type { HomeAssistantEntity } from '../../types/api';
-import { assessEntityChoice, type EntityChoiceQuality } from './entityCatalog';
+import { assessEntityChoice, entityRelevance, type EntityChoiceQuality } from './entityCatalog';
 import { formatRelative, QualityChip } from './thermalUi';
 
 export interface EntityCatalogView {
@@ -22,6 +22,7 @@ export default function HomeAssistantEntityPicker({ catalog, entityId, expectedU
   required?: boolean;
   rules?: { maximumReportAgeMinutes?: number | null; minimum?: number | null; maximum?: number | null };
 }) {
+  const [showAll, setShowAll] = useState(false);
   const found = catalog.entities.find((entity) => entity.entityId === entityId) ?? null;
   // Preserve configured IDs through empty/error responses. Never clear on refetch.
   const selected = useMemo(() => found ?? (entityId ? {
@@ -29,7 +30,12 @@ export default function HomeAssistantEntityPicker({ catalog, entityId, expectedU
     lastUpdatedUtc: null, receivedAtUtc: '', quality: 'Unavailable' as const,
     qualityReason: 'Den sparade entityn finns inte i den aktuella listan. Mappningen är kvar.',
   } : null), [found, entityId]);
-  const options = !found && selected ? [selected, ...catalog.entities] : catalog.entities;
+  const candidates = !found && selected ? [selected, ...catalog.entities] : catalog.entities;
+  const groups = { Compatible: 'Kompatibel enhet – kontrollera rätt givare', Uncertain: 'Osäkra alternativ – kontrollera uppgifterna', Unsuitable: 'Fel enhet eller värde – kontrollera innan val' };
+  const rank = { Compatible: 0, Uncertain: 1, Unsuitable: 2 };
+  const hiddenCount = candidates.filter(option => option.entityId !== entityId && entityRelevance(option, expectedUnit, rules) === 'Unsuitable').length;
+  const options = candidates.filter(option => showAll || option.entityId === entityId || entityRelevance(option, expectedUnit, rules) !== 'Unsuitable')
+    .sort((a, b) => rank[entityRelevance(a, expectedUnit, rules)] - rank[entityRelevance(b, expectedUnit, rules)] || a.friendlyName.localeCompare(b.friendlyName, 'sv'));
   const quality = assessEntityChoice(found, expectedUnit, catalog.nowUtc, catalog.issue, rules);
 
   return <Box role="group" aria-label={`Datakälla: ${label}`} sx={{ minWidth: 0, width: '100%' }}>
@@ -53,6 +59,7 @@ export default function HomeAssistantEntityPicker({ catalog, entityId, expectedU
           <Stack spacing={.5} sx={{ minWidth: 0, width: '100%' }}>
             <Typography>{option.friendlyName}</Typography>
             <Typography variant="caption" color="text.secondary">{option.entityId}</Typography>
+            <Typography variant="caption" color="text.secondary">{groups[entityRelevance(option, expectedUnit, rules)]}</Typography>
             <Typography variant="body2">{option.state || 'Värde saknas'} {option.unit ?? ''} · {formatRelative(option.lastUpdatedUtc)}</Typography>
             <Box><ChoiceChip result={result} /></Box>
             {result.quality !== 'Valid' && <Typography variant="caption" color="text.secondary">{result.reason}</Typography>}
@@ -68,6 +75,12 @@ export default function HomeAssistantEntityPicker({ catalog, entityId, expectedU
         slotProps={{ formHelperText: { sx: { overflowWrap: 'anywhere' } } }}
       />}
     />
+    <FormControlLabel control={<Checkbox size="small" checked={showAll} onChange={(_, checked) => setShowAll(checked)} />}
+      label={`Visa även olämpliga alternativ för ${label} (${hiddenCount})`} />
+    <Typography variant="caption" component="p" color="text.secondary">
+      Omräkningsbara enheter visas, till exempel W till kW. Osäkra och otillgängliga givare finns kvar, liksom ditt sparade val.
+      {' '}Rätt enhet bevisar inte rätt mätpunkt. Värde och enhet kontrolleras fortfarande efter valet.
+    </Typography>
     {entityId && <Stack spacing={.5} sx={{ mt: 1, overflowWrap: 'anywhere' }} role="status" aria-live="polite" aria-atomic="true">
       <Box><ChoiceChip result={quality} /></Box>
       {!catalog.issue && found && <Typography variant="body2">

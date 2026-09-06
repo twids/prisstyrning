@@ -75,10 +75,75 @@ public sealed class ThermalCopAndUsageTests
         var sample = Sample(); sample.Cop = 4; sample.HeatOutputKw = null;
         sample.QualityJson = JsonSerializer.Serialize(new { copSource = "HomeAssistantRealtime", copEntityId = "sensor.cop_realtime",
             entities = entities.ToDictionary(x => x.Role, x => new { quality = 0, excluded = false, value = 4 }) });
-        var result = ThermalModelTrainingData.Cop(sample, entities, Now);
+        var result = ThermalModelTrainingData.Cop(sample, entities, Now, powerVerified: true);
         Assert.NotNull(result);
         sample.QualityJson = sample.QualityJson.Replace("HomeAssistantRealtime", "Derived");
-        Assert.Null(ThermalModelTrainingData.Cop(sample, entities, Now));
+        Assert.Null(ThermalModelTrainingData.Cop(sample, entities, Now, powerVerified: true));
+    }
+
+    [Theory]
+    [InlineData("valid")] [InlineData("stale")] [InlineData("excluded")] [InlineData("idle")]
+    [InlineData("dhw")] [InlineData("backup")] [InlineData("defrost")]
+    public void ExternalCop_HydraulicLoadDoesNotRequirePhaseVerification(string fault)
+    {
+        var sample = Sample(); sample.HeatPumpPowerKw = null;
+        if (fault == "idle") sample.HeatOutputKw = 0;
+        if (fault == "dhw") sample.DhwActive = true;
+        if (fault == "backup") sample.BackupHeaterActive = true;
+        if (fault == "defrost") sample.DefrostActive = true;
+        var values = new Dictionary<string, SensorAssessment>
+        {
+            [ThermalEntityRoles.CopRealtime] = Value(4),
+            [ThermalEntityRoles.Flow] = Value(12, fault == "stale" ? DataQuality.Stale : DataQuality.Valid) with { Excluded = fault == "excluded" },
+            [ThermalEntityRoles.LeavingWaterTemperature] = Value(35),
+            [ThermalEntityRoles.ReturnWaterTemperature] = Value(30)
+        };
+        var cop = ThermalCopSource.Select(sample, [Mapping(ThermalEntityRoles.CopRealtime)], values, false);
+        if (fault == "valid") Assert.Equal(4, cop); else Assert.Null(cop);
+        Assert.Null(ThermalCopSource.Select(sample, [], values, false));
+    }
+
+    [Theory]
+    [InlineData("valid")] [InlineData("missing-flow")] [InlineData("stale-flow")]
+    [InlineData("inconsistent-heat")] [InlineData("missing-source")]
+    public void ExternalCop_TrainingUsesHydraulicHeatNotUnverifiedElectricity(string fault)
+    {
+        var entities = new[] { ThermalEntityRoles.CopRealtime, ThermalEntityRoles.BrineIn,
+            ThermalEntityRoles.LeavingWaterTemperature, ThermalEntityRoles.ReturnWaterTemperature, ThermalEntityRoles.Flow,
+            ThermalEntityRoles.DhwActive, ThermalEntityRoles.DefrostActive, ThermalEntityRoles.BackupHeaterActive }
+            .Select(role => Mapping(role)).ToArray();
+        var sample = Sample(); sample.Cop = 4; sample.HeatPumpPowerKw = -999;
+        sample.FlowLitresPerMinute = 12; sample.ReturnWaterTemperatureC = 30; sample.HeatOutputKw = 4.186;
+        if (fault == "missing-flow") sample.FlowLitresPerMinute = null;
+        if (fault == "inconsistent-heat") sample.HeatOutputKw = 10;
+        sample.QualityJson = JsonSerializer.Serialize(new { copSource = fault == "missing-source" ? "Derived" : "HomeAssistantRealtime",
+            copEntityId = "sensor.cop_realtime", entities = entities.ToDictionary(x => x.Role,
+                x => new { quality = fault == "stale-flow" && x.Role == ThermalEntityRoles.Flow ? 1 : 0, excluded = false, value = 4 }) });
+        var result = ThermalModelTrainingData.Cop(sample, entities, Now, powerVerified: false);
+        if (fault == "valid")
+        {
+            Assert.NotNull(result);
+            Assert.Equal(4.186, result.HeatOutputKw);
+            Assert.Equal(4, result.Cop);
+        }
+        else Assert.Null(result);
+    }
+
+    [Fact]
+    public void CostSource_RequiresRealtimeCopAndAllEnabledHydraulicMappings()
+    {
+        var entities = new[] { ThermalEntityRoles.CopRealtime, ThermalEntityRoles.Flow,
+            ThermalEntityRoles.LeavingWaterTemperature, ThermalEntityRoles.ReturnWaterTemperature }.Select(role => Mapping(role)).ToArray();
+        Assert.True(ThermalCopSource.HasCostSource(entities, false));
+        foreach (var entity in entities)
+        {
+            entity.Enabled = false;
+            Assert.False(ThermalCopSource.HasCostSource(entities, false));
+            entity.Enabled = true;
+        }
+        entities[0].Role = ThermalEntityRoles.CopAverage;
+        Assert.False(ThermalCopSource.HasCostSource(entities, false));
+        Assert.True(ThermalCopSource.HasCostSource([], true));
     }
 
     [Fact]

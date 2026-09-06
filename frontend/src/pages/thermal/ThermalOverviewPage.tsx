@@ -10,6 +10,7 @@ import { useThermalConfig, useThermalEvents, useThermalHistory, useThermalReadin
 import { MetricCard, PageHeader, formatDateTime, formatRelative, modeLabel } from '../../components/thermal/thermalUi';
 import type { ControlMode } from '../../types/api';
 import { describeEmhass } from '../../components/thermal/emhassStatus';
+import { copTelemetry } from '../../components/thermal/copTelemetry';
 
 export default function ThermalOverviewPage() {
   const status = useThermalStatus();
@@ -24,6 +25,7 @@ export default function ThermalOverviewPage() {
   const passed = readiness.data?.checks.filter((check) => check.passed).length ?? 0;
   const total = readiness.data?.checks.length ?? 0;
   const mode = status.data?.mode ?? 'Legacy';
+  const sensorCop = copTelemetry(history.isError ? undefined : history.data, config.isError ? undefined : config.data, Date.now());
 
   return (
     <Stack spacing={4}>
@@ -60,7 +62,8 @@ export default function ThermalOverviewPage() {
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', xl: 'repeat(4, 1fr)' }, gap: 2 }}>
         <MetricCard label="Representativ rumstemperatur" value={roomAverage == null ? '–' : `${roomAverage.toFixed(1)} °C`} detail={`${rooms.length} aktiva rumsvärden`} icon={<DeviceThermostatIcon />} loading={history.isLoading} />
         <MetricCard label="Varmvattentank" value={latest?.tankTemperatureC == null ? '–' : `${latest.tankTemperatureC.toFixed(1)} °C`} detail={latest?.dhwActive ? 'DHW pågår' : 'Ingen verifierad DHW-drift'} icon={<WaterDropOutlinedIcon />} accent="#9dd7ff" loading={history.isLoading} />
-        <MetricCard label="Beräknad COP" value={latest?.cop == null ? '–' : latest.cop.toFixed(2)} detail={config.data?.site.heatPumpPowerSignVerified ? 'Shelly-riktning verifierad' : 'Visas först efter effektverifiering'} icon={<ElectricBoltOutlinedIcon />} accent="#f6c56f" loading={history.isLoading} />
+        {sensorCop.external ? <MetricCard label="Realtids-COP från Home Assistant" value={sensorCop.realtime.value == null ? '–' : sensorCop.realtime.value.toFixed(2)} detail={sensorCop.realtime.updated ? `${sensorCop.realtime.historical ? 'Historiskt värde' : 'Rapporterat värde'} · ${formatDateTime(sensorCop.realtime.updated)}` : 'Inväntar giltig avläsning · ingen dold reservberäkning'} icon={<ElectricBoltOutlinedIcon />} accent="#f6c56f" loading={history.isLoading} /> :
+          <MetricCard label="Beräknad COP" value={latest?.cop == null ? '–' : latest.cop.toFixed(2)} detail={config.data?.site.heatPumpPowerSignVerified ? 'Separat effektmätning verifierad' : 'Egen COP-beräkning kräver verifierad effektmätning'} icon={<ElectricBoltOutlinedIcon />} accent="#f6c56f" loading={history.isLoading} />}
         <MetricCard label="Planens ålder" value={status.data?.planAgeMinutes == null ? '–' : `${status.data.planAgeMinutes} min`} detail={status.data && !status.isError ? describeEmhass(status.data).detail : 'Anslutningsstatus kunde inte bekräftas.'} icon={<InsightsOutlinedIcon />} accent="#c6a8ff" loading={status.isLoading} />
       </Box>
 
