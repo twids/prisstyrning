@@ -11,7 +11,7 @@ namespace Prisstyrning.Thermal.HomeAssistant;
 /// </summary>
 internal static class HomeAssistantEntityCatalog
 {
-    private static readonly string[] NumericUnits = ["°C", "kW", "l/min", "kWh", "SEK/kWh", "m/s", "W/m²"];
+    private static readonly string[] NumericUnits = ["°C", "kW", "l/min", "kWh", "SEK/kWh", "m/s", "W/m²", "COP"];
 
     public static ThermalEntityStateDto Project(
         HomeAssistantState state,

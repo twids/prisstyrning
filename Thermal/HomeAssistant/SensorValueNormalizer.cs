@@ -51,6 +51,8 @@ public static class SensorValueNormalizer
         var sourceUnit = NormalizeUnit(state.Unit);
         var targetUnit = NormalizeUnit(expectedUnit);
         var converted = Convert(rawValue, sourceUnit, targetUnit);
+        if (targetUnit == "cop" && rawValue < 0)
+            return new(null, null, "COP", DataQuality.Invalid, "COP kan inte vara negativt.");
         if (converted is null)
             return new(null, null, expectedUnit, DataQuality.Invalid, "Givarens enhet saknas eller kan inte konverteras till den konfigurerade enheten.");
         if (!double.IsFinite(converted.Value))
@@ -69,6 +71,7 @@ public static class SensorValueNormalizer
 
     private static double? Convert(double value, string source, string target)
     {
+        if (target == "cop") return source is "" or "1" or "cop" ? value : null;
         if (source == target) return value;
         if (string.IsNullOrEmpty(source)) return null;
         return (source, target) switch
@@ -124,6 +127,7 @@ public static class SensorValueNormalizer
         "sek/kwh" => "SEK/kWh",
         "m/s" => "m/s",
         "w/m2" => "W/m²",
+        "cop" => "COP",
         _ => unit
     };
 }

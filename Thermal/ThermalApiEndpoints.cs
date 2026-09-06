@@ -274,7 +274,7 @@ public static class ThermalApiEndpoints
                 var raw = states.GetValueOrDefault(request.EntityId);
                 var liveness = SensorLiveness.Resolve(raw, request.FreshnessEntityId, request.FreshnessAttribute, id => states.GetValueOrDefault(id), now);
                 var result = SensorTimestampValidator.Assess(raw, now,
-                    SensorFreshnessPolicy.ReportAge(request.MaximumReportAgeMinutes, TimeSpan.FromMinutes(Math.Clamp(config.StaleAfterMinutes, 1, 60))), liveness: liveness);
+                    SensorFreshnessPolicy.ReportAge(request.Role, request.MaximumReportAgeMinutes, TimeSpan.FromMinutes(Math.Clamp(config.StaleAfterMinutes, 1, 60))), liveness: liveness);
                 if (raw is not null && (string.IsNullOrWhiteSpace(raw.State) || raw.State.Trim().ToLowerInvariant() is "unknown" or "unavailable"))
                     result = (DataQuality.Unavailable, "HA saknar ett tillgängligt sensorvärde. Ett livstecken ersätter inte värdet.");
                 return Results.Ok(new SensorFreshnessPreview(result.Quality, result.Reason ?? "Rapportåldern ligger inom vald gräns. Värde, enhet och rimlighet kontrolleras separat.", now, raw?.LastUpdatedUtc, liveness?.TimestampUtc));
@@ -444,7 +444,7 @@ public static class ThermalApiEndpoints
             plan = await db.ThermalPlans.AsNoTracking().Where(x => x.UserId == userId)
                 .OrderByDescending(x => x.CreatedAtUtc).FirstOrDefaultAsync(cancellationToken);
         }
-        var quality = ThermalStatusQuality.Assess(latestTelemetry, rooms, entities, now, site?.UpdatedAtUtc);
+        var quality = ThermalStatusQuality.Assess(latestTelemetry, rooms, entities, now, site?.UpdatedAtUtc, displayContext: true);
         var next = plan is null ? null : await db.ThermalPlanSteps.AsNoTracking()
             .Where(x => x.ThermalPlanId == plan.Id && x.StartUtc > now && (x.DhwReserved || Math.Abs(x.DesiredLwtDeviationC - (state == null ? 0 : state.CurrentDeviationC)) >= 0.5))
             .OrderBy(x => x.StartUtc).Select(x => (DateTimeOffset?)x.StartUtc).FirstOrDefaultAsync(cancellationToken);

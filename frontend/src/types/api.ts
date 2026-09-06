@@ -233,6 +233,7 @@ export interface ThermalRoomConfig {
 }
 
 export interface ThermalEntityConfig {
+  averagingPeriod?: string | null;
   freshnessEntityId?: string | null;
   freshnessAttribute?: string | null;
   id: number;

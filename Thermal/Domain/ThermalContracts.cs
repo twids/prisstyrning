@@ -21,13 +21,15 @@ public static class ThermalEntityRoles
     public const string WeatherForecast = "weather_forecast";
     public const string WindSpeed = "wind_speed";
     public const string SolarIrradiance = "solar_irradiance";
+    public const string CopRealtime = "cop_realtime";
+    public const string CopAverage = "cop_average";
 
     public static readonly IReadOnlySet<string> Known = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         OutsideTemperature, LeavingWaterTemperature, ReturnWaterTemperature, Flow,
         BrineIn, BrineOut, TankTemperature, HeatPumpPower, PropertyPower, DhwActive,
         DefrostActive, BackupHeaterActive, SpotPrice, HeatingDeviation,
-        WeatherForecast, WindSpeed, SolarIrradiance
+        WeatherForecast, WindSpeed, SolarIrradiance, CopRealtime, CopAverage
     };
 }
 

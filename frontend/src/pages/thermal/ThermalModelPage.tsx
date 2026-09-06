@@ -10,6 +10,7 @@ import { useThermalConfig, useThermalHistory, useThermalModels } from '../../hoo
 import { MetricCard, PageHeader, formatDateTime } from '../../components/thermal/thermalUi';
 import { finite, modelEvidence, observedCop, parseRecord, record } from '../../components/thermal/modelEvidence';
 import type { ThermalModelVersion } from '../../types/api';
+import { copTelemetry } from '../../components/thermal/copTelemetry';
 
 export default function ThermalModelPage() {
   const models = useThermalModels();
@@ -29,6 +30,7 @@ export default function ThermalModelPage() {
   const roomAdjustments = record(parameters.roomAdjustments);
   const measured = observedCop(history.isError || history.isLoading ? undefined : history.data, now,
     !config.isError && config.data?.site.heatPumpPowerSignVerified === true);
+  const sensorCop = copTelemetry(history.isError ? undefined : history.data, config.isError ? undefined : config.data, now);
   const period = thermal ? (Date.parse(thermal.trainingToUtc) - Date.parse(thermal.trainingFromUtc)) / 86_400_000 : NaN;
   const refresh = () => { void models.refetch(); void history.refetch(); void config.refetch(); };
 
@@ -57,10 +59,12 @@ export default function ThermalModelPage() {
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', xl: 'repeat(4, 1fr)' }, gap: 2 }}>
         <MetricCard label="Tvåtimmarsfel (MAE)" value={temperature(evidence.twoHour)} detail={evidence.twoHourWindows ? evidence.twoHourWindows + ' hela tvåtimmarsfönster · krav ≤ 0,30 °C' : 'Hela valideringsfönster saknas'} icon={<FactCheckOutlinedIcon />} />
         <MetricCard label="Dygnsfel (MAE)" value={temperature(evidence.day)} detail={evidence.dayWindows ? evidence.dayWindows + ' hela 24-timmarsfönster · krav ≤ 0,60 °C' : 'Ett kortare fönster räknas inte som ett dygn'} icon={<ScienceOutlinedIcon />} />
-        <MetricCard label="Observerad COP, 24 h" value={measured.value == null ? '–' : decimal(measured.value)} detail={measured.count + ' giltiga femminuterspunkter · luckor fylls inte i'} icon={<SpeedOutlinedIcon />} />
+        {sensorCop.external ? <MetricCard label="Realtids-COP från Home Assistant" value={sensorCop.realtime.value == null ? '–' : decimal(sensorCop.realtime.value)} detail={sensorCop.realtime.updated ? `${sensorCop.realtime.historical ? 'Historiskt värde' : 'Rapporterat värde'} · ${formatDateTime(sensorCop.realtime.updated)}` : 'Ingen verifierbar avläsning · ingen dold reservberäkning'} icon={<SpeedOutlinedIcon />} /> :
+          <MetricCard label="Observerad COP, 24 h" value={measured.value == null ? '–' : decimal(measured.value)} detail={measured.count + ' giltiga femminuterspunkter · luckor fylls inte i'} icon={<SpeedOutlinedIcon />} />}
+        {sensorCop.hasAverage && <MetricCard label="Medel-COP från Home Assistant" value={sensorCop.average.value == null ? '–' : decimal(sensorCop.average.value)} detail={`${sensorCop.period} · endast uppföljning${sensorCop.average.updated ? ' · ' + formatDateTime(sensorCop.average.updated) : ''}`} icon={<SpeedOutlinedIcon />} />}
         <MetricCard label="Modellens dataperiod" value={thermal && Number.isFinite(period) && period > 0 ? decimal(period, 1) + ' dygn' : '–'} detail={thermal ? 'Version ' + thermal.id + ' · inte antal verifierade uppvärmningsdygn' : 'Väntar på modellunderlag'} icon={<HomeWorkOutlinedIcon />} />
       </Box>
-      <Typography variant="body2" color="text.secondary">Observerad COP beräknas som summa avgiven effekt delat med summa eleffekt för giltiga femminuterspunkter. Det är inte ett medel av enskilda COP-tal eller ett intyg på komplett dygnsmätning. Importerade, felaktiga och elpatronpåverkade punkter räknas inte.</Typography>
+      <Typography variant="body2" color="text.secondary">{sensorCop.external ? 'Vald realtids-COP används utan omräkning, endast under verifierad husvärmedrift. Medel-COP är separat uppföljning och används aldrig som en momentan träningspunkt. Saknad COP stoppar inte Legacy eller Shadow.' : 'Observerad COP beräknas som summa avgiven effekt delat med summa eleffekt för giltiga femminuterspunkter. Det är inte ett medel av enskilda COP-tal eller ett intyg på komplett dygnsmätning. Importerade, felaktiga och elpatronpåverkade punkter räknas inte.'}</Typography>
       {evidence.scored && <Accordion slots={{ heading: 'h2' }}>
         <AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography component="span" variant="h6">Avancerat: husmodell och rumskalibrering</Typography></AccordionSummary>
         <AccordionDetails><Stack spacing={2}>

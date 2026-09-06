@@ -10,7 +10,10 @@ public sealed class ThermalModelTrainingDataTests
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 31, 8, 0, 0, TimeSpan.Zero);
     internal static readonly ThermalRoomConfig[] Rooms = [new() { UserId = "account-a", EntityId = "sensor.room", IsCritical = true }];
-    internal static readonly ThermalEntityConfig[] Entities = ThermalEntityRoles.Known.Select(role => new ThermalEntityConfig
+    // This fixture represents the original flow/power-derived COP installation.
+    // Optional external COP mappings are exercised in their own source tests.
+    internal static readonly ThermalEntityConfig[] Entities = ThermalEntityRoles.Known
+        .Where(role => role is not (ThermalEntityRoles.CopRealtime or ThermalEntityRoles.CopAverage)).Select(role => new ThermalEntityConfig
     { UserId = "account-a", Role = role, EntityId = "sensor." + role }).ToArray();
 
     [Fact]

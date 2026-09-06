@@ -55,7 +55,9 @@ public sealed class HomeAssistantEntityCatalogTests
     [InlineData("100", "W/m2", "W/m²")]
     [InlineData("off", null, "bool")]
     [InlineData("false", "bool", "bool")]
-    [InlineData("0", null, "bool")]
+    [InlineData("4.2", null, "COP")]
+    [InlineData("4.2", "1", "COP")]
+    [InlineData("4.2", "COP", "COP")]
     [InlineData("ON", "boolean", "bool")]
     public void Project_SupportedConversion_OffersOnlyCompatibleUnit(string state, string? unit, string expected)
     {
@@ -69,7 +71,6 @@ public sealed class HomeAssistantEntityCatalogTests
     [Theory]
     [InlineData("abc", "°C")]
     [InlineData("1", "furlongs")]
-    [InlineData("21.5", null)]
     [InlineData("inactive", "°C")]
     [InlineData("heating", "kW")]
     [InlineData(" off ", null)]
@@ -78,6 +79,14 @@ public sealed class HomeAssistantEntityCatalogTests
     {
         var result = Project(State(state, unit));
         Assert.Empty(result.CompatibleUnits!);
+    }
+
+    [Fact]
+    public void Project_DimensionlessZeroIsAmbiguous_NotProofOfCopOrOperatingState()
+    {
+        var result = Project(State("0", null));
+        Assert.Equal(["COP", "bool"], result.CompatibleUnits);
+        Assert.DoesNotContain("°C", result.CompatibleUnits!);
     }
 
     [Fact]

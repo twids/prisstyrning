@@ -10,6 +10,15 @@ function object(json: string): Record<string, unknown> { try { const value: unkn
 export function temperatureRows(history: ThermalTelemetrySample[]) {
   return history.filter((sample) => Number.isFinite(Date.parse(sample.timestampUtc))).sort((a, b) => Date.parse(a.timestampUtc) - Date.parse(b.timestampUtc)).map((sample) => {
     const quality = object(sample.qualityJson);
+    const assessments = quality.entities && typeof quality.entities === 'object' ? quality.entities as Record<string, unknown> : {};
+    const held = (role: string) => {
+      const assessment = assessments[role] as Record<string, unknown> | undefined;
+      if (!assessment || (assessment.Usage ?? assessment.usage) !== 'HeldWhileIdle' ||
+          (assessment.Excluded ?? assessment.excluded) !== false ||
+          ![0, 1, 'Valid', 'Stale'].includes((assessment.Quality ?? assessment.quality) as string | number)) return null;
+      const value = assessment.Value ?? assessment.value;
+      return finite(value) ? value : null;
+    };
     const roomQuality = quality.rooms && typeof quality.rooms === 'object' ? quality.rooms as Record<string, { Quality?: unknown; quality?: unknown; Excluded?: boolean; excluded?: boolean }> : {};
     const rooms = Object.entries(object(sample.roomTemperaturesJson)).filter(([id, value]) => {
       const status = roomQuality[id];
@@ -17,6 +26,7 @@ export function temperatureRows(history: ThermalTelemetrySample[]) {
     }).map(([, value]) => value as number);
     return { time: new Date(sample.timestampUtc), lwt: finite(sample.leavingWaterTemperatureC) ? sample.leavingWaterTemperatureC : null,
       rwt: finite(sample.returnWaterTemperatureC) ? sample.returnWaterTemperatureC : null,
+      heldLwt: held('leaving_water_temperature'), heldRwt: held('return_water_temperature'),
       outside: finite(sample.outsideTemperatureC) ? sample.outsideTemperatureC : null,
       room: rooms.length ? rooms.reduce((a, b) => a + b, 0) / rooms.length : null,
       deviation: finite(quality.heatingDeviationC) ? quality.heatingDeviationC : null };
@@ -29,7 +39,7 @@ export default function TemperatureChart({ history, plan }: { history: ThermalTe
   const latest = rows[rows.length - 1];
   // Explicit null rows break lines over collection outages instead of inventing measurements.
   const data = rows.flatMap((row, index) => index && row.time.getTime() - rows[index - 1].time.getTime() > 600_000
-    ? [{ time: new Date(rows[index - 1].time.getTime() + 300_000), lwt: null, rwt: null, outside: null, room: null, deviation: null }, row] : [row]);
+    ? [{ time: new Date(rows[index - 1].time.getTime() + 300_000), lwt: null, rwt: null, heldLwt: null, heldRwt: null, outside: null, room: null, deviation: null }, row] : [row]);
   const steps = plan?.steps.filter((step) => Number.isFinite(Date.parse(step.startUtc)) && finite(step.desiredLwtDeviationC)).sort((a, b) => Date.parse(a.startUtc) - Date.parse(b.startUtc)) ?? [];
   const offsets = new Map<number, { time: Date; actual: number | null; proposed: number | null }>();
   data.forEach((row) => offsets.set(row.time.getTime(), { time: row.time, actual: row.deviation, proposed: null }));
@@ -41,10 +51,13 @@ export default function TemperatureChart({ history, plan }: { history: ThermalTe
       <ToggleButtonGroup exclusive value={hours} onChange={(_, value: number | null) => value && setHours(value)} aria-label="Historikperiod">
         {[6, 24, 48].map((value) => <ToggleButton key={value} value={value}>{value} timmar</ToggleButton>)}
       </ToggleButtonGroup>
-      <Typography>{latest?.lwt != null ? `Senast uppmätt LWT: ${latest.lwt.toFixed(1)} °C · ${timeLabel(latest.time)}` : latest ? `Senaste insamlingen (${timeLabel(latest.time)}) saknar giltig LWT. Äldre mätvärden visas i grafen när de finns.` : 'Ingen uppmätt LWT i valt intervall.'}</Typography>
+      <Typography>{latest?.lwt != null ? `Senast uppmätt LWT: ${latest.lwt.toFixed(1)} °C · ${timeLabel(latest.time)}` : latest?.heldLwt != null ? `Behållen LWT vid vila: ${latest.heldLwt.toFixed(1)} °C. Detta är inte en ny temperaturmätning.` : latest ? `Senaste insamlingen (${timeLabel(latest.time)}) saknar giltig LWT. Äldre mätvärden visas i grafen när de finns.` : 'Ingen uppmätt LWT i valt intervall.'}</Typography>
+      {rows.some(row => row.heldLwt != null || row.heldRwt != null) && <Typography variant="body2">Streckade vilovärden är senast rapporterade temperaturer i stillastående vatten, inte nya mätningar. De används inte som färskt underlag för COP-träning eller aktiv styrning.</Typography>}
       {!data.length ? <Alert severity="info">Temperaturgrafen visas när telemetri finns. En optimeringsplan behövs inte.</Alert> : <Box aria-label="Uppmätta temperaturer i grader Celsius">
         <LineChart height={310} dataset={data} xAxis={[{ dataKey: 'time', scaleType: 'time', valueFormatter: timeLabel }]} yAxis={[{ label: '°C' }]}
-          series={[{ dataKey: 'lwt', label: 'Uppmätt LWT' }, { dataKey: 'rwt', label: 'Uppmätt retur' }, { dataKey: 'room', label: 'Rum, giltigt givarmedel' }, { dataKey: 'outside', label: 'Uppmätt ute' }].map((series) => ({ ...series, showMark: false, connectNulls: false }))} />
+          series={[{ dataKey: 'lwt', label: 'Uppmätt LWT' }, { dataKey: 'rwt', label: 'Uppmätt retur' }, { dataKey: 'room', label: 'Rum, giltigt givarmedel' }, { dataKey: 'outside', label: 'Uppmätt ute' },
+            ...(rows.some(row => row.heldLwt != null || row.heldRwt != null) ? [{ id: 'heldLwt', dataKey: 'heldLwt', label: 'LWT · behållet vid vila' }, { id: 'heldRwt', dataKey: 'heldRwt', label: 'Retur · behållet vid vila' }] : [])].map((series) => ({ ...series, showMark: rows.length === 1, connectNulls: false }))}
+          sx={{ '& .MuiLineElement-series-heldLwt, & .MuiLineElement-series-heldRwt': { strokeDasharray: '3 4' } }} />
       </Box>}
       <Typography component="h3" variant="h6">LWT-avvikelse från Daikins grundkurva</Typography>
       <Typography variant="body2">Heldragen: avläst avvikelse. Streckad: planens förslag, inte ett utfört kommando. Absolut framtida LWT visas inte utan känd grundkurva. Saknade värden lämnas tomma.</Typography>

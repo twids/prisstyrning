@@ -18,7 +18,8 @@ internal static class ThermalStatusQuality
         IEnumerable<ThermalEntityConfig> entities,
         DateTimeOffset now,
         DateTimeOffset? configurationUpdatedUtc = null,
-        bool allowHistoryImport = false)
+        bool allowHistoryImport = false,
+        bool displayContext = false)
     {
         var enabledRooms = rooms.Where(x => x.Enabled).ToArray();
         var enabledEntities = entities.Where(x => x.Enabled).ToArray();
@@ -49,6 +50,7 @@ internal static class ThermalStatusQuality
             return new(DataQuality.Stale, "Senaste sparade insamlingen är äldre än tio minuter. Aktuell datakvalitet kan inte bekräftas.");
 
         var qualities = new List<DataQuality>(total);
+        var contextual = 0;
         using var temperatures = enabledRooms.Length == 0 ? null : ParseObject(sample.RoomTemperaturesJson);
         foreach (var room in enabledRooms)
         {
@@ -65,12 +67,23 @@ internal static class ThermalStatusQuality
         }
         foreach (var entity in enabledEntities)
         {
+            var assessment = Property(Property(root, "entities"), entity.Role);
+            var usage = Property(assessment, "usage");
+            if (displayContext && (entity.Role is ThermalEntityRoles.CopRealtime or ThermalEntityRoles.CopAverage ||
+                usage.ValueKind == JsonValueKind.String && usage.GetString() == "HeldWhileIdle" &&
+                ReadAssessment(assessment) is DataQuality.Valid or DataQuality.Stale))
+            {
+                contextual++;
+                continue;
+            }
             var forecast = entity.Role.Equals(ThermalEntityRoles.WeatherForecast, StringComparison.OrdinalIgnoreCase);
             var quality = ReadAssessment(forecast ? Property(root, "forecast") : Property(Property(root, "entities"), entity.Role), !forecast);
             if (quality == DataQuality.Valid && !HasRecordedValue(sample, entity)) quality = DataQuality.Invalid;
             qualities.Add(quality);
         }
 
+        if (qualities.Count == 0)
+            return new(DataQuality.Unavailable, "Endast vilovärden eller valfri COP-uppföljning finns. Det bekräftar inte aktuellt underlag för styrning.");
         var valid = qualities.Count(x => x == DataQuality.Valid);
         var invalid = qualities.Count(x => x == DataQuality.Invalid);
         var stale = qualities.Count(x => x == DataQuality.Stale);
@@ -79,9 +92,11 @@ internal static class ThermalStatusQuality
         // and an unmapped forecast never participate. A valid cold room stays Valid.
         var overall = invalid > 0 ? DataQuality.Invalid : unavailable > 0 ? DataQuality.Unavailable
             : stale > 0 ? DataQuality.Stale : DataQuality.Valid;
-        return new(overall, valid == total
-            ? $"Alla {total} aktiverade datakällor är giltiga i senaste insamlingen."
-            : $"{valid}/{total} aktiverade datakällor är giltiga. {invalid} ogiltiga eller exkluderade, {stale} gamla och {unavailable} saknade eller med okänd kvalitet.");
+        var contextReason = contextual > 0 ? $" {contextual} källor visas separat som vilovärden eller valfri COP-uppföljning; de godkänns inte därmed för styrning eller träning." : "";
+        return new(overall, (valid == total - contextual
+            ? contextual == 0 ? $"Alla {total} aktiverade datakällor är giltiga i senaste insamlingen."
+                : $"Alla {total - contextual} bedömda datakällor är giltiga i senaste insamlingen."
+            : $"{valid}/{total - contextual} aktiverade datakällor är giltiga. {invalid} ogiltiga eller exkluderade, {stale} gamla och {unavailable} saknade eller med okänd kvalitet.") + contextReason);
     }
 
     private static DataQuality ReadAssessment(JsonElement assessment, bool requiresExclusion = true)
@@ -111,6 +126,8 @@ internal static class ThermalStatusQuality
             // Deviation feedback is validated by the collector but has no dedicated
             // numeric snapshot column. Do not substitute the commanded LWT value.
             case ThermalEntityRoles.HeatingDeviation: return true;
+            case ThermalEntityRoles.CopRealtime: return sample.Cop is > 0 && double.IsFinite(sample.Cop.Value);
+            case ThermalEntityRoles.CopAverage: return false; // Follow-up only, never control/training evidence.
             case ThermalEntityRoles.WeatherForecast:
                 try
                 {

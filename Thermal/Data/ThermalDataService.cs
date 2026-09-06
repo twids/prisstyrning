@@ -84,6 +84,7 @@ public sealed class ThermalDataService
                 MaximumReportAgeMinutes = entity.MaximumReportAgeMinutes,
                 FreshnessEntityId = entity.FreshnessEntityId,
                 FreshnessAttribute = entity.FreshnessAttribute,
+                AveragingPeriod = entity.AveragingPeriod,
                 MinimumValid = entity.MinimumValid,
                 MaximumValid = entity.MaximumValid,
                 MaximumRatePerHour = entity.MaximumRatePerHour
@@ -114,6 +115,17 @@ public sealed class ThermalDataService
 
     private static void Validate(ThermalConfigDto config)
     {
+        foreach (var entity in config.Entities)
+        {
+            if (entity.Role.Equals(ThermalEntityRoles.CopRealtime, StringComparison.OrdinalIgnoreCase) ||
+                entity.Role.Equals(ThermalEntityRoles.CopAverage, StringComparison.OrdinalIgnoreCase))
+                if (!string.Equals(entity.ExpectedUnit, "COP", StringComparison.OrdinalIgnoreCase))
+                    throw new ArgumentException("COP-entityn måste använda enheten COP (dimensionslöst tal).");
+            if (entity.AveragingPeriod is not null &&
+                (!entity.Role.Equals(ThermalEntityRoles.CopAverage, StringComparison.OrdinalIgnoreCase) ||
+                 !ThermalCopSource.AveragingPeriods.Contains(entity.AveragingPeriod)))
+                throw new ArgumentException("Välj en känd medelperiod för medel-COP eller Okänd.");
+        }
         foreach (var room in config.Rooms) SensorLiveness.Validate("room", room.FreshnessEntityId, room.FreshnessAttribute);
         foreach (var entity in config.Entities) SensorLiveness.Validate(entity.Role, entity.FreshnessEntityId, entity.FreshnessAttribute);
         if (config.Rooms.Any(x => x.MaximumReportAgeMinutes is < 1 or > 1440))

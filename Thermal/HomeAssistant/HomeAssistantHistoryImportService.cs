@@ -5,6 +5,7 @@ using Prisstyrning.Data;
 using Prisstyrning.Data.Entities;
 using Prisstyrning.Thermal.Domain;
 using Prisstyrning.Thermal.Jobs;
+using Prisstyrning.Thermal.Optimization;
 
 namespace Prisstyrning.Thermal.HomeAssistant;
 
@@ -98,6 +99,14 @@ public sealed class HomeAssistantHistoryImportService
             .ToListAsync(cancellationToken);
         var existing = existingTimestamps.ToHashSet();
         var imported = 0;
+        var priceSnapshots = new List<PriceSnapshot>();
+        if (entityConfigs.Any(x => x.Role == ThermalEntityRoles.SpotPrice))
+        {
+            var zone = await ThermalPlanningInputs.PriceZoneAsync(_db, userId, cancellationToken);
+            priceSnapshots = await _db.PriceSnapshots.AsNoTracking().Where(x => x.Zone == zone &&
+                x.SavedAtUtc >= fromUtc.AddHours(-36) && x.SavedAtUtc <= toUtc.AddMinutes(2))
+                .OrderByDescending(x => x.SavedAtUtc).ThenByDescending(x => x.Id).ToListAsync(cancellationToken);
+        }
         var preserved = 0;
         var coverage = new Dictionary<string, CoverageCounter>();
         foreach (var config in entityConfigs)
@@ -114,9 +123,12 @@ public sealed class HomeAssistantHistoryImportService
             {
                 var raw = cursors[config.EntityId].At(bucket);
                 var assessed = tracker.Assess($"entity|{config.Role}|{config.EntityId}", raw, SensorValueNormalizer.Normalize(raw, config.ExpectedUnit),
-                    new(config.MinimumValid, config.MaximumValid, config.MaximumRatePerHour, SensorFreshnessPolicy.ReportAge(config.MaximumReportAgeMinutes, staleAfter)), bucket, historyImportedAtUtc: importedAt,
+                    new(config.MinimumValid, config.MaximumValid, config.MaximumRatePerHour, SensorFreshnessPolicy.ReportAge(config.Role, config.MaximumReportAgeMinutes, staleAfter)), bucket, historyImportedAtUtc: importedAt,
                     liveness: SensorLiveness.AllowedForRole(config.Role)
                         ? SensorLiveness.Resolve(raw, config.FreshnessEntityId, config.FreshnessAttribute, id => cursors.GetValueOrDefault(id)?.At(bucket), bucket, importedAt) : null);
+                if (config.Role == ThermalEntityRoles.SpotPrice)
+                    assessed = SpotPriceValidity.Assess(assessed, raw,
+                        priceSnapshots.FirstOrDefault(x => x.SavedAtUtc <= bucket.AddMinutes(2)), bucket, importedAt);
                 values[config.Role] = assessed;
                 entityQuality[config.Role] = Quality(assessed);
                 coverage[$"entity|{config.Role}|{config.EntityId}"].Add(assessed);
@@ -146,6 +158,12 @@ public sealed class HomeAssistantHistoryImportService
 
             if (!persist) continue;
 
+            var idle = ThermalSensorUsagePolicy.ReportedIdle(values, site.HeatPumpPowerSignVerified,
+                role => cursors.GetValueOrDefault(entityConfigs.FirstOrDefault(e => e.Role == role)?.EntityId ?? "")?.At(bucket), bucket, importedAt);
+            foreach (var config in entityConfigs)
+                entityQuality[config.Role] = JsonSerializer.SerializeToNode(ThermalSensorUsagePolicy.Describe(
+                    config.Role, values[config.Role], cursors[config.EntityId].At(bucket), bucket, idle, importedAt));
+
             var sample = new ThermalTelemetrySample
             {
                 UserId = userId,
@@ -170,6 +188,10 @@ public sealed class HomeAssistantHistoryImportService
                 QualityJson = new JsonObject
                 {
                     ["source"] = "HomeAssistantHistoryImport",
+                    ["copSource"] = ThermalCopSource.IsExternal(entityConfigs) ? "HomeAssistantRealtime" : "Derived",
+                    ["copEntityId"] = entityConfigs.FirstOrDefault(x => x.Role == ThermalEntityRoles.CopRealtime)?.EntityId,
+                    ["copAveragePeriod"] = entityConfigs.FirstOrDefault(x => x.Role == ThermalEntityRoles.CopAverage)?.AveragingPeriod ?? "Unknown",
+                    ["copAverageEntityId"] = entityConfigs.FirstOrDefault(x => x.Role == ThermalEntityRoles.CopAverage)?.EntityId,
                     ["entities"] = entityQuality,
                     ["rooms"] = roomQuality
                 }.ToJsonString()
@@ -178,11 +200,7 @@ public sealed class HomeAssistantHistoryImportService
                 sample.FlowLitresPerMinute,
                 sample.LeavingWaterTemperatureC,
                 sample.ReturnWaterTemperatureC);
-            sample.Cop = site.HeatPumpPowerSignVerified && sample.BackupHeaterActive == false &&
-                         sample.HeatPumpPowerKw is > 0.1 && sample.HeatOutputKw is { } heatOutput
-                ? heatOutput / sample.HeatPumpPowerKw.Value
-                : null;
-            if (sample.Cop is { } cop && !double.IsFinite(cop)) sample.Cop = null;
+            sample.Cop = ThermalCopSource.Select(sample, entityConfigs, values, site.HeatPumpPowerSignVerified);
             _db.ThermalTelemetrySamples.Add(sample);
             imported++;
 

@@ -3,6 +3,7 @@ using Prisstyrning.Data.Entities;
 using Prisstyrning.Thermal.Data;
 using Prisstyrning.Thermal.Domain;
 using Prisstyrning.Thermal.Optimization;
+using Prisstyrning.Thermal.HomeAssistant;
 using static Prisstyrning.Thermal.Data.ThermalEvidenceJson;
 
 namespace Prisstyrning.Thermal.Jobs;
@@ -77,8 +78,8 @@ internal static class ThermalModelTrainingData
         x.UserId == userId && x.TimestampUtc >= fromUtc && x.TimestampUtc <= toUtc &&
         x.BackupHeaterActive == false && x.DefrostActive == false &&
         x.BrineInC != null && x.LeavingWaterTemperatureC != null &&
-        x.HeatOutputKw != null && x.Cop != null && x.Cop >= 1.2 && x.Cop <= 8 &&
-        x.HeatOutputKw > 0.5;
+        x.Cop != null && x.Cop >= 1.2 && x.Cop <= 8 &&
+        (x.HeatOutputKw > 0.5 || x.HeatPumpPowerKw * x.Cop > 0.5);
 
     internal static ThermalObservation? Thermal(
         ThermalTelemetrySample sample, IReadOnlyCollection<ThermalRoomConfig> rooms,
@@ -109,6 +110,25 @@ internal static class ThermalModelTrainingData
     internal static CopObservation? Cop(
         ThermalTelemetrySample sample, IReadOnlyCollection<ThermalEntityConfig> entities, DateTimeOffset now)
     {
+        if (ThermalCopSource.IsExternal(entities))
+        {
+            using var quality = Object(sample.QualityJson);
+            if (quality is null || sample.DhwActive != false || sample.BackupHeaterActive != false ||
+                sample.DefrostActive != false || sample.HeatPumpPowerKw is not > .1 || sample.Cop is not > 0 ||
+                Property(quality.RootElement, "copSource").ToString() != "HomeAssistantRealtime" ||
+                Property(quality.RootElement, "copEntityId").ToString() != entities.First(x => x.Enabled &&
+                    x.Role.Equals(ThermalEntityRoles.CopRealtime, StringComparison.OrdinalIgnoreCase)).EntityId ||
+                Number(Property(Property(quality.RootElement, "entities"), ThermalEntityRoles.CopRealtime), "value") != sample.Cop ||
+                !HasQuality(sample, [], entities, now, ThermalEntityRoles.CopRealtime, ThermalEntityRoles.BrineIn,
+                    ThermalEntityRoles.LeavingWaterTemperature, ThermalEntityRoles.HeatPumpPower,
+                    ThermalEntityRoles.DhwActive, ThermalEntityRoles.DefrostActive, ThermalEntityRoles.BackupHeaterActive)) return null;
+            var external = new CopObservation(sample.TimestampUtc, sample.BrineInC!.Value,
+                sample.LeavingWaterTemperatureC!.Value, sample.Cop.Value * sample.HeatPumpPowerKw.Value, sample.Cop.Value);
+            return CopModel.IsUsableObservation(external) ? external : null;
+        }
+        using var savedQuality = Object(sample.QualityJson);
+        if (savedQuality is not null && Property(savedQuality.RootElement, "copSource").ToString() == "HomeAssistantRealtime")
+            return null; // A removed source mapping must not reinterpret its historical values.
         if (sample.BackupHeaterActive != false || sample.DefrostActive != false || !HasConsistentHeat(sample) ||
             sample.HeatPumpPowerKw is not > .1 || sample.Cop is null ||
             !HasQuality(sample, [], entities, now, ThermalEntityRoles.BrineIn, ThermalEntityRoles.LeavingWaterTemperature,
