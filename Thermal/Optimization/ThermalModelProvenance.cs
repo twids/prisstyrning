@@ -44,6 +44,9 @@ public sealed record ThermalModelSourceValidation(
 internal static class ThermalModelProvenance
 {
     internal const int SchemaVersion = 2;
+    // Compatibility contract, not release numbers. Bump the affected algorithm
+    // or selection version when interpretation/training semantics change.
+    // UI, logging and unrelated releases must leave these versions unchanged.
     internal const string ThermalAlgorithmVersion = "grey-box-2r2c-v1";
     internal const string CopAlgorithmVersion = "ridge-cop-v1";
     internal const string ThermalSelectionVersion = "thermal-validated-history-v1";
@@ -188,7 +191,7 @@ internal static class ThermalModelProvenance
             var source = Read(model);
             if (source is null)
             {
-                result[model.Id] = Block("Unproven", "Modellen saknar ett läsbart källbevis med exakt träningsurval och byggrevision. Träna om modellen.", checkedAtUtc);
+                result[model.Id] = Block("Unproven", "Modellformat, algoritm, urvalsregel eller källbevis stöds inte. Kontrollera kompatibiliteten och träna om modellen vid ändrad modellsemantik; en vanlig apprelease är inte i sig ett skäl.", checkedAtUtc);
                 continue;
             }
             if (currentBuildRevision is null)
@@ -196,11 +199,9 @@ internal static class ThermalModelProvenance
                 result[model.Id] = Block("Unproven", "Den körande programversionen saknar en inbakad källkodsrevision. Använd en revisionsmärkt build; imagesignatur kontrolleras separat före driftsättning.", checkedAtUtc);
                 continue;
             }
-            if (!string.Equals(source.BuildRevision, currentBuildRevision, StringComparison.Ordinal))
-            {
-                result[model.Id] = Block("BuildChanged", "Modellen tränades med en annan kodrevision än den som körs nu. Träna en ny modellversion med den aktuella programversionen.", checkedAtUtc);
-                continue;
-            }
+            // Read validates the supported evidence schema, algorithm and selection
+            // versions. The training commit is audit metadata, not compatibility:
+            // an unrelated UI/logging release must not retire a sound model.
             candidates.Add((model, source));
         }
 
@@ -238,9 +239,9 @@ internal static class ThermalModelProvenance
                     source.TrainingSamples,
                     source.ValidationSamples,
                     heatPumpPowerSignVerified,
-                    currentBuildRevision!);
+                    source.BuildRevision);
                 result[model.Id] = current == source
-                    ? new(true, "Current", "Exakt historiskt urval, konfiguration och körande kodrevision matchar modellens sparade källbevis.", checkedAtUtc)
+                    ? new(true, "Current", "Modellformat, algoritm och urvalsregel är kompatibla. Exakt historiskt urval och konfiguration är omverifierade; en annan byggrevision kräver inte i sig omträning.", checkedAtUtc)
                     : Block("Changed", "Historiska mätningar eller konfiguration har ändrats sedan modellen tränades. Träna en ny version.", checkedAtUtc);
             }
             catch (ArgumentException)
@@ -341,7 +342,13 @@ internal static class ThermalModelProvenance
             .Concat(entities.Where(x => x.MaximumReportAgeMinutes.HasValue)
                 .Select(x => new { key = $"entity:{x.Id}", minutes = x.MaximumReportAgeMinutes }))
             .OrderBy(x => x.key, StringComparer.Ordinal).ToArray();
-        return Hash(existingConfiguration + (reportPolicies.Length == 0 ? "" : JsonSerializer.Serialize(reportPolicies, JsonSerializerOptions.Web)));
+        var livenessPolicies = (modelType == "2R2C" ? rooms.Where(x => x.FreshnessEntityId is not null || x.FreshnessAttribute is not null)
+            .Select(x => new { key = $"room:{x.Id}", x.FreshnessEntityId, x.FreshnessAttribute }) : [])
+            .Concat(entities.Where(x => x.FreshnessEntityId is not null || x.FreshnessAttribute is not null)
+                .Select(x => new { key = $"entity:{x.Id}", x.FreshnessEntityId, x.FreshnessAttribute }))
+            .OrderBy(x => x.key, StringComparer.Ordinal).ToArray();
+        return Hash(existingConfiguration + (reportPolicies.Length == 0 ? "" : JsonSerializer.Serialize(reportPolicies, JsonSerializerOptions.Web)) +
+            (livenessPolicies.Length == 0 ? "" : JsonSerializer.Serialize(livenessPolicies, JsonSerializerOptions.Web)));
     }
 
     private static (string Algorithm, string Selection) Versions(string modelType) => modelType switch

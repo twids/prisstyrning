@@ -43,7 +43,8 @@ public sealed class SensorQualityTracker
         SensorValidationRules rules,
         DateTimeOffset nowUtc,
         DateTimeOffset? configurationRevisionUtc = null,
-        DateTimeOffset? historyImportedAtUtc = null)
+        DateTimeOffset? historyImportedAtUtc = null,
+        SensorLivenessEvidence? liveness = null)
     {
         var state = _states.GetOrAdd(entityId, _ => new State());
         lock (state)
@@ -60,7 +61,10 @@ public sealed class SensorQualityTracker
             }
             var quality = normalized.Quality;
             var reason = normalized.Reason;
-            var sourceTime = historyImportedAtUtc is null
+            // Attributes may update last_updated/last_reported on every heartbeat.
+            // With explicit liveness, only a value change is independent recovery
+            // evidence; never count three heartbeats as three new measurements.
+            var sourceTime = liveness is not null ? rawState?.LastChangedUtc : historyImportedAtUtc is null
                 ? rawState?.LastReportedUtc ?? rawState?.LastUpdatedUtc
                 : rawState?.LastUpdatedUtc;
             if (quality == DataQuality.Valid &&
@@ -91,7 +95,7 @@ public sealed class SensorQualityTracker
             }
 
             if (quality == DataQuality.Valid)
-                (quality, reason) = SensorTimestampValidator.Assess(rawState, nowUtc, rules.StaleAfter, historyImportedAtUtc);
+                (quality, reason) = SensorTimestampValidator.Assess(rawState, nowUtc, rules.StaleAfter, historyImportedAtUtc, liveness);
 
             var wasExcluded = state.Excluded;
             if (quality == DataQuality.Valid)

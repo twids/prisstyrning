@@ -252,6 +252,35 @@ public static class ThermalApiEndpoints
     internal static RouteGroupBuilder MapHomeAssistantEntityCatalogApi(this IEndpointRouteBuilder app)
     {
         var homeAssistant = app.MapGroup("/api/home-assistant");
+        homeAssistant.MapPost("/freshness-preview", async (
+            HttpContext context, SensorFreshnessRequest request, IHomeAssistantStateCache cache,
+            HomeAssistantConnectionService connections, CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                SensorLiveness.Validate(request.Role, request.FreshnessEntityId, request.FreshnessAttribute);
+                if (request.Role != "room" && !ThermalEntityRoles.Known.Contains(request.Role) ||
+                    request.MaximumReportAgeMinutes is { } age && (age < 1 || age > (request.Role == "room" ? 1440 : SensorFreshnessPolicy.MaximumForRole(request.Role))))
+                    throw new ArgumentException("Ogiltig roll eller rapportgräns.");
+                var userId = UserId(context);
+                var config = await connections.GetAsync(userId, cancellationToken);
+                var live = cache.ReadAccount(userId);
+                var now = DateTimeOffset.UtcNow;
+                if (config is not { TelemetryEnabled: true, TelemetryTokenConfigured: true } || !live.Connected ||
+                    live.ConfigurationUpdatedAtUtc != config.UpdatedAtUtc || live.LastSnapshotUtc is null ||
+                    live.LastSnapshotUtc < config.UpdatedAtUtc || live.LastSnapshotUtc > now.AddSeconds(30))
+                    return Results.Ok(new SensorFreshnessPreview(DataQuality.Unavailable, "En aktuell startbild för kontots sparade HA-anslutning saknas.", now, null, null));
+                var states = live.States.ToDictionary(x => x.EntityId, StringComparer.Ordinal);
+                var raw = states.GetValueOrDefault(request.EntityId);
+                var liveness = SensorLiveness.Resolve(raw, request.FreshnessEntityId, request.FreshnessAttribute, id => states.GetValueOrDefault(id), now);
+                var result = SensorTimestampValidator.Assess(raw, now,
+                    SensorFreshnessPolicy.ReportAge(request.MaximumReportAgeMinutes, TimeSpan.FromMinutes(Math.Clamp(config.StaleAfterMinutes, 1, 60))), liveness: liveness);
+                if (raw is not null && (string.IsNullOrWhiteSpace(raw.State) || raw.State.Trim().ToLowerInvariant() is "unknown" or "unavailable"))
+                    result = (DataQuality.Unavailable, "HA saknar ett tillgängligt sensorvärde. Ett livstecken ersätter inte värdet.");
+                return Results.Ok(new SensorFreshnessPreview(result.Quality, result.Reason ?? "Rapportåldern ligger inom vald gräns. Värde, enhet och rimlighet kontrolleras separat.", now, raw?.LastUpdatedUtc, liveness?.TimestampUtc));
+            }
+            catch (ArgumentException exception) { return Results.BadRequest(new { error = exception.Message }); }
+        });
         homeAssistant.MapGet("/status", async (
             HttpContext context,
             IHomeAssistantStateCache cache,

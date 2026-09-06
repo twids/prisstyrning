@@ -13,6 +13,7 @@ import { PageHeader, formatRelative } from '../../components/thermal/thermalUi';
 import HomeAssistantEntityPicker, { type EntityCatalogView } from '../../components/thermal/HomeAssistantEntityPicker';
 import WeatherSourcePicker from '../../components/thermal/WeatherSourcePicker';
 import HomeAssistantLiveStatus from '../../components/thermal/HomeAssistantLiveStatus';
+import SensorLivenessFields, { livenessConfigError } from '../../components/thermal/SensorLivenessFields';
 import { assessEntityChoice } from '../../components/thermal/entityCatalog';
 import { assessHomeAssistantLive } from '../../components/thermal/homeAssistantConnectionStatus';
 import ConfirmDialog from '../../components/ConfirmDialog';
@@ -69,6 +70,7 @@ export default function ThermalSettingsPage() {
     issue: catalogIssue,
     loading: ha.status.isLoading || ha.entities.isLoading,
     nowUtc,
+    connectionRevisionUtc: ha.config.data?.updatedAtUtc,
   };
   const refreshCatalog = async () => {
     const [connection, status] = await Promise.all([ha.config.refetch(), ha.status.refetch()]);
@@ -283,6 +285,10 @@ function EntitiesTab({ draft, setDraft, catalog }: { draft: ThermalConfig; setDr
         <Stack spacing={2}>
           <HomeAssistantEntityPicker catalog={catalog} entityId={mapping?.entityId ?? ''} expectedUnit={unit} rules={{ maximumReportAgeMinutes: mapping?.maximumReportAgeMinutes, minimum: mapping?.minimumValid, maximum: mapping?.maximumValid }} label={`Välj ${label.toLowerCase()}`} onChange={(selected) => updateRole(role, selected, unit)} />
           {mapping && <ReportAgeField label={`Rapportgräns för ${label.toLowerCase()}`} value={mapping.maximumReportAgeMinutes} maximum={['outside_temperature', 'wind_speed', 'solar_irradiance', 'spot_price'].includes(role) ? 1440 : 10} onChange={(value) => setDraft({ ...draft, entities: draft.entities.map((entity) => entity.role === role ? { ...entity, maximumReportAgeMinutes: value } : entity) })} />}
+          {mapping && ['outside_temperature', 'wind_speed', 'solar_irradiance'].includes(role) && <SensorLivenessFields
+            key={catalog.connectionRevisionUtc} catalog={catalog} label={label} value={mapping}
+            onChange={changes => setDraft({ ...draft, entities: draft.entities.map(entity => entity.role === role ? { ...entity, ...changes } : entity) })} />}
+          {mapping && !['outside_temperature', 'wind_speed', 'solar_irradiance', 'spot_price'].includes(role) && <Typography variant="caption">Driftsignal: egna aktuella rapporter krävs. Ett livstecken från en annan entity kan inte verifiera flöde, effekt, pumpstatus eller hygien. Osäker ålder är fortfarande en varning i Shadow.</Typography>}
         </Stack>
       </Box>;
     })}
@@ -299,6 +305,7 @@ function RoomsTab({ draft, setDraft, catalog }: { draft: ThermalConfig; setDraft
         <TextField label="Namn" value={room.name} onChange={(event) => update(index, { name: event.target.value })} required />
         <HomeAssistantEntityPicker catalog={catalog} entityId={room.entityId} expectedUnit="°C" rules={{ maximumReportAgeMinutes: room.maximumReportAgeMinutes, minimum: room.minimumValidC, maximum: room.maximumValidC }} label={`Temperaturentity för ${room.name}`} required onChange={(entity) => update(index, { entityId: entity?.entityId ?? '' })} />
         <ReportAgeField label={`Rapportgräns för ${room.name}`} value={room.maximumReportAgeMinutes} maximum={1440} onChange={(value) => update(index, { maximumReportAgeMinutes: value })} />
+        <SensorLivenessFields key={catalog.connectionRevisionUtc} catalog={catalog} label={room.name} value={{ ...room, role: 'room' }} onChange={changes => update(index, changes)} />
         <Stack direction="row" gap={2} flexWrap="wrap" alignItems="center">
           <TextField type="number" label="Offset °C" value={room.targetOffsetC} onChange={(event) => update(index, { targetOffsetC: Number(event.target.value) })} inputProps={{ step: .1, min: -5, max: 5 }} sx={{ width: 110 }} />
           <TextField type="number" label="Vikt" value={room.weight} onChange={(event) => update(index, { weight: Number(event.target.value) })} inputProps={{ step: .1, min: 0, max: 100 }} sx={{ width: 100 }} />
@@ -324,6 +331,7 @@ function validate(config: ThermalConfig | null): string[] { if (!config) return 
 function validateSensorMappings(config: ThermalConfig | null, catalog: EntityCatalogView): string[] {
   if (!config) return [];
   const errors: string[] = [];
+  [...config.rooms, ...config.entities].forEach(mapping => { const issue = livenessConfigError(mapping); if (issue) errors.push(issue); });
   const check = (label: string, entityId: string, unit: string, age: number | null | undefined, maximum: number, minimumValue?: number | null, maximumValue?: number | null) => {
     if (age != null && (!Number.isInteger(age) || age < 1 || age > maximum)) errors.push(`${label}: rapportgränsen måste vara 1–${maximum} minuter.`);
     if (unit === 'forecast' && entityId.startsWith('weather.')) return; // Forecast capability is tested through the dedicated read-only HA action.

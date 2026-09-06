@@ -38,6 +38,7 @@ export default function ThermalModelPage() {
         description="Husmodellen beskriver luft, byggnadsmassa och värmeförlust. Modellfel mäts på separata data som inte använts för träning eller val av vind- och solpåverkan."
         action={<Button variant="outlined" startIcon={<RefreshIcon />} onClick={refresh} disabled={models.isFetching || history.isFetching || config.isFetching}>Hämta underlag igen</Button>} />
       <Alert severity="info">En validerad modell är inte ett godkännande av aktiv styrning. Lägesguiden kontrollerar även verkliga uppvärmningsdygn, rumskomfort, grundkurva och övriga säkerhetskrav.</Alert>
+      <Alert severity="info">Vanliga programuppdateringar kräver inte omträning. Modellen kan återanvändas när modellformat, algoritm, urvalsregel och träningsunderlag fortfarande är kompatibla. Träningens kodrevision behålls för spårbarhet. Om modellen underkänns skyddar Daikins grundkurva uppvärmningen; modellen får inte kringgå säkerhetskraven.</Alert>
       {models.isLoading && <Typography role="status">Hämtar modellunderlag…</Typography>}
       {models.isError && <Alert severity="error">Modellunderlaget kunde inte hämtas. Tidigare sparade godkännanden visas inte som aktuella. Försök hämta det igen.</Alert>}
       {!models.isLoading && !models.isError && <>
@@ -131,7 +132,7 @@ function SourceDetails({ model, verified }: { model: ThermalModelVersion | undef
     <Typography fontWeight={700}>Versionsbundet träningsunderlag</Typography>
     <Typography variant="body2">Källurval: {date(model.provenance.selectionFromUtc!)} – {date(model.provenance.selectionToUtc!)}</Typography>
     <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>Algoritm: {model.provenance.algorithmVersion} · urvalsregel: {model.provenance.selectionVersion}</Typography>
-    <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>Byggrevision: {shortRevision(model.provenance.buildRevision)}</Typography>
+    <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>Kodrevision vid träning: {shortRevision(model.provenance.buildRevision)} · spårbarhet, inte krav på samma apprelease</Typography>
     <Typography variant="body2">{integer(model.provenance.trainingSamples!)} träningspunkter · {integer(model.provenance.validationSamples!)} valideringspunkter</Typography>
   </Box>;
 }

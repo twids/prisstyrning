@@ -9,6 +9,26 @@ namespace Prisstyrning.Tests.Thermal;
 
 public sealed class HomeAssistantHistoryImportTests
 {
+    [Fact]
+    public async Task History_UsesOnlyContemporaneousLivenessAndPreservesOldMeasurementTimestamp()
+    {
+        await using var db = HistoryDatabase();
+        var from = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        db.ThermalRoomConfigs.Add(new ThermalRoomConfig { UserId = "test", EntityId = "sensor.room", FreshnessEntityId = "sensor.seen" });
+        await db.SaveChangesAsync();
+        var client = new FakeHistoryClient(new Dictionary<string, IReadOnlyList<HomeAssistantState>>
+        {
+            ["sensor.room"] = [State("sensor.room", "21", "°C", from.AddHours(-2)) with { ReceivedAtUtc = DateTimeOffset.UtcNow }],
+            ["sensor.seen"] = [State("sensor.seen", from.ToString("O"), "timestamp", from) with { ReceivedAtUtc = DateTimeOffset.UtcNow }]
+        });
+        var report = await new HomeAssistantHistoryImportService(db, client).PreviewAsync("test", from, from.AddMinutes(20));
+        var sensor = Assert.Single(report.Sensors);
+        Assert.Equal(3, sensor.Valid);
+        Assert.Equal(2, sensor.Stale);
+        Assert.Equal(0, sensor.Invalid);
+        Assert.Empty(await db.ThermalTelemetrySamples.ToListAsync());
+    }
+
     [Theory]
     [InlineData("unknown", false)]
     [InlineData("unknown", true)]

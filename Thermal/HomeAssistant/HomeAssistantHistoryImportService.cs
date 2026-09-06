@@ -76,6 +76,7 @@ public sealed class HomeAssistantHistoryImportService
             .Where(x => x.UserId == userId && x.Enabled)
             .ToListAsync(cancellationToken);
         var entityIds = entityConfigs.Select(x => x.EntityId).Concat(rooms.Select(x => x.EntityId))
+            .Concat(entityConfigs.Select(x => x.FreshnessEntityId).Concat(rooms.Select(x => x.FreshnessEntityId)).OfType<string>())
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (entityIds.Length == 0) throw new ArgumentException("Det finns inga aktiverade HA-entities att importera.");
 
@@ -113,7 +114,9 @@ public sealed class HomeAssistantHistoryImportService
             {
                 var raw = cursors[config.EntityId].At(bucket);
                 var assessed = tracker.Assess($"entity|{config.Role}|{config.EntityId}", raw, SensorValueNormalizer.Normalize(raw, config.ExpectedUnit),
-                    new(config.MinimumValid, config.MaximumValid, config.MaximumRatePerHour, SensorFreshnessPolicy.ReportAge(config.MaximumReportAgeMinutes, staleAfter)), bucket, historyImportedAtUtc: importedAt);
+                    new(config.MinimumValid, config.MaximumValid, config.MaximumRatePerHour, SensorFreshnessPolicy.ReportAge(config.MaximumReportAgeMinutes, staleAfter)), bucket, historyImportedAtUtc: importedAt,
+                    liveness: SensorLiveness.AllowedForRole(config.Role)
+                        ? SensorLiveness.Resolve(raw, config.FreshnessEntityId, config.FreshnessAttribute, id => cursors.GetValueOrDefault(id)?.At(bucket), bucket, importedAt) : null);
                 values[config.Role] = assessed;
                 entityQuality[config.Role] = Quality(assessed);
                 coverage[$"entity|{config.Role}|{config.EntityId}"].Add(assessed);
@@ -125,7 +128,8 @@ public sealed class HomeAssistantHistoryImportService
             {
                 var raw = cursors[room.EntityId].At(bucket);
                 var assessed = tracker.Assess($"room|{room.EntityId}", raw, SensorValueNormalizer.Normalize(raw, "°C"),
-                    new(room.MinimumValidC, room.MaximumValidC, room.MaximumRateCPerHour, SensorFreshnessPolicy.ReportAge(room.MaximumReportAgeMinutes, staleAfter)), bucket, historyImportedAtUtc: importedAt);
+                    new(room.MinimumValidC, room.MaximumValidC, room.MaximumRateCPerHour, SensorFreshnessPolicy.ReportAge(room.MaximumReportAgeMinutes, staleAfter)), bucket, historyImportedAtUtc: importedAt,
+                    liveness: SensorLiveness.Resolve(raw, room.FreshnessEntityId, room.FreshnessAttribute, id => cursors.GetValueOrDefault(id)?.At(bucket), bucket, importedAt));
                 roomQuality[room.EntityId] = Quality(assessed);
                 coverage[$"room|{room.EntityId}"].Add(assessed);
                 if (assessed.Quality == DataQuality.Valid && !assessed.Excluded && assessed.Value is { } value)

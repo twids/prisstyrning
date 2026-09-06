@@ -75,6 +75,10 @@ public sealed record DecisionReason(
 
 public sealed record ThermalModeRequest(ControlMode Mode, bool Confirmed = false);
 public sealed record WeatherTestRequest(string EntityId);
+public sealed record SensorFreshnessRequest(string EntityId, string Role, int? MaximumReportAgeMinutes,
+    string? FreshnessEntityId, string? FreshnessAttribute);
+public sealed record SensorFreshnessPreview(DataQuality Quality, string? Reason, DateTimeOffset CheckedAtUtc,
+    DateTimeOffset? ValueUpdatedUtc, DateTimeOffset? LivenessUtc);
 
 public sealed record ThermalOverrideRequest(
     DateTimeOffset? UntilUtc,

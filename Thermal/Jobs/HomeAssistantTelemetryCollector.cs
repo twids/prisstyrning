@@ -112,7 +112,10 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
                 SensorFreshnessPolicy.ReportAge(entity.MaximumReportAgeMinutes, staleAfter),
                 userId,
                 revision,
-                connectionReady);
+                connectionReady,
+                SensorLiveness.AllowedForRole(entity.Role)
+                    ? SensorLiveness.Resolve(raw, entity.FreshnessEntityId, entity.FreshnessAttribute, id => snapshot.GetValueOrDefault(id), now)
+                    : null);
         }
 
         var roomValues = new Dictionary<string, double>();
@@ -131,7 +134,8 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
                 SensorFreshnessPolicy.ReportAge(room.MaximumReportAgeMinutes, staleAfter),
                 userId,
                 revision,
-                connectionReady);
+                connectionReady,
+                SensorLiveness.Resolve(raw, room.FreshnessEntityId, room.FreshnessAttribute, id => snapshot.GetValueOrDefault(id), now));
             roomAssessments[room.EntityId] = assessment;
             if (assessment.Quality == DataQuality.Valid && !assessment.Excluded && assessment.Value is { } valid)
             {
@@ -224,7 +228,8 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
         TimeSpan staleAfter,
         string userId,
         DateTimeOffset revision,
-        bool connectionReady)
+        bool connectionReady,
+        SensorLivenessEvidence? liveness = null)
     {
         var normalized = SensorValueNormalizer.Normalize(state, expectedUnit);
         if (!connectionReady)
@@ -235,7 +240,8 @@ public sealed class HomeAssistantTelemetryCollector : BackgroundService
             normalized,
             new SensorValidationRules(minimum, maximum, maximumRatePerHour, staleAfter),
             now,
-            configurationRevisionUtc: revision);
+            configurationRevisionUtc: revision,
+            liveness: liveness);
     }
 
     private static double? Numeric(IReadOnlyDictionary<string, SensorAssessment> values, string role) =>
