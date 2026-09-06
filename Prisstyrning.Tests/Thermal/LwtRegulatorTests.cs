@@ -215,6 +215,32 @@ public class LwtRegulatorTests
         Assert.Equal(1, decision.RequestedDeviationC);
     }
 
+    [Theory]
+    [InlineData(.5, 1)]
+    [InlineData(-.5, -1)]
+    [InlineData(.4, 0)]
+    public void Evaluate_UsesAdvertisedWholeDegreeStep(double planned, double expected)
+    {
+        var decision = new LwtRegulator().Evaluate(ValidInput() with { PlannedDeviationC = planned, DeviationStepC = 1 });
+        Assert.Equal(expected, decision.RequestedDeviationC);
+        Assert.False(decision.IsFallback);
+    }
+
+    [Fact]
+    public void Evaluate_QuantizationNeverExceedsNonAlignedSafetyLimit()
+    {
+        var decision = new LwtRegulator().Evaluate(ValidInput() with { PlannedDeviationC = 1.5, DeviationLimitC = 1.5, DeviationStepC = 1 });
+        Assert.Equal(1, decision.RequestedDeviationC);
+    }
+
+    [Fact]
+    public void Evaluate_UnknownStepFallsBackToZero()
+    {
+        var decision = new LwtRegulator().Evaluate(ValidInput() with { DeviationStepC = double.NaN, CurrentDeviationC = 1 });
+        Assert.True(decision.IsFallback);
+        Assert.Equal(0, decision.RequestedDeviationC);
+    }
+
     private static LwtRegulatorInput ValidInput() => new(
         ControlMode.LwtActive,
         Now,

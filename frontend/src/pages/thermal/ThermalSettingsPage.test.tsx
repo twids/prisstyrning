@@ -77,6 +77,20 @@ describe('HomeAssistantConnectionPanel', () => {
     }));
   });
 
+  it('kan välja climate som skrivreglage men förklarar separat numerisk återkoppling', async () => {
+    const user = userEvent.setup();
+    render(<HomeAssistantConnectionPanel ha={homeAssistantHook()} connection={null} />);
+    await user.type(screen.getByLabelText(/Home Assistant-adress/i), 'https://ha.example.se');
+    await user.type(screen.getByLabelText(/^Telemetritoken$/i), 'synthetic-token');
+    await user.type(screen.getByLabelText('Tillåten LWT-avvikelse-entity'), 'climate.bridge0_lwt_deviation_heating');
+    expect(screen.getByRole('button', { name: 'Spara HA-anslutning' })).toBeEnabled();
+    expect(screen.getByText(/Välj den numeriska återkopplingssensorn separat/)).toBeInTheDocument();
+    expect(save).not.toHaveBeenCalled();
+    await user.clear(screen.getByLabelText('Tillåten LWT-avvikelse-entity'));
+    await user.type(screen.getByLabelText('Tillåten LWT-avvikelse-entity'), 'sensor.bridge0_lwt_deviation_heating');
+    expect(screen.getByRole('button', { name: 'Spara HA-anslutning' })).toBeDisabled();
+  });
+
   it('har inga automatiskt identifierade tillgänglighetsfel i anslutningsformuläret', async () => {
     render(<main><HomeAssistantConnectionPanel ha={homeAssistantHook()} connection={null} /></main>);
     const result = await axe(document.body, { rules: { 'color-contrast': { enabled: false } } });

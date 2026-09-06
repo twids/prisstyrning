@@ -42,6 +42,16 @@ public sealed class ThermalDataService
         Validate(requested);
         userId = await _installations.ResolveUserAsync(userId, cancellationToken);
         var site = await EnsureSiteAsync(userId, cancellationToken, tracked: true);
+        if (ThermalEnumParser.ControlModeOrLegacy(site.ControlMode) is ControlMode.LwtActive or ControlMode.FullActive)
+        {
+            var previousFeedback = await _db.ThermalEntityConfigs.AsNoTracking()
+                .Where(x => x.UserId == userId && x.Role == ThermalEntityRoles.HeatingDeviation).ToListAsync(cancellationToken);
+            var nextFeedback = requested.Entities.Where(x => x.Role.Trim().Equals(ThermalEntityRoles.HeatingDeviation, StringComparison.OrdinalIgnoreCase));
+            var before = previousFeedback.Select(x => (x.EntityId, x.ExpectedUnit, x.Enabled)).OrderBy(x => x.EntityId);
+            var after = nextFeedback.Select(x => (EntityId: x.EntityId.Trim(), ExpectedUnit: x.ExpectedUnit.Trim(), x.Enabled)).OrderBy(x => x.EntityId);
+            if (!before.SequenceEqual(after))
+                throw new InvalidOperationException("Byt till Legacy eller Shadow och nollställ LWT innan återkopplingssensorn ändras.");
+        }
         if (requested.Site.ActiveDeviationLimitC > 1 && site.ActiveDeviationLimitC <= 1)
             await EnsureExtendedDeviationIsReadyAsync(userId, cancellationToken);
         CopySiteSettings(requested.Site, site);

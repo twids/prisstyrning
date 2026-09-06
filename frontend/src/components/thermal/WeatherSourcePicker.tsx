@@ -13,7 +13,7 @@ export default function WeatherSourcePicker({ catalog, entityId, onChange }: {
   const selected = options.find((entity) => entity.entityId === entityId);
   const result = test.data;
   return <Stack spacing={2}>
-    <Typography variant="h6">Gemensam väderkälla</Typography>
+    <Typography variant="h6" component="h3">Gemensam väderkälla</Typography>
     <Typography color="text.secondary">Välj en weather-entity från exempelvis SMHI eller met.no. Timprognosen hämtas separat från HA. Egna temperatur-, vind- och solgivare nedan är separata mätkällor, inte krav på fler prognosintegrationer.</Typography>
     <Autocomplete options={options} value={selected ?? null} loading={catalog.loading}
       getOptionLabel={(entity) => `${entity.friendlyName} · ${entity.entityId}`}

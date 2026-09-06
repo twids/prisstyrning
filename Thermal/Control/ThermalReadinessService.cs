@@ -147,12 +147,16 @@ public sealed class ThermalReadinessService
             checks.Add(Check("cop-model", "En separat validerad COP-modell är aktiv", copEvidence.Passed, copEvidence.Reason));
             checks.Add(Check(
                 "p1p2-control",
-                "P1P2-avvikelsen har en separat styranslutning och exakt tillåten number-entity",
+                "P1P2 har ett exakt tillåtet number/climate-reglage och numerisk återkoppling",
                 connection is { ControlEnabled: true, ControlTokenConfigured: true } &&
                 HomeAssistantTelemetryClient.IsSupportedBaseUrl(connection.BaseUrl) &&
-                HomeAssistantControlClient.IsAllowedNumberEntity(connection.HeatingDeviationEntityId) &&
-                entities.Any(x => x.Role == ThermalEntityRoles.HeatingDeviation && x.EntityId == connection.HeatingDeviationEntityId),
-                "Aktivera kontots separata HA-styrtoken och mappa exakt Deviation_Heating-entity."));
+                LwtControlBinding.IsActuator(connection.HeatingDeviationEntityId) &&
+                entities.Any(x => x.Role == ThermalEntityRoles.HeatingDeviation) &&
+                LwtControlBinding.FeedbackEntity(connection.HeatingDeviationEntityId, entities) is { } feedbackId &&
+                _cache.TryGet(userId, feedbackId, out var feedbackState) && LwtControlBinding.NumericFeedback(feedbackState, now) &&
+                _cache.TryGet(userId, connection.HeatingDeviationEntityId, out var actuatorState) &&
+                LwtControlBinding.Step(connection.HeatingDeviationEntityId, actuatorState, now, site?.ActiveDeviationLimitC ?? 1) is not null,
+                "Välj P1P2-reglaget under HA-styrning och dess numeriska avvikelsesensor under Entities. Kontrollera aktuellt intervall/steg; byt manuellt från RT först vid grundkurveprovet."));
 
             if (site?.ActiveDeviationLimitC > 1)
             {

@@ -106,8 +106,8 @@ public sealed class HomeAssistantConnectionService
         var baseUri = await _endpointValidator.ValidateAsync(request.BaseUrl, cancellationToken);
         if (request.StaleAfterMinutes is < 1 or > 60) throw new ArgumentException("Stale-gränsen måste vara 1–60 minuter.");
         if (!string.IsNullOrWhiteSpace(request.HeatingDeviationEntityId) &&
-            !HomeAssistantControlClient.IsAllowedNumberEntity(request.HeatingDeviationEntityId))
-            throw new ArgumentException("P1P2-avvikelsen måste vara ett giltigt number-entity-ID.");
+            !LwtControlBinding.IsActuator(request.HeatingDeviationEntityId))
+            throw new ArgumentException("P1P2-reglaget måste vara ett giltigt number- eller climate-entity-ID.");
         if (request.ControlEnabled && (string.IsNullOrWhiteSpace(request.HeatingDeviationEntityId)))
             throw new ArgumentException("Styrning kräver ett tillåtet P1P2 entity-ID.");
 
