@@ -81,6 +81,40 @@ public class ShadowLearningTests
         Assert.Single(await db.ThermalModelVersions.ToArrayAsync());
     }
 
+    [Theory]
+    [InlineData(false, 0, true)]
+    [InlineData(true, 0, false)]
+    [InlineData(false, 1, false)]
+    public async Task MissingRoomOnlyBlocksIfCriticalOrWeighted(bool critical, double weight, bool expectedModel)
+    {
+        await using var db = Database();
+        Configure(db);
+        var now = DateTimeOffset.UtcNow;
+        db.ThermalRoomConfigs.Add(new ThermalRoomConfig
+        {
+            UserId = "account-a", EntityId = "sensor.observation_only", Enabled = true,
+            IsCritical = critical, Weight = weight
+        });
+        db.ThermalTelemetrySamples.Add(ThermalModelTrainingDataTests.ValidSample(now.AddMinutes(-5)));
+        await db.SaveChangesAsync();
+
+        var job = new ShadowLearningJob(db);
+        await job.TrainAsync("account-a", now, CancellationToken.None);
+        var versions = await job.GetAsync("account-a", now, CancellationToken.None);
+        Assert.Equal(expectedModel ? 1 : 0, versions.Count);
+        if (expectedModel)
+        {
+            // Later scoring must use the same relevant rooms as fitting.
+            db.ThermalTelemetrySamples.Add(ThermalModelTrainingDataTests.ValidSample(now.AddHours(2)));
+            await db.SaveChangesAsync();
+            var scored = Assert.Single(await job.GetAsync("account-a", now.AddHours(2), CancellationToken.None));
+            Assert.Equal(0, scored.TwoHourErrorC);
+        }
+        Assert.Empty(await db.ThermalControlCommands.ToListAsync());
+        Assert.Equal("Shadow", (await db.ThermalSiteConfigs.SingleAsync()).ControlMode);
+        Assert.Equal("Legacy", (await db.ThermalSiteConfigs.SingleAsync()).DhwWriter);
+    }
+
     private static PrisstyrningDbContext Database() => new(new DbContextOptionsBuilder<PrisstyrningDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
     private static void Configure(PrisstyrningDbContext db, string mode = "Shadow")
     {

@@ -17,6 +17,7 @@ describe('Shadow learning', () => {
     const { container } = render(<main><ShadowLearningPanel versions={[version]} failed={false} refresh={refresh} /></main>);
     expect(screen.getByText(/Preliminär baslinje/)).toBeInTheDocument();
     expect(screen.getByText(/Värmerespons och LWT-förslag är ännu inte verifierade/)).toBeInTheDocument();
+    expect(screen.getByText(/Ett icke-kritiskt rum med vikt 0 används bara för uppföljning/)).toBeInTheDocument();
     expect(screen.getByRole('img', { name: /Temperaturprognos/ })).toBeInTheDocument();
     expect(refresh).not.toHaveBeenCalled();
     expect((await axe(container)).violations).toEqual([]);
