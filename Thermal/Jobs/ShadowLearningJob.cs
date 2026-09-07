@@ -113,7 +113,10 @@ public sealed class ShadowLearningJob(PrisstyrningDbContext db)
     }
 
     private Task<ThermalRoomConfig[]> Rooms(string userId, CancellationToken ct) => db.ThermalRoomConfigs.AsNoTracking()
-        .Where(x => x.UserId == userId && x.Enabled).OrderBy(x => x.EntityId).ToArrayAsync(ct);
+        // Observation-only rooms do not contribute to this weighted forecast.
+        // Critical rooms still require evidence even when their weight is zero.
+        .Where(x => x.UserId == userId && x.Enabled && (x.IsCritical || x.Weight > 0))
+        .OrderBy(x => x.EntityId).ToArrayAsync(ct);
 
     private Task<ThermalTelemetrySample[]> Samples(string userId, DateTimeOffset now, CancellationToken ct) =>
         db.ThermalTelemetrySamples.AsNoTracking().Where(x => x.UserId == userId && x.TimestampUtc >= now.AddDays(-30) && x.TimestampUtc <= now)

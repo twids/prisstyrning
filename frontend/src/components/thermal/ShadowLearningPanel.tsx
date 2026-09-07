@@ -22,7 +22,7 @@ export default function ShadowLearningPanel({ versions, failed, refresh }: { ver
       <Alert severity="info">Preliminär temperaturmodell — endast skuggning. Den ändrar aldrig LWT, driftläge eller varmvatten. Du väljer själv när verifierad styrning får aktiveras.</Alert>
       <Typography>Startar med oförändrad rumstemperatur som enkel baslinje. En dämpad temperaturtrend väljs bara om den slår baslinjen på separat historik. Detta är inte en inlärd värmerespons eller en simulering av alternativ LWT.</Typography>
       <Button variant="outlined" disabled={busy} onClick={() => void update()}>Uppdatera skrivfri Shadow-modell</Button>
-      <Typography variant="caption">Uppdateras även varje timme i Shadow. Kräver en aktuell giltig rumstemperatur. Ingen träning eller aktivering i andra driftlägen.</Typography>
+      <Typography variant="caption">Uppdateras även varje timme i Shadow. Kräver aktuella giltiga värden för kritiska rum och rum med positiv vikt. Ett icke-kritiskt rum med vikt 0 används bara för uppföljning och blockerar inte startprognosen. Ingen träning eller aktivering i andra driftlägen.</Typography>
       {(failed || error) && <Alert severity="error">Shadow-underlaget kunde inte hämtas eller uppdateras. Ett tidigare resultat är inte en aktuell verifiering.</Alert>}
       {!failed && !version && <Typography>Ingen startprognos har sparats ännu. Välj minst ett kritiskt rum och invänta giltig, aktuell rumstemperatur. Saknad värmedata hindrar inte den enkla temperaturbaslinjen.</Typography>}
       {!failed && version && <>
