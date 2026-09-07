@@ -11,7 +11,8 @@ namespace Prisstyrning.Thermal.Jobs;
 public sealed record ShadowForecastPoint(DateTimeOffset TimestampUtc, double PredictedC, double? ActualC = null);
 public sealed record ShadowLearningState(string Stage, string Configuration, int Samples, int HeatingSamples,
     double? MinimumOutsideC, double? MaximumOutsideC, double TrendCPerHour,
-    double? HeldOutMaeC, double? PersistenceMaeC, IReadOnlyList<ShadowForecastPoint> Forecast);
+    double? HeldOutMaeC, double? PersistenceMaeC, IReadOnlyList<ShadowForecastPoint> Forecast,
+    int? AssumedSamples = null, int? IndependentSamples = null, bool InitialTemperatureAssumed = false);
 public sealed record ShadowLearningVersion(long Id, DateTimeOffset IssuedAtUtc, ShadowLearningState Learning,
     double? TwoHourErrorC, double? DayErrorC);
 
@@ -24,6 +25,7 @@ public sealed class ShadowLearningJob(PrisstyrningDbContext db)
 {
     internal const string ModelType = "ShadowTrend";
     private static readonly JsonSerializerOptions Json = JsonSerializerOptions.Web;
+    private sealed record Observation(DateTimeOffset Time, double Temperature, bool Assumed, DateTimeOffset?[] Sources);
 
     [DisableConcurrentExecution(1800)]
     public async Task ExecuteAsync(CancellationToken cancellationToken = default)
@@ -41,18 +43,19 @@ public sealed class ShadowLearningJob(PrisstyrningDbContext db)
         var signature = Signature(rooms);
         var samples = await Samples(userId, now, ct);
         var rows = Observations(samples, rooms);
-        if (rows.Length == 0 || now - rows[^1].Time > TimeSpan.FromMinutes(10)) return;
+        if (rows.Length == 0 || rows[^1].Time != samples[^1].TimestampUtc || now - rows[^1].Time > TimeSpan.FromMinutes(10)) return;
         var previous = await db.ThermalModelVersions.AsNoTracking().Where(x => x.UserId == userId && x.ModelType == ModelType)
             .OrderByDescending(x => x.CreatedAtUtc).FirstOrDefaultAsync(ct);
         if (previous is not null && now - previous.CreatedAtUtc < TimeSpan.FromMinutes(55) && Read(previous)?.Configuration == signature) return;
 
         // Candidate fits only the first partition. Both candidate and no-change
         // baseline are compared on the same later two-hour windows.
-        var split = (int)(rows.Length * .7);
-        var fit = rows.Take(split).ToArray();
-        var test = rows.Skip(split).ToArray();
-        var changes = fit.Zip(fit.Skip(1)).Where(p => p.Second.Time - p.First.Time == TimeSpan.FromMinutes(5))
-            .Select(p => (p.Second.Temperature - p.First.Temperature) * 12).Order().ToArray();
+        var independent = Independent(rows);
+        var split = (int)(independent.Length * .7);
+        var fit = independent.Take(split).ToArray();
+        var test = independent.Skip(split).ToArray();
+        var changes = fit.Zip(fit.Skip(1)).Where(p => p.Second.Time > p.First.Time && p.Second.Time - p.First.Time <= TimeSpan.FromHours(1))
+            .Select(p => (p.Second.Temperature - p.First.Temperature) / (p.Second.Time - p.First.Time).TotalHours).Order().ToArray();
         var candidate = changes.Length >= 24 ? Math.Clamp(changes[changes.Length / 2], -.3, .3) : 0;
         var candidateError = Score(test, candidate);
         var baselineError = Score(test, 0);
@@ -65,7 +68,8 @@ public sealed class ShadowLearningJob(PrisstyrningDbContext db)
         var learning = new ShadowLearningState(trend == 0 ? "Persistence" : "DampedTrend", signature, rows.Length,
             samples.Count(x => x.DhwActive == false && x.DefrostActive == false && x.HeatOutputKw > .5),
             outside.Length == 0 ? null : outside.Min(), outside.Length == 0 ? null : outside.Max(), trend,
-            trend == 0 ? baselineError : candidateError, baselineError, forecast);
+            trend == 0 ? baselineError : candidateError, baselineError, forecast,
+            rows.Count(x => x.Assumed), independent.Length, last.Assumed);
         db.ThermalModelVersions.Add(new ThermalModelVersion
         {
             UserId = userId, ModelType = ModelType, CreatedAtUtc = now,
@@ -79,7 +83,7 @@ public sealed class ShadowLearningJob(PrisstyrningDbContext db)
     {
         var rooms = await Rooms(userId, ct);
         var signature = Signature(rooms);
-        var actual = Observations(await Samples(userId, now, ct), rooms)
+        var actual = Independent(Observations(await Samples(userId, now, ct), rooms))
             .GroupBy(x => (x.Time.ToUnixTimeSeconds() + 150) / 300).Where(g => g.Count() == 1)
             .ToDictionary(g => g.Key, g => g.Single());
         var versions = await db.ThermalModelVersions.AsNoTracking()
@@ -91,6 +95,7 @@ public sealed class ShadowLearningJob(PrisstyrningDbContext db)
                 var points = x.State!.Forecast.Select(p => p with
                 {
                     ActualC = p.TimestampUtc <= now && actual.TryGetValue((p.TimestampUtc.ToUnixTimeSeconds() + 150) / 300, out var value) &&
+                        value.Sources.All(source => source > x.Version.CreatedAtUtc) &&
                         Math.Abs((value.Time - p.TimestampUtc).TotalMinutes) <= 2.5 ? value.Temperature : null
                 }).ToArray();
                 double? Error(int index) => points.Length > index && points[index].ActualC is { } value
@@ -101,13 +106,19 @@ public sealed class ShadowLearningJob(PrisstyrningDbContext db)
 
     internal static double Predict(double initial, double trend, double hours) => initial + trend * 3 * (1 - Math.Exp(-hours / 3));
 
-    private static double? Score((DateTimeOffset Time, double Temperature)[] rows, double trend)
+    private static double? Score(Observation[] rows, double trend)
     {
         var errors = new List<double>();
-        for (var i = 0; i + 24 < rows.Length; i += 24)
+        for (var i = 0; i < rows.Length; i++)
         {
-            if (Enumerable.Range(i, 24).Any(j => rows[j + 1].Time - rows[j].Time != TimeSpan.FromMinutes(5))) continue;
-            errors.Add(Math.Abs(Predict(rows[i].Temperature, trend, 2) - rows[i + 24].Temperature));
+            // Evaluate real two-hour endpoints, not a required count of five-
+            // minute reports. Intermediate held states are not fitted/scored.
+            var target = rows[i].Time.AddHours(2);
+            var end = Array.FindIndex(rows, i + 1, x => x.Time >= target.AddMinutes(-2.5));
+            if (end < 0) break;
+            if (rows[end].Time > target.AddMinutes(2.5)) continue;
+            errors.Add(Math.Abs(Predict(rows[i].Temperature, trend, (rows[end].Time - rows[i].Time).TotalHours) - rows[end].Temperature));
+            i = end - 1;
         }
         return errors.Count == 0 ? null : errors.Average();
     }
@@ -122,16 +133,35 @@ public sealed class ShadowLearningJob(PrisstyrningDbContext db)
         db.ThermalTelemetrySamples.AsNoTracking().Where(x => x.UserId == userId && x.TimestampUtc >= now.AddDays(-30) && x.TimestampUtc <= now)
             .OrderBy(x => x.TimestampUtc).ToArrayAsync(ct);
 
-    private static (DateTimeOffset Time, double Temperature)[] Observations(IEnumerable<ThermalTelemetrySample> samples, ThermalRoomConfig[] rooms)
+    private static Observation[] Observations(IEnumerable<ThermalTelemetrySample> samples, ThermalRoomConfig[] rooms)
     {
         if (rooms.Length == 0 || !rooms.Any(x => x.IsCritical)) return [];
         return samples.GroupBy(x => x.TimestampUtc).Where(x => x.Count() == 1).Select(x => x.Single()).Select(sample =>
         {
-            var values = ThermalModelTrainingData.ReadRooms(sample);
-            var valid = rooms.All(r => values.TryGetValue(r.EntityId, out var value) && value >= r.MinimumValidC && value <= r.MaximumValidC);
+            var values = ShadowRoomStateData.Read(sample);
+            var valid = rooms.All(r => values.TryGetValue(r.EntityId, out var value) && value.Value >= r.MinimumValidC && value.Value <= r.MaximumValidC);
             var weight = rooms.Sum(r => r.Weight);
-            return (sample.TimestampUtc, Value: valid && weight > 0 ? (double?)rooms.Sum(r => (values[r.EntityId] - r.TargetOffsetC) * r.Weight) / weight : null);
-        }).Where(x => x.Value is { } v && double.IsFinite(v)).Select(x => (x.TimestampUtc, x.Value!.Value)).OrderBy(x => x.TimestampUtc).ToArray();
+            return valid && weight > 0 ? new Observation(sample.TimestampUtc,
+                rooms.Sum(r => (values[r.EntityId].Value - r.TargetOffsetC) * r.Weight) / weight,
+                rooms.Any(r => values[r.EntityId].Assumed), rooms.Select(r => values[r.EntityId].SourceTimestampUtc).ToArray()) : null;
+        }).OfType<Observation>().Where(x => double.IsFinite(x.Temperature)).OrderBy(x => x.Time).ToArray();
+    }
+
+    private static Observation[] Independent(IEnumerable<Observation> rows)
+    {
+        var result = new List<Observation>();
+        DateTimeOffset?[]? previous = null;
+        foreach (var row in rows)
+        {
+            // Re-reading HA, explicit heartbeats and assumed unchanged states
+            // are not independent temperature evidence. All relevant rooms must
+            // advance their source timestamp before this row can train/score.
+            if (row.Assumed || row.Sources.Any(x => x is null) ||
+                previous is not null && row.Sources.Where((source, i) => source <= previous[i]).Any()) continue;
+            result.Add(row);
+            previous = row.Sources;
+        }
+        return result.ToArray();
     }
 
     private static string Signature(ThermalRoomConfig[] rooms) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(

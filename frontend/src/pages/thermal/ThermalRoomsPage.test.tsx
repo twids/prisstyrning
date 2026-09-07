@@ -68,6 +68,24 @@ describe('ThermalRoomsPage', () => {
     expect(screen.queryByText(/Giltig ·/)).not.toBeInTheDocument();
   });
 
+  it('visar oförändrad temperatur och dess ålder med tydligt antagande och tillgänglig märkning', async () => {
+    const changed = '2026-08-30T12:00:00Z';
+    hooks.history.mockReturnValue({ data: [{ ...sample, roomTemperaturesJson: '{}', qualityJson: JSON.stringify({
+      collectedAtUtc: sample.timestampUtc,
+      rooms: { [room.entityId]: { Quality: 1, Excluded: false, Usage: 'AssumedUnchanged', Value: 21.2,
+        ValueChangedUtc: changed, ValueUpdatedUtc: changed, SourceTimestampUtc: changed, ReceivedAtUtc: sample.timestampUtc } },
+    }) }], isError: false });
+    const { container } = renderRooms();
+    expect(screen.getByText('Antaget oförändrat')).toBeInTheDocument();
+    expect(screen.getByText('Antagen rumstemperatur')).toBeInTheDocument();
+    expect(screen.getByText('Antagen komfortmarginal')).toBeInTheDocument();
+    expect(screen.getByText(/21,2/)).toBeInTheDocument();
+    expect(screen.getByText(/Senaste temperaturändring/).querySelector('time')).toHaveAttribute('datetime', changed);
+    expect(screen.queryByText('Aktuell temperatur okänd')).not.toBeInTheDocument();
+    expect(screen.queryByText('Giltig')).not.toBeInTheDocument();
+    expect((await axe(container)).violations).toEqual([]);
+  });
+
   it('beräknar inte aktuell komfortmarginal från en gammal mätning', () => {
     hooks.history.mockReturnValue({ data: [{ ...sample, timestampUtc: new Date(now - 11 * 60_000).toISOString() }], isLoading: false, isError: false });
     renderRooms();

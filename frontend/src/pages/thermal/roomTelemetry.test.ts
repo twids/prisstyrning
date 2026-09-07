@@ -83,4 +83,46 @@ describe('describeRoomReading', () => {
   it('hanterar att ingen snapshot finns', () => {
     expect(describeRoomReading(room, undefined, now)).toMatchObject({ status: 'Unavailable', current: false, value: null });
   });
+
+  const assumed = () => ({ ...sample, roomTemperaturesJson: '{"sensor.room":25}', qualityJson: JSON.stringify({
+    collectedAtUtc: sample.timestampUtc,
+    rooms: { [room.entityId]: { Quality: 1, Excluded: false, Usage: 'AssumedUnchanged', Value: 21.2,
+      ValueUpdatedUtc: new Date(now - 12 * 3_600_000).toISOString(), SourceTimestampUtc: new Date(now - 12 * 3_600_000).toISOString(),
+      ValueChangedUtc: new Date(now - 12 * 3_600_000).toISOString(), ReceivedAtUtc: sample.timestampUtc } },
+  }) });
+
+  it('visar uttryckligen antaget värde från HA, aldrig det syntetiska reservvärdet', () => {
+    expect(describeRoomReading(room, assumed(), now)).toMatchObject({
+      status: 'AssumedUnchanged', kind: 'assumed', current: false, value: 21.2,
+      receivedAtUtc: sample.timestampUtc,
+    });
+  });
+
+  it('kräver inte kontrollreserv eller kritiskt rum för att visa antagen temperatur', () => {
+    expect(describeRoomReading({ ...room, isCritical: false }, { ...assumed(), roomTemperaturesJson: '{}' }, now))
+      .toMatchObject({ status: 'AssumedUnchanged', value: 21.2, current: false });
+  });
+
+  it.each(['history', 'excluded', 'invalid', 'unavailable', 'old-receipt', 'missing-receipt', 'future-report', 'bad-value', 'old-marker', 'duplicate-quality'])('godkänner inte antaget oförändrat vid %s', fault => {
+    const snapshot = assumed();
+    const metadata = JSON.parse(snapshot.qualityJson);
+    const assessment = metadata.rooms[room.entityId];
+    if (fault === 'history') metadata.source = 'HomeAssistantHistoryImport';
+    if (fault === 'excluded') assessment.Excluded = true;
+    if (fault === 'invalid') assessment.Quality = 2;
+    if (fault === 'unavailable') assessment.Quality = 3;
+    if (fault === 'old-receipt') assessment.ReceivedAtUtc = new Date(now - 11 * 60_000).toISOString();
+    if (fault === 'missing-receipt') delete assessment.ReceivedAtUtc;
+    if (fault === 'future-report') assessment.SourceTimestampUtc = new Date(now + 60_000).toISOString();
+    if (fault === 'bad-value') assessment.Value = 100;
+    if (fault === 'old-marker') assessment.Usage = 'HeldRoom';
+    if (fault === 'duplicate-quality') assessment.quality = 0;
+    snapshot.qualityJson = JSON.stringify(metadata);
+    expect(describeRoomReading(room, snapshot, now).status).not.toBe('AssumedUnchanged');
+  });
+
+  it('slutar anta aktuell temperatur när kommunikationen eller hämtningen inte längre kan verifieras', () => {
+    expect(describeRoomReading(room, assumed(), now + 11 * 60_000).status).toBe('Stale');
+    expect(describeRoomReading(room, assumed(), now, true).status).toBe('FetchError');
+  });
 });

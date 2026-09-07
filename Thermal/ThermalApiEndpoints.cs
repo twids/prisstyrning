@@ -281,7 +281,9 @@ public static class ThermalApiEndpoints
                 var result = SensorTimestampValidator.Assess(raw, now,
                     SensorFreshnessPolicy.ReportAge(request.Role, request.MaximumReportAgeMinutes, TimeSpan.FromMinutes(Math.Clamp(config.StaleAfterMinutes, 1, 60))), liveness: liveness);
                 if (raw is not null && (string.IsNullOrWhiteSpace(raw.State) || raw.State.Trim().ToLowerInvariant() is "unknown" or "unavailable"))
-                    result = (DataQuality.Unavailable, "HA saknar ett tillgängligt sensorvärde. Ett livstecken ersätter inte värdet.");
+                    result = new(DataQuality.Unavailable, "HA saknar ett tillgängligt sensorvärde. Ett livstecken ersätter inte värdet.");
+                if (request.Role == "room" && result.ReportAgeOnly)
+                    result = result with { Reason = "Rapportåldern är osäker, men en aktuell HA-avläsning finns. Ett rimligt rumsvärde kan användas som antaget oförändrat i skrivfri Shadow. Värde, enhet och förändringstakt kontrolleras separat; detta godkänner inte aktiv styrning." };
                 return Results.Ok(new SensorFreshnessPreview(result.Quality, result.Reason ?? "Rapportåldern ligger inom vald gräns. Värde, enhet och rimlighet kontrolleras separat.", now, raw?.LastUpdatedUtc, liveness?.TimestampUtc));
             }
             catch (ArgumentException exception) { return Results.BadRequest(new { error = exception.Message }); }

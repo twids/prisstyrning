@@ -338,6 +338,7 @@ export interface ShadowLearningVersion {
   dayErrorC: number | null;
   learning: {
     stage: string; samples: number; heatingSamples: number;
+    assumedSamples?: number | null; independentSamples?: number | null; initialTemperatureAssumed?: boolean;
     minimumOutsideC: number | null; maximumOutsideC: number | null;
     trendCPerHour: number; heldOutMaeC: number | null; persistenceMaeC: number | null;
     forecast: { timestampUtc: string; predictedC: number; actualC: number | null }[];

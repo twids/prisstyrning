@@ -3,9 +3,11 @@ using Prisstyrning.Thermal.Domain;
 
 namespace Prisstyrning.Thermal.HomeAssistant;
 
-// Display context never upgrades the physical assessment used by control/training.
+// Usage never upgrades the physical assessment used by control/heat-response
+// training. Only the write-free Shadow baseline may consume AssumedUnchanged.
 public sealed record ThermalSensorUsage(DataQuality Quality, string? Reason, bool Excluded,
-    double? Value, DateTimeOffset? ValueUpdatedUtc, string Usage);
+    double? Value, DateTimeOffset? ValueUpdatedUtc, string Usage,
+    DateTimeOffset? SourceTimestampUtc = null, DateTimeOffset? ValueChangedUtc = null, DateTimeOffset? ReceivedAtUtc = null);
 
 public static class ThermalSensorUsagePolicy
 {
@@ -47,12 +49,16 @@ public static class ThermalSensorUsagePolicy
             usage = "HeldWhileIdle";
             reason = "Värmepumpens aktuella eleffekt visar vila. Behållet värde visas, men är inte en ny mätning för styrning eller COP-träning.";
         }
-        else if (communicable && role == "room" && assessment.Quality == DataQuality.Stale)
+        else if (communicable && role == "room" && assessment.Quality == DataQuality.Stale &&
+                 assessment.ReportAgeOnly && historyImportedAtUtc is null && assessment.Value is { } value && double.IsFinite(value))
         {
-            usage = "HeldRoom";
-            reason = "Senast rapporterad rumstemperatur. Osäker ålder är en varning, inte ett konstaterat sensorfel.";
+            usage = "AssumedUnchanged";
+            reason = "Antaget oförändrad rumstemperatur från en aktuell HA-avläsning. Kan användas i skrivfri Shadow, men är inte en ny bekräftad mätning eller underlag för aktiv styrning.";
         }
         return new(assessment.Quality, reason, assessment.Excluded,
-            communicable ? assessment.Value : null, raw?.LastUpdatedUtc, usage);
+            communicable ? assessment.Value : null, raw?.LastUpdatedUtc, usage,
+            role == "room" ? assessment.SourceTimestampUtc : null,
+            role == "room" ? raw?.LastChangedUtc : null,
+            role == "room" ? raw?.ReceivedAtUtc : null);
     }
 }

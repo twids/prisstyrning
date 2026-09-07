@@ -15,6 +15,7 @@ import { describeRoomReading } from './roomTelemetry';
 const number = new Intl.NumberFormat('sv-SE', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const readingStyle = {
   Valid: { label: 'Giltig', color: 'success', icon: <CheckCircleOutlineIcon /> },
+  AssumedUnchanged: { label: 'Antaget oförändrat', color: 'warning', icon: <InfoOutlinedIcon /> },
   Stale: { label: 'Gammal', color: 'warning', icon: <ScheduleIcon /> },
   Invalid: { label: 'Ogiltig', color: 'error', icon: <ReportProblemOutlinedIcon /> },
   Excluded: { label: 'Exkluderad', color: 'error', icon: <ReportProblemOutlinedIcon /> },
@@ -57,14 +58,15 @@ export default function ThermalRoomsPage() {
       {history.isLoading && <Typography role="status">Hämtar rumsmätningar…</Typography>}
       {!config.isError && config.data?.rooms.length === 0 && <Alert severity="info">Inga rum är konfigurerade. Lägg till rum och välj entities under Inställningar.</Alert>}
       {activeRooms.length > 0 && <Typography color="text.secondary">
-        {activeRooms.filter(({ reading }) => reading.current).length} av {activeRooms.length} aktiverade rum har ett aktuellt giltigt mätvärde. Komfortmarginal visas bara för dessa mätningar.
+        {activeRooms.filter(({ reading }) => reading.current).length} av {activeRooms.length} aktiverade rum har ett aktuellt giltigt mätvärde. {activeRooms.filter(({ reading }) => reading.kind === 'assumed').length} rum har antaget oförändrat värde för Shadow. En antagen komfortmarginal är inte verifierad komfort.
       </Typography>}
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))', xl: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
         {readings.map(({ room, reading }) => {
           const target = config.data!.site.baseRoomTargetC + room.targetOffsetC;
           const lower = target - config.data!.site.lowerComfortBandC;
           const upper = target + config.data!.site.upperComfortBandC;
-          const margin = reading.current && reading.value !== null ? reading.value - lower : null;
+          const assumed = reading.kind === 'assumed';
+          const margin = (reading.current || assumed) && reading.value !== null ? reading.value - lower : null;
           const style = readingStyle[reading.status];
           const titleId = 'room-title-' + room.id;
           return (
@@ -78,7 +80,7 @@ export default function ThermalRoomsPage() {
                 </Stack>
               </Stack>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 3 }}>
-                {reading.kind === 'fallback' ? 'Sparat reservvärde' : reading.current ? 'Senaste giltiga mätvärde' : reading.kind === 'measurement' ? 'Sparat mätvärde' : 'Aktuell temperatur okänd'}
+                {assumed ? 'Antagen rumstemperatur' : reading.kind === 'fallback' ? 'Sparat reservvärde' : reading.current ? 'Senaste giltiga mätvärde' : reading.kind === 'measurement' ? 'Sparat mätvärde' : 'Aktuell temperatur okänd'}
               </Typography>
               <Typography variant="h3" component="p">{reading.value === null ? '–' : number.format(reading.value)} <Box component="span" sx={{ fontSize: '1.2rem', color: 'text.secondary' }}>°C</Box></Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>{reading.detail}</Typography>
@@ -86,10 +88,14 @@ export default function ThermalRoomsPage() {
               <Box component="dl" sx={{ mt: 2, mb: 0, p: 1.5, borderRadius: 2, bgcolor: 'background.default', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', columnGap: 1, rowGap: 1, overflowWrap: 'anywhere' }}>
                 <Typography component="dt" variant="body2">Mål</Typography><Typography component="dd" variant="body2" sx={{ m: 0, textAlign: 'right' }}>{number.format(target)} °C</Typography>
                 <Typography component="dt" variant="body2">Komfortintervall</Typography><Typography component="dd" variant="body2" sx={{ m: 0, textAlign: 'right' }}>{number.format(lower)}–{number.format(upper)} °C</Typography>
-                <Typography component="dt" variant="body2">Komfortmarginal</Typography><Typography component="dd" variant="body2" fontWeight={750} sx={{ m: 0, textAlign: 'right', color: margin !== null && margin < 0 ? 'warning.main' : 'text.primary' }}>{margin === null ? 'Okänd' : (margin >= 0 ? '+' : '') + number.format(margin) + ' °C'}</Typography>
+                <Typography component="dt" variant="body2">{assumed ? 'Antagen komfortmarginal' : 'Komfortmarginal'}</Typography><Typography component="dd" variant="body2" fontWeight={750} sx={{ m: 0, textAlign: 'right', color: margin !== null && margin < 0 ? 'warning.main' : 'text.primary' }}>{margin === null ? 'Okänd' : (margin >= 0 ? '+' : '') + number.format(margin) + ' °C'}</Typography>
                 <Typography component="dt" variant="body2">Vikt i huset</Typography><Typography component="dd" variant="body2" sx={{ m: 0, textAlign: 'right' }}>{number.format(room.weight)}</Typography>
               </Box>
-              {margin !== null && margin < 0 && <Typography variant="body2" color="warning.main" sx={{ mt: 1 }}>Under komfortgränsen – priset får inte gå före rummets komfort.</Typography>}
+              {margin !== null && margin < 0 && <Typography variant="body2" color="warning.main" sx={{ mt: 1 }}>{assumed ? 'Antaget värde under komfortgränsen – kontrollera rummets temperatur.' : 'Under komfortgränsen – priset får inte gå före rummets komfort.'}</Typography>}
+              {assumed && <>
+                <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 2 }}>Senaste temperaturändring: <SnapshotTime timestamp={reading.valueChangedUtc} /></Typography>
+                <Typography variant="caption" color="text.secondary" component="div">HA avläst: <SnapshotTime timestamp={reading.receivedAtUtc} /></Typography>
+              </>}
               <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 2 }}>Senast sparat: <SnapshotTime timestamp={latest?.timestampUtc} /></Typography>
             </Paper>
           );

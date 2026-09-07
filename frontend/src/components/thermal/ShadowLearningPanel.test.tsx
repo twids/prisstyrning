@@ -39,4 +39,17 @@ describe('Shadow learning', () => {
     expect(screen.getByText(/kunde inte hämtas eller uppdateras/)).toBeInTheDocument();
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
   });
+
+  it('separates assumed snapshots from independent observations and verified outcomes', async () => {
+    const assumed = { ...version, twoHourErrorC: null, learning: { ...version.learning,
+      samples: 300, assumedSamples: 300, independentSamples: 0, initialTemperatureAssumed: true,
+      forecast: [{ timestampUtc: '2026-09-01T12:00:00Z', predictedC: 21, actualC: null }] } };
+    const { container } = render(<main><ShadowLearningPanel versions={[assumed]} failed={false} refresh={vi.fn()} /></main>);
+    expect(screen.getByText(/300 punkter med antagen temperatur · 0 oberoende rapporterade observationer/)).toBeInTheDocument();
+    expect(screen.getByText(/Starttemperaturen är antagen oförändrad/)).toBeInTheDocument();
+    expect(screen.getByText(/Rapportålder ensam blockerar inte startprognosen/)).toBeInTheDocument();
+    expect(screen.getByText(/Väntar på utfall/)).toBeInTheDocument();
+    expect(container.querySelectorAll('svg[role="img"] circle')).toHaveLength(0);
+    expect((await axe(container)).violations).toEqual([]);
+  });
 });
