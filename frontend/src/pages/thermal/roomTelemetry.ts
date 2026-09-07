@@ -1,13 +1,15 @@
 import type { DataQuality, ThermalRoomConfig, ThermalTelemetrySample } from '../../types/api';
 
 type RoomSnapshot = Pick<ThermalTelemetrySample, 'timestampUtc' | 'roomTemperaturesJson' | 'qualityJson'>;
-export type RoomReadingStatus = DataQuality | 'Excluded' | 'Unknown' | 'Imported' | 'Disabled' | 'FetchError';
+export type RoomReadingStatus = DataQuality | 'AssumedUnchanged' | 'Excluded' | 'Unknown' | 'Imported' | 'Disabled' | 'FetchError';
 export interface RoomReading {
   status: RoomReadingStatus;
   value: number | null;
-  kind: 'measurement' | 'fallback' | 'none';
+  kind: 'measurement' | 'assumed' | 'fallback' | 'none';
   current: boolean;
   detail: string;
+  valueChangedUtc?: string;
+  receivedAtUtc?: string;
 }
 
 const emptyReading = { value: null, kind: 'none' as const, current: false };
@@ -56,7 +58,23 @@ export function describeRoomReading(
     return { ...saved, status: 'Excluded', detail: 'Givaren inväntar tre giltiga mätningar innan den används igen.' };
   }
   if (quality === 'Stale') {
-    return { ...saved, status: 'Stale', detail: 'Givarens mätning är för gammal även om uppgifterna samlades in nyligen.' };
+    const assumedValue = property(assessment, 'value');
+    const received = timestamp(property(assessment, 'receivedAtUtc'));
+    const collected = timestamp(property(metadata, 'collectedAtUtc'));
+    const reported = timestamp(property(assessment, 'sourceTimestampUtc'));
+    const updated = timestamp(property(assessment, 'valueUpdatedUtc'));
+    if (property(assessment, 'usage') === 'AssumedUnchanged' && typeof assumedValue === 'number' && Number.isFinite(assumedValue) &&
+      assumedValue >= room.minimumValidC && assumedValue <= room.maximumValidC &&
+      collected !== null && collected >= Date.parse(sample.timestampUtc) && collected - Date.parse(sample.timestampUtc) < 5 * 60_000 && collected <= now + 30_000 &&
+      received !== null && received <= collected + 30_000 && now - received <= maximumAgeMs &&
+      reported !== null && reported <= received + 30_000 && updated !== null && updated <= reported + 30_000) {
+      const changed = property(assessment, 'valueChangedUtc');
+      return { value: assumedValue, kind: 'assumed', current: false, status: 'AssumedUnchanged',
+        detail: 'HA har lästs nyligen och temperaturen antas vara oförändrad. Användbar i skrivfri Shadow, inte en ny bekräftad mätning eller ett godkännande för aktiv styrning.',
+        valueChangedUtc: typeof changed === 'string' && timestamp(changed) !== null && Date.parse(changed) <= updated + 30_000 ? changed : undefined,
+        receivedAtUtc: new Date(received).toISOString() };
+    }
+    return { ...saved, status: 'Stale', detail: 'Aktualiteten kan inte verifieras. Saknat livstecken eller kommunikationsfel räknas inte som antaget oförändrad temperatur.' };
   }
   if (quality === 'Invalid') {
     return { ...saved, status: 'Invalid', detail: 'Kontrollera givarens enhet, tillåtna intervall och förändringstakt.' };
@@ -84,7 +102,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function property(value: unknown, name: string): unknown {
   if (!isRecord(value)) return undefined;
   // Live snapshots have PascalCase fields, imported snapshots use camelCase.
-  return Object.entries(value).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1];
+  const matches = Object.entries(value).filter(([key]) => key.toLowerCase() === name.toLowerCase());
+  return matches.length === 1 ? matches[0][1] : undefined;
+}
+
+function timestamp(value: unknown): number | null {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value)) ? Date.parse(value) : null;
 }
 
 function readQuality(value: unknown): DataQuality | null {

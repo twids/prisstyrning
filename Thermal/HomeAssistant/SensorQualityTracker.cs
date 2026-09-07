@@ -18,7 +18,13 @@ public sealed record SensorAssessment(
     bool BecameExcluded,
     bool BecameRecovered,
     double? LastValidValue,
-    DateTimeOffset? LastValidUtc);
+    DateTimeOffset? LastValidUtc)
+{
+    // Set only after value, timestamp and communication validation. This is not
+    // a global quality upgrade, nor permission to bypass explicit liveness.
+    public bool ReportAgeOnly { get; init; }
+    public DateTimeOffset? SourceTimestampUtc { get; init; }
+}
 
 public sealed class SensorQualityTracker
 {
@@ -94,8 +100,14 @@ public sealed class SensorQualityTracker
                 }
             }
 
+            var reportAgeOnly = false;
             if (quality == DataQuality.Valid)
-                (quality, reason) = SensorTimestampValidator.Assess(rawState, nowUtc, rules.StaleAfter, historyImportedAtUtc, liveness);
+            {
+                var timing = SensorTimestampValidator.Assess(rawState, nowUtc, rules.StaleAfter, historyImportedAtUtc, liveness);
+                quality = timing.Quality;
+                reason = timing.Reason;
+                reportAgeOnly = timing.ReportAgeOnly;
+            }
 
             var wasExcluded = state.Excluded;
             if (quality == DataQuality.Valid)
@@ -144,7 +156,11 @@ public sealed class SensorQualityTracker
                 !wasExcluded && state.Excluded,
                 wasExcluded && !state.Excluded,
                 state.LastValidValue,
-                state.LastValidUtc);
+                state.LastValidUtc)
+            {
+                ReportAgeOnly = reportAgeOnly,
+                SourceTimestampUtc = sourceTime
+            };
         }
     }
 }

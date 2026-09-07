@@ -14,6 +14,43 @@ namespace Prisstyrning.Tests.Thermal;
 
 public sealed class HomeAssistantCollectorValidationTests
 {
+    [Fact]
+    public async Task Collect_AssumedRoomFeedsOnlyShadow_AndIsRemovedWhenConnectionFails()
+    {
+        await using var fixture = await Fixture.CreateAsync(state => state.EntityId == "sensor.room"
+            ? state with { LastChangedUtc = state.ReceivedAtUtc.AddHours(-12), LastUpdatedUtc = state.ReceivedAtUtc.AddHours(-12) } : state);
+        await fixture.CollectAsync(0);
+        var sample = await fixture.LatestAsync();
+        Assert.Equal("AssumedUnchanged", RoomQuality(sample)["Usage"]!.GetValue<string>());
+        Assert.Equal(21, RoomQuality(sample)["Value"]!.GetValue<double>());
+        // The marked control fallback is different from the actual assumed room
+        // state. Shadow must use the latter, never the synthetic fallback.
+        Assert.Equal(21.5, JsonNode.Parse(sample.RoomTemperaturesJson)!["sensor.room"]!.GetValue<double>());
+        Assert.DoesNotContain("sensor.room", ThermalModelTrainingData.ReadRooms(sample).Keys);
+        Assert.False(ThermalReadinessService.HasRequiredTelemetry(sample, [new ThermalRoomConfig { EntityId = "sensor.room", IsCritical = true }]));
+        await fixture.AssertLegacyAsync();
+
+        using var scope = fixture.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+        var site = await db.ThermalSiteConfigs.SingleAsync();
+        site.ControlMode = "Shadow";
+        await db.SaveChangesAsync();
+        var job = new ShadowLearningJob(db);
+        await job.TrainAsync("account-a", fixture.Now, CancellationToken.None);
+        var version = Assert.Single(await job.GetAsync("account-a", fixture.Now, CancellationToken.None));
+        Assert.True(version.Learning.InitialTemperatureAssumed);
+        Assert.Equal(0, version.Learning.IndependentSamples);
+        Assert.All(version.Learning.Forecast, p => Assert.Equal(21.25, p.PredictedC));
+        Assert.Equal("Legacy", site.DhwWriter);
+        Assert.Empty(await db.ThermalControlCommands.ToListAsync());
+
+        fixture.Cache.EndSession(fixture.Session);
+        await fixture.CollectAsync(5);
+        var lost = await fixture.LatestAsync();
+        Assert.Equal("Unusable", RoomQuality(lost)["Usage"]!.GetValue<string>());
+        Assert.DoesNotContain("sensor.room", ShadowRoomStateData.Read(lost).Keys);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
