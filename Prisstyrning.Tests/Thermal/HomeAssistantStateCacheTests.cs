@@ -8,6 +8,22 @@ public sealed class HomeAssistantStateCacheTests
     private static readonly DateTimeOffset Revision = new(2026, 8, 31, 0, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public void Refresh_IdenticalBufferedEventCannotRollBackReceiptTime()
+    {
+        var cache = new HomeAssistantStateCache();
+        var session = Connected(cache, "account-a", Revision, "21");
+        var oldEvent = new HomeAssistantStateChange("sensor.room", State("sensor.room", "21", Revision) with { ReceivedAtUtc = Revision }, Revision);
+        cache.ApplyEvent(session, oldEvent);
+        var freshRead = State("sensor.room", "21", Revision) with { ReceivedAtUtc = Revision.AddHours(2), LastReportedUtc = Revision };
+        cache.PublishRefresh(session, cache.BeginRefresh(session)!.Value, [freshRead]);
+        cache.ApplyEvent(session, oldEvent);
+        var actual = Assert.Single(cache.Snapshot("account-a"));
+        Assert.Equal(freshRead.ReceivedAtUtc, actual.ReceivedAtUtc);
+        Assert.Equal(Revision, actual.LastUpdatedUtc);
+        Assert.Equal(freshRead.LastReportedUtc, actual.LastReportedUtc);
+    }
+
+    [Fact]
     public void Session_RequiresConfirmedSubscriptionAndCompleteSnapshot()
     {
         var cache = new HomeAssistantStateCache();
