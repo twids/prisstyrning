@@ -171,6 +171,15 @@ public sealed class HomeAssistantStateCache : IHomeAssistantStateCache
             IsOlder(change.State?.LastUpdatedUtc ?? change.OccurredAtUtc, current.LastUpdatedUtc)) return;
         if (current is not null && change.State is { } incoming && incoming.LastUpdatedUtc == current.LastUpdatedUtc &&
             IsOlder(incoming.LastReportedUtc ?? incoming.LastUpdatedUtc, current.LastReportedUtc ?? current.LastUpdatedUtc)) return;
+        // A buffered event is not a new receipt of the identical REST state.
+        // Preserve the latest observation without inventing a sensor report.
+        if (current is not null && change.State is { } duplicate &&
+            duplicate.LastUpdatedUtc == current.LastUpdatedUtc && duplicate.LastChangedUtc == current.LastChangedUtc &&
+            (duplicate.LastReportedUtc ?? duplicate.LastUpdatedUtc) == (current.LastReportedUtc ?? current.LastUpdatedUtc) && duplicate.State == current.State &&
+            duplicate.AttributesMalformed == current.AttributesMalformed &&
+            duplicate.ReportTimestampMalformed == current.ReportTimestampMalformed &&
+            System.Text.Json.Nodes.JsonNode.DeepEquals(duplicate.Attributes, current.Attributes) &&
+            duplicate.ReceivedAtUtc < current.ReceivedAtUtc) return;
         if (change.State is null) states.Remove(change.EntityId);
         else states[change.EntityId] = change.State;
     }

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Alert, Autocomplete, Button, Stack, TextField, Typography } from '@mui/material';
+import { Alert, Autocomplete, Button, Checkbox, FormControlLabel, Stack, TextField, Typography } from '@mui/material';
 import { apiClient } from '../../api/client';
 import type { SensorFreshnessRequest } from '../../types/api';
 import type { EntityCatalogView } from './HomeAssistantEntityPicker';
@@ -25,6 +25,7 @@ export default function SensorLivenessFields({ value, onChange, catalog, label }
   const current = result && Date.parse(result.checkedAtUtc) <= catalog.nowUtc + 30_000 && catalog.nowUtc - Date.parse(result.checkedAtUtc) <= 120_000;
   const error = livenessConfigError(value);
   const configured = value.freshnessEntityId != null || value.freshnessAttribute != null;
+  const useReportTime = value.freshnessAttribute === '__ha_report_time';
   return <Stack spacing={1.5} role="group" aria-label={`Livstecken för ${label}`}>
     <Typography fontWeight={700}>Långsam eller förändringsbaserad givare</Typography>
     <Typography variant="body2">Standard använder HA:s rapporteringstid. Om givaren bara publicerar ändringar kan du välja ett separat tidsstämplat livstecken från samma fysiska givare. Valet gäller först efter att inställningarna sparats.</Typography>
@@ -32,11 +33,14 @@ export default function SensorLivenessFields({ value, onChange, catalog, label }
       disabled={test.isPending || Boolean(catalog.issue)}
       onInputChange={(_, text, reason) => { if (reason === 'input' || reason === 'clear') onChange({ freshnessAttribute: value.freshnessAttribute, freshnessEntityId: text || null }); }}
       onChange={(_, text) => onChange({ freshnessAttribute: value.freshnessAttribute, freshnessEntityId: text || null })}
-      renderInput={params => <TextField {...params} label={`Livstecknets entity för ${label}`} helperText="Tomt: läs attributet på själva temperatur-/vädergivaren. Annars välj en timestamp-entity för samma givare." />} />
-    <TextField label={`Livstecknets attribut för ${label}`} value={value.freshnessAttribute ?? ''} disabled={test.isPending}
+      renderInput={params => <TextField {...params} label={`Livstecknets entity för ${label}`} helperText="Välj en entitet från samma fysiska givare. Använd valet nedan för en vanlig sensor; annars krävs ett tidsstämpelvärde eller attribut. Tomt använder temperatur-/vädergivaren." />} />
+    <FormControlLabel label={`Använd entitetens senaste HA-rapport som livstecken för ${label}`} control={<Checkbox checked={useReportTime} disabled={test.isPending}
+      onChange={(_, checked) => onChange({ freshnessEntityId: value.freshnessEntityId, freshnessAttribute: checked ? '__ha_report_time' : null })} />} />
+    {useReportTime && <Alert severity="info">Välj en rapporterande entitet från samma fysiska givare, exempelvis lufttryck eller batterispänning. Vi använder HA:s rapporteringstid (uppdateringstid om rapporteringstid saknas), inte sensorvärdet eller tidpunkten då appen läser HA. Temperaturen får ingen ny mättid.</Alert>}
+    {!useReportTime && <TextField label={`Livstecknets attribut för ${label}`} value={value.freshnessAttribute ?? ''} disabled={test.isPending}
       onChange={event => onChange({ freshnessEntityId: value.freshnessEntityId, freshnessAttribute: event.target.value || null })}
-      error={Boolean(error)} helperText={error ?? 'Exempel: last_seen. Tomt med vald entity läser dess tillstånd som tidsstämpel. Båda tomma återställer standard.'} />
-    {configured && <Alert severity="warning">Kontrollera att källan hör till rätt fysiska givare och faktiskt uppdateras vid kontakt. En allmän HA-ping eller available räcker inte. Stöd: ISO-tid med Z/UTC-offset eller Unix-tid i sekunder/millisekunder. Livstecken är inte nya temperaturmätningar.</Alert>}
+      error={Boolean(error)} helperText={error ?? 'Exempel: last_seen. Tomt med vald entity läser dess tillstånd som tidsstämpel. Båda tomma återställer standard.'} />}
+    {configured && <Alert severity="warning">Kontrollera att källan hör till rätt fysiska givare och faktiskt uppdateras vid kontakt. En allmän HA-ping eller available räcker inte. Livstecken är inte nya temperaturmätningar.</Alert>}
     <Button disabled={!value.entityId || invalidAge || Boolean(error || catalog.issue) || catalog.loading || test.isPending}
       onClick={() => { setRequestedKey(key); test.mutate(value); }}>Testa rapportålder för {label}</Button>
     {test.isPending && <Typography role="status">Kontrollerar kontots aktuella HA-startbild…</Typography>}

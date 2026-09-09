@@ -9,6 +9,21 @@ import SensorLivenessFields, { livenessConfigError } from './SensorLivenessField
 import type { SensorFreshnessRequest } from '../../types/api';
 
 describe('SensorLivenessFields', () => {
+  it('väljer rapporteringstid uttryckligen utan att tolka ett vanligt sensorvärde som datum', async () => {
+    function Form() {
+      const [value, setValue] = useState<SensorFreshnessRequest>({ entityId: 'sensor.room', role: 'room', freshnessEntityId: 'sensor.pressure' });
+      return <SensorLivenessFields label="Sovrum" catalog={{ entities: [], nowUtc: Date.now() }} value={value} onChange={changes => setValue({ ...value, ...changes })} />;
+    }
+    const preview = vi.spyOn(apiClient, 'previewSensorFreshness').mockResolvedValue({ quality: 'Valid', reason: 'Aktuellt', checkedAtUtc: new Date().toISOString(), valueUpdatedUtc: null, livenessUtc: null });
+    const view = render(<QueryClientProvider client={new QueryClient()}><Form /></QueryClientProvider>);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('checkbox', { name: /Använd entitetens senaste HA-rapport/ }));
+    expect(screen.queryByLabelText('Livstecknets attribut för Sovrum')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Testa rapportålder för Sovrum' }));
+    expect(preview).toHaveBeenCalledWith(expect.objectContaining({ freshnessEntityId: 'sensor.pressure', freshnessAttribute: '__ha_report_time' }));
+    expect((await axe(view.container)).violations).toEqual([]);
+    preview.mockRestore();
+  });
   it('förhandsgranskar utan att spara och döljer resultat efter policybyte', async () => {
     const now = Date.now();
     const preview = vi.spyOn(apiClient, 'previewSensorFreshness').mockResolvedValue({ quality: 'Valid', reason: 'Aktuellt separat livstecken.', checkedAtUtc: new Date(now).toISOString(), valueUpdatedUtc: new Date(now - 7200000).toISOString(), livenessUtc: new Date(now).toISOString() });

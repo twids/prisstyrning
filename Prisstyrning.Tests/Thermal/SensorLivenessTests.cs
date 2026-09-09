@@ -12,6 +12,32 @@ public sealed class SensorLivenessTests
     private static HomeAssistantState Heartbeat(string value) => new("sensor.seen", value, new(), Now, Now, Now);
 
     [Theory]
+    [InlineData("3.1")]
+    [InlineData("1013.2")]
+    public void ExplicitReportTime_UsesReportNotNumericValueOrReceipt(string value)
+    {
+        var source = Heartbeat(value) with { LastUpdatedUtc = Now.AddHours(-2), LastChangedUtc = Now.AddHours(-2), LastReportedUtc = Now.AddMinutes(-1) };
+        var evidence = SensorLiveness.Resolve(Room(), "sensor.seen", SensorLiveness.ReportTimeAttribute, _ => source, Now);
+        Assert.Null(evidence!.Warning);
+        Assert.Equal(source.LastReportedUtc, evidence.TimestampUtc);
+        Assert.Equal(DataQuality.Valid, SensorTimestampValidator.Assess(Room(), Now, Limit, liveness: evidence).Quality);
+        Assert.Equal(Now.AddHours(-3), Room().LastUpdatedUtc);
+        source = source with { LastReportedUtc = null };
+        evidence = SensorLiveness.Resolve(Room(), "sensor.seen", SensorLiveness.ReportTimeAttribute, _ => source, Now);
+        Assert.Equal(source.LastUpdatedUtc, evidence!.TimestampUtc);
+        Assert.Equal(DataQuality.Stale, SensorTimestampValidator.Assess(Room(), Now, Limit, liveness: evidence).Quality);
+    }
+
+    [Theory]
+    [InlineData("unknown")]
+    [InlineData("unavailable")]
+    public void ExplicitReportTime_UnavailableCompanionIsNotEvidence(string value)
+    {
+        var evidence = SensorLiveness.Resolve(Room(), "sensor.seen", SensorLiveness.ReportTimeAttribute, _ => Heartbeat(value), Now);
+        Assert.NotNull(evidence!.Warning);
+    }
+
+    [Theory]
     [InlineData("2026-09-06T12:00:00Z")]
     [InlineData("2026-09-06T14:00:00+02:00")]
     public void TimestampEntity_AcceptsUnchangedValueWithoutChangingMeasurementTime(string timestamp)

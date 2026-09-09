@@ -11,6 +11,7 @@ public sealed record SensorLivenessEvidence(DateTimeOffset? TimestampUtc, string
 /// Never replaces measurement timestamps or invents reports from HTTP receipt.</summary>
 public static class SensorLiveness
 {
+    public const string ReportTimeAttribute = "__ha_report_time";
     public static bool Configured(string? entityId, string? attribute) => entityId is not null || attribute is not null;
     public static bool AllowedForRole(string role) => role is "room" or
         ThermalEntityRoles.OutsideTemperature or ThermalEntityRoles.WindSpeed or ThermalEntityRoles.SolarIrradiance;
@@ -38,10 +39,13 @@ public static class SensorLiveness
         if (timing.Quality != DataQuality.Valid || source.AttributesMalformed ||
             string.IsNullOrWhiteSpace(source.State) || source.State.Trim().ToLowerInvariant() is "unknown" or "unavailable")
             return new(null, "Livstecknets källa eller HA-avläsning kan inte verifieras. Kontrollera anslutning och tidsstämplar.");
-        var timestamp = Parse(attribute is null ? JsonValue.Create(source.State) : source.Attributes[attribute]);
+        // Explicit opt-in; existing timestamp-entity/attribute mappings keep their meaning.
+        var timestamp = attribute == ReportTimeAttribute
+            ? importedAt is null ? source.LastReportedUtc ?? source.LastUpdatedUtc : source.LastUpdatedUtc
+            : Parse(attribute is null ? JsonValue.Create(source.State) : source.Attributes[attribute]);
         if (timestamp is null)
             return new(null, "Livstecknet måste vara en tidsstämpel med tidszon eller Unix-tid i sekunder/millisekunder. Saknat eller felaktigt livstecken är en varning, inte ett felaktigt temperaturvärde.");
-        if (timestamp > now + SensorTimestampValidator.ClockTolerance || timestamp > source.LastUpdatedUtc + SensorTimestampValidator.ClockTolerance ||
+        if (timestamp > now + SensorTimestampValidator.ClockTolerance || attribute != ReportTimeAttribute && timestamp > source.LastUpdatedUtc + SensorTimestampValidator.ClockTolerance ||
             timestamp > source.ReceivedAtUtc + SensorTimestampValidator.ClockTolerance)
             return new(null, "Livstecknet ligger i framtiden eller efter källans uppdatering. Kontrollera klockor och rätt entity.");
         return new(timestamp, null);
