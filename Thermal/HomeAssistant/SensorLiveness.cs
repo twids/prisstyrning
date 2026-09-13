@@ -7,20 +7,24 @@ namespace Prisstyrning.Thermal.HomeAssistant;
 
 public sealed record SensorLivenessEvidence(DateTimeOffset? TimestampUtc, string? Warning);
 
-/// <summary>Explicit, account-scoped liveness for change-only ambient sensors.
+/// <summary>Explicit, account-scoped liveness for change-only sensors and latched operating flags.
 /// Never replaces measurement timestamps or invents reports from HTTP receipt.</summary>
 public static class SensorLiveness
 {
     public const string ReportTimeAttribute = "__ha_report_time";
     public static bool Configured(string? entityId, string? attribute) => entityId is not null || attribute is not null;
     public static bool AllowedForRole(string role) => role is "room" or
-        ThermalEntityRoles.OutsideTemperature or ThermalEntityRoles.WindSpeed or ThermalEntityRoles.SolarIrradiance;
+        ThermalEntityRoles.OutsideTemperature or ThermalEntityRoles.WindSpeed or ThermalEntityRoles.SolarIrradiance or
+        ThermalEntityRoles.DhwActive or ThermalEntityRoles.BackupHeaterActive;
 
     public static void Validate(string role, string? entityId, string? attribute)
     {
         if (!Configured(entityId, attribute)) return;
         if (!AllowedForRole(role))
-            throw new ArgumentException("Separata livstecken är endast tillåtna för rum och uppmätt väder. Pumpens driftsignaler kräver egna aktuella rapporter.");
+            throw new ArgumentException("Separata livstecken är tillåtna för rum, uppmätt väder och oförändrade DHW-/elpatronflaggor. Övriga pumpmätningar kräver egna aktuella rapporter.");
+        if (role is ThermalEntityRoles.DhwActive or ThermalEntityRoles.BackupHeaterActive &&
+            (string.IsNullOrWhiteSpace(entityId) || attribute != ReportTimeAttribute))
+            throw new ArgumentException("Driftflaggor kräver en uttryckligt vald rapporterande entity från samma pumpintegration och dess senaste HA-rapport. En allmän HA-ping räcker inte.");
         if (entityId is not null && (entityId.Length > 255 || !Regex.IsMatch(entityId, @"^[a-z_]+\.[a-z0-9_]+$")))
             throw new ArgumentException("Välj ett giltigt entity-ID för livstecknet.");
         if (attribute is not null && (attribute.Length > 100 || !Regex.IsMatch(attribute, @"^[a-zA-Z_][a-zA-Z0-9_]*$")))

@@ -9,6 +9,17 @@ import SensorLivenessFields, { livenessConfigError } from './SensorLivenessField
 import type { SensorFreshnessRequest } from '../../types/api';
 
 describe('SensorLivenessFields', () => {
+  it('kräver uttrycklig pumpkälla och rapporttid för oförändrade driftflaggor', () => {
+    for (const role of ['dhw_active', 'backup_heater_active']) {
+      expect(livenessConfigError({ role })).toBeNull();
+      expect(livenessConfigError({ role, freshnessEntityId: 'sensor.pump_report' })).toBeTruthy();
+      expect(livenessConfigError({ role, freshnessAttribute: '__ha_report_time' })).toBeTruthy();
+      expect(livenessConfigError({ role, freshnessEntityId: 'sensor.pump_report', freshnessAttribute: '__ha_report_time' })).toBeNull();
+    }
+    render(<QueryClientProvider client={new QueryClient()}><SensorLivenessFields label="DHW aktiv"
+      catalog={{ entities: [], nowUtc: Date.now() }} value={{ entityId: 'binary_sensor.dhw', role: 'dhw_active' }} onChange={vi.fn()} /></QueryClientProvider>);
+    expect(screen.getByText(/En driftflagga kan vara oförändrad i flera dagar/)).toBeVisible();
+  });
   it('väljer rapporteringstid uttryckligen utan att tolka ett vanligt sensorvärde som datum', async () => {
     function Form() {
       const [value, setValue] = useState<SensorFreshnessRequest>({ entityId: 'sensor.room', role: 'room', freshnessEntityId: 'sensor.pressure' });

@@ -301,7 +301,7 @@ export function EntitiesTab({ draft, setDraft, catalog }: { draft: ThermalConfig
           </TextField>}
           {mapping && !mapping.notApplicable && <Accordion><AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography>Avancerat: rapportering för {label.toLowerCase()}</Typography></AccordionSummary><AccordionDetails><Stack spacing={2}>
           <ReportAgeField label={`Rapportgräns för ${label.toLowerCase()}`} value={mapping.maximumReportAgeMinutes} maximum={['outside_temperature', 'wind_speed', 'solar_irradiance', 'spot_price', 'cop_average'].includes(role) ? 1440 : 10} onChange={(value) => setDraft({ ...draft, entities: draft.entities.map((entity) => entity.role === role ? { ...entity, maximumReportAgeMinutes: value } : entity) })} />
-          {mapping && ['outside_temperature', 'wind_speed', 'solar_irradiance'].includes(role) && <SensorLivenessFields
+          {mapping && ['outside_temperature', 'wind_speed', 'solar_irradiance', 'dhw_active', 'backup_heater_active'].includes(role) && <SensorLivenessFields
             key={catalog.connectionRevisionUtc} catalog={catalog} label={label} value={mapping}
             onChange={changes => setDraft({ ...draft, entities: draft.entities.map(entity => entity.role === role ? { ...entity, ...changes } : entity) })} />}
           </Stack></AccordionDetails></Accordion>}
