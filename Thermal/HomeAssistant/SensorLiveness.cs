@@ -5,7 +5,8 @@ using Prisstyrning.Thermal.Domain;
 
 namespace Prisstyrning.Thermal.HomeAssistant;
 
-public sealed record SensorLivenessEvidence(DateTimeOffset? TimestampUtc, string? Warning);
+public sealed record SensorLivenessEvidence(DateTimeOffset? TimestampUtc, string? Warning,
+    DateTimeOffset? SourceReceivedAtUtc = null);
 
 /// <summary>Explicit, account-scoped liveness for change-only sensors and latched operating flags.
 /// Never replaces measurement timestamps or invents reports from HTTP receipt.</summary>
@@ -52,7 +53,7 @@ public static class SensorLiveness
         if (timestamp > now + SensorTimestampValidator.ClockTolerance || attribute != ReportTimeAttribute && timestamp > source.LastUpdatedUtc + SensorTimestampValidator.ClockTolerance ||
             timestamp > source.ReceivedAtUtc + SensorTimestampValidator.ClockTolerance)
             return new(null, "Livstecknet ligger i framtiden eller efter källans uppdatering. Kontrollera klockor och rätt entity.");
-        return new(timestamp, null);
+        return new(timestamp, null, source.ReceivedAtUtc);
     }
 
     internal static DateTimeOffset? Parse(JsonNode? node)

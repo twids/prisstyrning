@@ -35,9 +35,9 @@ public sealed class HomeAssistantCollectorValidationTests
             config.FreshnessAttribute = SensorLiveness.ReportTimeAttribute;
             await db.SaveChangesAsync();
         }
-        var flag = new HomeAssistantState("binary_sensor.latched", "off", new(), fixture.Now.AddDays(-2), fixture.Now.AddDays(-2), fixture.Now);
+        var flag = new HomeAssistantState("binary_sensor.latched", "off", new(), fixture.Now.AddDays(-2), fixture.Now.AddDays(-2), fixture.Now.AddMinutes(-2));
         var report = new HomeAssistantState("sensor.pump_report", "253", new(), fixture.Now, fixture.Now, fixture.Now);
-        fixture.Cache.ApplyEvent(fixture.Session, new(flag.EntityId, flag, fixture.Now));
+        fixture.Cache.ApplyEvent(fixture.Session, new(flag.EntityId, flag, flag.ReceivedAtUtc));
         fixture.Cache.ApplyEvent(fixture.Session, new(report.EntityId, report, fixture.Now));
         await fixture.CollectAsync(0);
         var sample = await fixture.LatestAsync();

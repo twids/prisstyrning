@@ -34,7 +34,12 @@ internal static class SensorTimestampValidator
         {
             if (liveness.Warning is not null || liveness.TimestampUtc is not { } heartbeat)
                 return new(DataQuality.Stale, liveness.Warning ?? "Livstecknets tid saknas.");
-            if (heartbeat > nowUtc + ClockTolerance || heartbeat > received + ClockTolerance)
+            // Independent entities arrive at different times. Compare a companion
+            // report with its OWN receipt, never the unchanged measurement's receipt.
+            var heartbeatReceived = liveness.SourceReceivedAtUtc ?? received;
+            if (heartbeatReceived == default || heartbeatReceived > (historyImportedAtUtc ?? nowUtc) + ClockTolerance ||
+                historyImportedAtUtc is null && nowUtc - heartbeatReceived > SensorFreshnessPolicy.CommunicationTimeout ||
+                heartbeat > nowUtc + ClockTolerance || heartbeat > heartbeatReceived + ClockTolerance)
                 return new(DataQuality.Stale, "Livstecknets tid kan inte verifieras.");
             if (nowUtc - heartbeat > staleAfter)
                 return new(DataQuality.Stale, $"Inget verifierat livstecken inom {staleAfter.TotalMinutes:0} minuter. Värdet kan vara oförändrat; kontrollera givaren.");
