@@ -6,9 +6,12 @@ import type { SensorFreshnessRequest } from '../../types/api';
 import type { EntityCatalogView } from './HomeAssistantEntityPicker';
 import { formatDateTime } from './thermalUi';
 
-export function livenessConfigError(value: Pick<SensorFreshnessRequest, 'freshnessEntityId' | 'freshnessAttribute'>): string | null {
+export function livenessConfigError(value: Pick<SensorFreshnessRequest, 'freshnessEntityId' | 'freshnessAttribute'> & { role?: string }): string | null {
   if (value.freshnessEntityId != null && (value.freshnessEntityId.length > 255 || !/^[a-z_]+\.[a-z0-9_]+$/.test(value.freshnessEntityId))) return 'Välj ett giltigt entity-ID för livstecknet.';
   if (value.freshnessAttribute != null && (value.freshnessAttribute.length > 100 || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(value.freshnessAttribute))) return 'Ange ett enkelt attributnamn, till exempel last_seen.';
+  if (['dhw_active', 'backup_heater_active'].includes(value.role ?? '') &&
+      (value.freshnessEntityId != null || value.freshnessAttribute != null) &&
+      (!value.freshnessEntityId || value.freshnessAttribute !== '__ha_report_time')) return 'Välj en rapporterande entity från samma pumpintegration och markera senaste HA-rapport.';
   return null;
 }
 
@@ -26,8 +29,10 @@ export default function SensorLivenessFields({ value, onChange, catalog, label }
   const error = livenessConfigError(value);
   const configured = value.freshnessEntityId != null || value.freshnessAttribute != null;
   const useReportTime = value.freshnessAttribute === '__ha_report_time';
+  const operatingFlag = ['dhw_active', 'backup_heater_active'].includes(value.role);
   return <Stack spacing={1.5} role="group" aria-label={`Livstecken för ${label}`}>
     <Typography fontWeight={700}>Långsam eller förändringsbaserad givare</Typography>
+    {operatingFlag && <Alert severity="warning">En driftflagga kan vara oförändrad i flera dagar. Välj en rapporterande entity från samma pumpintegration och markera senaste HA-rapport nedan. Kontrollera även att hjälpsensorn blir unavailable om dess källor saknas. Livstecknet ändrar inte flaggans värde och bevisar inte att hjälpsensorns beräkning är korrekt.</Alert>}
     <Typography variant="body2">Standard använder HA:s rapporteringstid. Om givaren bara publicerar ändringar kan du välja ett separat tidsstämplat livstecken från samma fysiska givare. Valet gäller först efter att inställningarna sparats.</Typography>
     <Autocomplete freeSolo options={catalog.entities.map(entity => entity.entityId)} value={value.freshnessEntityId ?? ''}
       disabled={test.isPending || Boolean(catalog.issue)}

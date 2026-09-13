@@ -106,6 +106,32 @@ public sealed class SensorLivenessTests
     public void AmbientLiveness_CannotRelaxPumpOrHygieneEvidence(string role) =>
         Assert.Throws<ArgumentException>(() => SensorLiveness.Validate(role, "sensor.seen", null));
 
+    [Theory]
+    [InlineData("dhw_active", "off", false)]
+    [InlineData("dhw_active", "on", true)]
+    [InlineData("backup_heater_active", "off", false)]
+    [InlineData("backup_heater_active", "on", true)]
+    public void LatchedOperatingFlag_RequiresExplicitDeviceReportAndPreservesState(string role, string value, bool expected)
+    {
+        SensorLiveness.Validate(role, "sensor.seen", SensorLiveness.ReportTimeAttribute);
+        Assert.True(SensorLiveness.AllowedForRole(role));
+        Assert.Throws<ArgumentException>(() => SensorLiveness.Validate(role, null, SensorLiveness.ReportTimeAttribute));
+        var raw = Room() with { EntityId = "binary_sensor.phase", State = value, Attributes = new() };
+        var source = Heartbeat("250");
+        var evidence = SensorLiveness.Resolve(raw, source.EntityId, SensorLiveness.ReportTimeAttribute, _ => source, Now);
+        var result = new SensorQualityTracker().Assess(role, raw, SensorValueNormalizer.Normalize(raw, "bool"), new(null, null, null, Limit), Now, liveness: evidence);
+        Assert.Equal(DataQuality.Valid, result.Quality);
+        Assert.Equal(expected, result.BooleanValue);
+        Assert.Equal(raw.LastChangedUtc, result.SourceTimestampUtc);
+        Assert.Equal(DataQuality.Stale, SensorTimestampValidator.Assess(raw, Now, Limit).Quality);
+        Assert.Equal(DataQuality.Stale, SensorTimestampValidator.Assess(raw with { ReceivedAtUtc = Now.AddMinutes(-11) }, Now, Limit, liveness: evidence).Quality);
+        var stale = evidence! with { TimestampUtc = Now.AddMinutes(-11) };
+        Assert.Equal(DataQuality.Stale, SensorTimestampValidator.Assess(raw, Now, Limit, liveness: stale).Quality);
+        var unavailable = raw with { State = "unavailable" };
+        Assert.NotEqual(DataQuality.Valid, new SensorQualityTracker().Assess(role, unavailable,
+            SensorValueNormalizer.Normalize(unavailable, "bool"), new(null, null, null, Limit), Now, liveness: evidence).Quality);
+    }
+
     [Fact]
     public void Recovery_RequiresThreeMeasurementReports_NotThreeHeartbeats()
     {

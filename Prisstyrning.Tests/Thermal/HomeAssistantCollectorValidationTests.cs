@@ -14,6 +14,41 @@ namespace Prisstyrning.Tests.Thermal;
 
 public sealed class HomeAssistantCollectorValidationTests
 {
+    [Theory]
+    [InlineData("dhw_active")]
+    [InlineData("backup_heater_active")]
+    public async Task Collect_LatchedFlagRequiresExplicitLiveDeviceReport_AndNeverChangesLegacy(string role)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        using (var scope = fixture.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+            var config = await db.ThermalEntityConfigs.SingleOrDefaultAsync(x => x.Role == role);
+            if (config is null)
+            {
+                config = new ThermalEntityConfig { UserId = "account-a", Role = role };
+                db.ThermalEntityConfigs.Add(config);
+            }
+            config.EntityId = "binary_sensor.latched";
+            config.ExpectedUnit = "bool";
+            config.FreshnessEntityId = "sensor.pump_report";
+            config.FreshnessAttribute = SensorLiveness.ReportTimeAttribute;
+            await db.SaveChangesAsync();
+        }
+        var flag = new HomeAssistantState("binary_sensor.latched", "off", new(), fixture.Now.AddDays(-2), fixture.Now.AddDays(-2), fixture.Now);
+        var report = new HomeAssistantState("sensor.pump_report", "253", new(), fixture.Now, fixture.Now, fixture.Now);
+        fixture.Cache.ApplyEvent(fixture.Session, new(flag.EntityId, flag, fixture.Now));
+        fixture.Cache.ApplyEvent(fixture.Session, new(report.EntityId, report, fixture.Now));
+        await fixture.CollectAsync(0);
+        var sample = await fixture.LatestAsync();
+        Assert.False(role == ThermalEntityRoles.DhwActive ? sample.DhwActive : sample.BackupHeaterActive);
+        Assert.Equal((int)DataQuality.Valid, JsonNode.Parse(sample.QualityJson)!["entities"]![role]!["Quality"]!.GetValue<int>());
+        await fixture.CollectAsync(15);
+        var stale = await fixture.LatestAsync();
+        Assert.Null(role == ThermalEntityRoles.DhwActive ? stale.DhwActive : stale.BackupHeaterActive);
+        await fixture.AssertLegacyAsync();
+    }
+
     [Fact]
     public async Task Collect_AssumedRoomFeedsOnlyShadow_AndIsRemovedWhenConnectionFails()
     {
