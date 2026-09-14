@@ -339,6 +339,23 @@ public sealed class ThermalReadinessEvidenceTests
     }
 
     [Theory]
+    [InlineData(30, 25, 24)]
+    [InlineData(60, 25, 24)]
+    [InlineData(61, 25, 0)]
+    [InlineData(30, 24, 23)]
+    public void Forecast_ShadowUpcomingHourExcludesLeadingGapFromCoverage(int delayMinutes, int count, double hours)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var points = Enumerable.Range(0, count).Select(hour =>
+            new WeatherForecastPoint(now.AddMinutes(delayMinutes).AddHours(hour), 5, null, null));
+        var json = JsonSerializer.Serialize(points);
+        Assert.Equal(0, ThermalReadinessEvidence.ForecastHours(json, now));
+        Assert.Equal(hours, ThermalReadinessEvidence.ForecastHours(json, now, allowUpcomingHour: true));
+        var gap = JsonSerializer.Serialize(points.Where((_, index) => index != 12));
+        Assert.True(ThermalReadinessEvidence.ForecastHours(gap, now, allowUpcomingHour: true) < 24);
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task Readiness_DuplicateOrFuturePlansCannotFillTwentyOneDays(bool future)

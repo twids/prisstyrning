@@ -196,6 +196,41 @@ public sealed class JointPlanModelConsumptionTests
         });
     }
 
+    [Theory]
+    [InlineData("Shadow", true)]
+    [InlineData("LwtActive", false)]
+    [InlineData("FullActive", false)]
+    public async Task Replan_UpcomingHourlyForecastIsEstimatedOnlyInShadow(string mode, bool allowed)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.ChangeAsync(async db =>
+        {
+            (await db.ThermalSiteConfigs.SingleAsync()).ControlMode = mode;
+            var sample = await ThermalCurrentModelTestData.LatestTelemetryAsync(db);
+            var firstForecast = DateTimeOffset.UtcNow.AddMinutes(30);
+            sample.OutsideTemperatureForecastJson = JsonSerializer.Serialize(Enumerable.Range(0, 49).Select(hour =>
+                new WeatherForecastPoint(firstForecast.AddHours(hour), 2, 3, 0)));
+        });
+        if (!allowed)
+        {
+            await Assert.ThrowsAsync<ThermalPlanningEvidenceException>(() => fixture.ReplanAsync());
+            Assert.Equal(0, fixture.Dispatcher.Calls);
+            await fixture.AssertNoPlansOrCommandsAsync();
+            return;
+        }
+        await fixture.ReplanAsync();
+        await fixture.ChangeAsync(async db =>
+        {
+            var plan = await db.ThermalPlans.SingleAsync();
+            Assert.True(plan.IsShadow);
+            using var input = JsonDocument.Parse(plan.InputSnapshotJson);
+            Assert.True(input.RootElement.GetProperty("weatherForecast").GetProperty("estimatedSteps").GetInt32() > 0);
+            Assert.Contains("inledande lucka", plan.InputSnapshotJson);
+            Assert.Empty(await db.ThermalControlCommands.ToListAsync());
+            Assert.Equal("Legacy", (await db.ThermalSiteConfigs.SingleAsync()).DhwWriter);
+        });
+    }
+
     [Fact]
     public async Task Replan_ReadsActualCamelCaseTrainingParametersAndPreservesLegacyWriter()
     {
