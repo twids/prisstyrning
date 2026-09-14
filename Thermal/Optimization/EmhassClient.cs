@@ -211,7 +211,9 @@ public sealed class EmhassClient : IEmhassClient
             operating_timesteps_of_each_deferrable_load = operatingSteps,
             start_timesteps_of_each_deferrable_load = starts,
             end_timesteps_of_each_deferrable_load = ends,
-            treat_deferrable_load_as_semi_cont = Enumerable.Repeat(true, numberOfLoads).ToArray(),
+            // Space heating is modulating, not forced to zero or nominal power each quarter.
+            // DHW remains a contiguous fixed-power job; mutual exclusion still links both loads.
+            treat_deferrable_load_as_semi_cont = numberOfLoads == 1 ? new[] { false } : new[] { false, true },
             set_deferrable_load_single_constant = numberOfLoads == 1 ? new[] { false } : new[] { false, true },
             def_load_config = loadConfigs,
             deferrable_load_groups = loadGroups,

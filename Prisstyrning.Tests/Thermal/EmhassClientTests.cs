@@ -34,6 +34,7 @@ public class EmhassClientTests
         Assert.Contains("\"continual_publish\":false", posted);
         Assert.Contains("\"entity_save\":false", posted);
         Assert.Contains("\"method_ts_round\":\"first\"", posted);
+        Assert.Contains("\"treat_deferrable_load_as_semi_cont\":[false]", posted);
         Assert.DoesNotContain("retrieve_hass_conf", posted);
     }
 
@@ -149,6 +150,8 @@ public class EmhassClientTests
 
         Assert.Contains("\"names\":[\"deferrable0\",\"deferrable1\"]", json);
         Assert.Contains("\"mutual_exclusion\":true", json);
+        Assert.Contains("\"treat_deferrable_load_as_semi_cont\":[false,true]", json);
+        Assert.Contains("\"set_deferrable_load_single_constant\":[false,true]", json);
     }
 
     [Fact]
