@@ -241,6 +241,7 @@ public sealed class JointPlanModelConsumptionTests
         var request = Assert.IsType<EmhassOptimizationRequest>(fixture.Dispatcher.Request);
         Assert.Equal(4.75, request.Thermal.HeatingRateCPerHour, 6);
         Assert.Equal(.175, request.Thermal.CoolingConstantPerHourPerC, 6);
+        Assert.Equal(0, request.Thermal.ThermalInertiaHours);
         Assert.NotNull(request.InputEvidence);
         Assert.Null(request.InputEvidence.DhwEvidence?.ReservedCycleId);
         Assert.Equal(0, request.InputEvidence.DhwEvidence?.OpenCycleCount);

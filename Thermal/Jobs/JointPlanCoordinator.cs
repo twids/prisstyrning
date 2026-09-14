@@ -194,7 +194,9 @@ public sealed class JointPlanCoordinator : BackgroundService
         var thermal = new EmhassThermalConfig(
             Math.Clamp(2.5 * estimatedCop * parameters.HeatingGain / parameters.AirCapacityKwhPerC, 0.1, 10),
             Math.Clamp(effectiveConductance / parameters.AirCapacityKwhPerC, 0.001, 1),
-            Math.Clamp(parameters.MassCapacityKwhPerC / parameters.MassCouplingKwPerC, 0, 24),
+            // EMHASS thermal_inertia is transport dead time, not building mass time constant.
+            // The fitted grey-box model has no pure input delay; do not invent one here.
+            0,
             roomTemperature,
             minimum,
             maximum);

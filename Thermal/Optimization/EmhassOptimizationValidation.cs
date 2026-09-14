@@ -21,7 +21,7 @@ internal static class EmhassOptimizationValidation
             throw new ThermalPlanningEvidenceException("Planeringsprognosen innehåller ogiltiga pris-, väder- eller lastvärden.");
         if (!FiniteBetween(request.Thermal.HeatingRateCPerHour, 0.001, 20) ||
             !FiniteBetween(request.Thermal.CoolingConstantPerHourPerC, 0.00001, 5) ||
-            !FiniteBetween(request.Thermal.ThermalInertiaHours, 0.001, 240) ||
+            !FiniteBetween(request.Thermal.ThermalInertiaHours, 0, 240) ||
             !FiniteBetween(request.Thermal.StartTemperatureC, -20, 50) ||
             !FiniteBetween(request.HeatPumpElectricPowerW, 1, 100_000) ||
             !FiniteBetween(request.DhwElectricPowerW, 1, 100_000))
@@ -70,8 +70,11 @@ internal static class EmhassOptimizationValidation
                 throw new ThermalPlanningEvidenceException("Solverresultatet innehåller en ogiltig värmeeffekt.");
             if (step.PredictedTemperatureC is not { } predicted || !double.IsFinite(predicted))
                 throw new ThermalPlanningEvidenceException("Solverresultatet saknar en giltig temperaturprognos.");
-            if (predicted < request.Thermal.MinimumTemperaturesC[index] - 0.01 ||
-                predicted > request.Thermal.MaximumTemperaturesC[index] + 0.01)
+            // EMHASS index zero is the observed initial state, not a controllable forecast.
+            // Only that exact state may lie outside the band; all future steps remain bounded.
+            var observedInitialState = index == 0 && Math.Abs(predicted - request.Thermal.StartTemperatureC) <= .01;
+            if (!observedInitialState && (predicted < request.Thermal.MinimumTemperaturesC[index] - 0.01 ||
+                predicted > request.Thermal.MaximumTemperaturesC[index] + 0.01))
                 throw new ThermalPlanningEvidenceException(ComfortBreachReason);
             if (!double.IsFinite(step.UnitCost))
                 throw new ThermalPlanningEvidenceException("Solverresultatet innehåller en ogiltig kostnad.");

@@ -44,6 +44,32 @@ public sealed class EmhassOptimizationValidationTests
         EmhassOptimizationValidation.ValidateResult(request, result, 15);
     }
 
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(-.01, false)]
+    public void Request_AllowsNoTransportDelayButRejectsNegativeDelay(double delay, bool allowed)
+    {
+        var request = Request();
+        request = request with { Thermal = request.Thermal with { ThermalInertiaHours = delay } };
+        if (allowed) EmhassOptimizationValidation.ValidateRequest(request);
+        else Assert.Throws<ThermalPlanningEvidenceException>(() => EmhassOptimizationValidation.ValidateRequest(request));
+    }
+
+    [Theory]
+    [InlineData(22.4, 22.4, 21.9, true)]
+    [InlineData(20.4, 20.4, 20.6, true)]
+    [InlineData(22.4, 22.6, 21.9, false)]
+    [InlineData(22.4, 22.4, 22.4, false)]
+    public void Result_OnlyObservedInitialStateCanBeOutsideComfortBand(double initial, double first, double next, bool allowed)
+    {
+        var request = Request();
+        request = request with { Thermal = request.Thermal with { StartTemperatureC = initial } };
+        var steps = new[] { new EmhassOptimizationStep(0, 0, first, .5), new EmhassOptimizationStep(1, 0, next, .8) };
+        var result = new EmhassOptimizationResult(steps, 100, 0);
+        if (allowed) EmhassOptimizationValidation.ValidateResult(request, result, 15);
+        else Assert.Throws<ThermalPlanningEvidenceException>(() => EmhassOptimizationValidation.ValidateResult(request, result, 15));
+    }
+
     [Fact]
     public void Result_RejectsSpaceHeatingDuringReservedDhwCapacity()
     {
