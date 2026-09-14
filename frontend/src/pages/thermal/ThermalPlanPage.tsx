@@ -18,10 +18,17 @@ export default function ThermalPlanPage() {
   const input = plan.data ? parsePlanInputSnapshot(plan.data.inputSnapshotJson) : null;
   const estimatedPriceSteps = input?.priceForecast.estimatedSteps ?? 0;
   const estimatedWeatherSteps = input?.weatherForecast.estimatedSteps ?? 0;
+  const provisional = !!input?.provisionalModel || (input?.assumedInputRoles?.length ?? 0) > 0;
 
   return (
     <Stack spacing={4}>
       <PageHeader eyebrow="Gemensam tidslinje" title="Plan" description="Husvärme i 15-minuterssteg och hela DHW-cykler i femminuterssteg, sammanförda utan att dubbelboka kompressorn." />
+      {provisional && <Alert severity="warning">
+        <strong>Preliminärt Shadow-scenario — styr inte värmepumpen.</strong>
+        {' '}{input?.provisionalModel ?? 'Planen använder antaget oförändrade givare.'}
+        {' '}Temperaturer, kostnader och LWT-förslag är osäkra simuleringar, inte verifierade besparingar eller råd att aktivera styrning.
+        {!!input?.assumedInputRoles?.length && ` ${input.assumedInputRoles.length} indatakällor bygger på antaganden.`}
+      </Alert>}
       {plan.isError && <Alert severity="error">Planen kunde inte hämtas: {plan.error.message}</Alert>}
       {history.isError && <Alert severity="error">Temperaturhistoriken kunde inte hämtas.</Alert>}
       <TemperatureChart history={history.data ?? []} plan={plan.data} />
@@ -33,7 +40,7 @@ export default function ThermalPlanPage() {
             <MetricCard label="Nästa DHW-reservation" value={nextDhw ? formatDateTime(nextDhw.startUtc).split(' ').slice(-1)[0] : 'Ingen'} detail={nextDhw ? `${nextDhw.dhwMode} · kompressorn reserverad` : 'Ingen cykel i synligt fönster'} icon={<TimerOutlinedIcon />} accent="#f6c56f" />
             <MetricCard
               label="Planens konfidens"
-              value={`${Math.round(plan.data.confidence * 100)} %`}
+              value={provisional ? 'Ej verifierad' : `${Math.round(plan.data.confidence * 100)} %`}
               detail={input
                 ? `Pris ${percent(input.priceForecast.actualCoverage)} · väder ${percent(input.weatherForecast.actualCoverage)} verifierad täckning · solver ${plan.data.solverDurationMs} ms`
                 : `Underlagsdetaljer saknas · solver ${plan.data.solverDurationMs} ms`}

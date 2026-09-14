@@ -7,6 +7,7 @@ using Prisstyrning.Data.Entities;
 using Prisstyrning.Thermal.Control;
 using Prisstyrning.Thermal.Data;
 using Prisstyrning.Thermal.Domain;
+using Prisstyrning.Thermal.Jobs;
 
 namespace Prisstyrning.Thermal.Optimization;
 
@@ -49,7 +50,8 @@ internal sealed record ThermalPlanningTelemetry(
     bool DhwActive,
     bool DefrostActive,
     bool BackupHeaterActive,
-    string Fingerprint);
+    string Fingerprint,
+    string[]? AssumedRoles = null);
 
 internal static class ThermalPlanningInputs
 {
@@ -94,26 +96,42 @@ internal static class ThermalPlanningInputs
             required.Add(matches[0]);
         }
 
-        var signalQuality = ThermalStatusQuality.Assess(sample, [], required, now, site.UpdatedAtUtc);
+        var shadow = site.ControlMode == "Shadow";
+        var assumedRoles = shadow ? required.Where(x => ShadowPhysicalStateData.Read(sample, x.Role) is not null)
+            .Select(x => x.Role).ToHashSet(StringComparer.OrdinalIgnoreCase) : [];
+        var signalQuality = ThermalStatusQuality.Assess(sample, [], required.Where(x => !assumedRoles.Contains(x.Role)), now, site.UpdatedAtUtc);
         if (signalQuality.Quality != DataQuality.Valid)
             throw Evidence($"Planeringens sensorer är inte verifierat giltiga. {signalQuality.Reason}");
 
         var control = ThermalControlTelemetry.Assess(sample, rooms, entities, site, now);
-        if (!control.SafeToControl)
+        double? shadowRoom = null;
+        if (shadow && !control.SafeToControl)
+        {
+            var values = ShadowRoomStateData.Read(sample);
+            var participating = rooms.Where(x => x.IsCritical || x.Weight > 0).ToArray();
+            var weight = participating.Sum(x => x.Weight);
+            if (participating.Length > 0 && double.IsFinite(weight) && weight > 0 && participating.All(x =>
+                    values.TryGetValue(x.EntityId, out var value) && value.Value >= x.MinimumValidC && value.Value <= x.MaximumValidC))
+                shadowRoom = participating.Sum(x => (values[x.EntityId].Value - x.TargetOffsetC) * x.Weight) / weight;
+        }
+        if (!control.SafeToControl && shadowRoom is null)
             throw Evidence(control.InvalidReason ?? "Rumstemperaturen kan inte verifieras från senaste liveinsamlingen.");
         if (!ThermalReadinessEvidence.HasValidForecastQuality(sample) ||
             ThermalReadinessEvidence.ForecastHours(sample.OutsideTemperatureForecastJson, now) < 24)
             throw Evidence("Väderprognosen måste vara giltig och täcka minst 24 sammanhängande timmar från nu.");
 
-        var outside = Required(sample.OutsideTemperatureC, "Utetemperatur");
-        var lwt = Required(sample.LeavingWaterTemperatureC, "Framledningstemperatur");
-        var rwt = Required(sample.ReturnWaterTemperatureC, "Returtemperatur");
-        var flow = Required(sample.FlowLitresPerMinute, "Flöde");
-        var brine = Required(sample.BrineInC, "Köldbärartemperatur");
-        var tank = Required(sample.TankTemperatureC, "Tanktemperatur");
-        var heatOutput = Required(sample.HeatOutputKw, "Avgiven värmeeffekt");
-        var heatPumpPower = Required(sample.HeatPumpPowerKw, "Värmepumpens eleffekt");
-        var propertyPower = Required(sample.PropertyPowerKw, "Fastighetens importerade effekt");
+        double Read(double? value, string role, string label) => Required(
+            value ?? (assumedRoles.Contains(role) ? ShadowPhysicalStateData.Read(sample, role) : null), label);
+        var outside = Read(sample.OutsideTemperatureC, ThermalEntityRoles.OutsideTemperature, "Utetemperatur");
+        var lwt = Read(sample.LeavingWaterTemperatureC, ThermalEntityRoles.LeavingWaterTemperature, "Framledningstemperatur");
+        var rwt = Read(sample.ReturnWaterTemperatureC, ThermalEntityRoles.ReturnWaterTemperature, "Returtemperatur");
+        var flow = Read(sample.FlowLitresPerMinute, ThermalEntityRoles.Flow, "Flöde");
+        var brine = Read(sample.BrineInC, ThermalEntityRoles.BrineIn, "Köldbärartemperatur");
+        var tank = Read(sample.TankTemperatureC, ThermalEntityRoles.TankTemperature, "Tanktemperatur");
+        var hydraulicAssumption = assumedRoles.Overlaps([ThermalEntityRoles.Flow, ThermalEntityRoles.LeavingWaterTemperature, ThermalEntityRoles.ReturnWaterTemperature]);
+        var heatOutput = Required(sample.HeatOutputKw ?? (hydraulicAssumption ? Math.Max(0, flow / 60 * 4.186 * (lwt - rwt)) : null), "Avgiven värmeeffekt");
+        var heatPumpPower = Read(sample.HeatPumpPowerKw, ThermalEntityRoles.HeatPumpPower, "Värmepumpens eleffekt");
+        var propertyPower = Read(sample.PropertyPowerKw, ThermalEntityRoles.PropertyPower, "Fastighetens importerade effekt");
         if (flow < 0 || heatOutput < 0 || heatPumpPower < 0)
             throw Evidence("Flöde och värmepumpens uppmätta effekter måste vara icke-negativa.");
 
@@ -126,7 +144,8 @@ internal static class ThermalPlanningInputs
                 x.UserId == userId && x.ActualStartUtc != null && x.ActualEndUtc == null, cancellationToken))
             throw Evidence("DHW är aktiv men någon pågående, kontoägd cykel har ännu inte verifierats. Invänta livscykelregistreringen.");
 
-        var roomTemperature = site.BaseRoomTargetC + control.RepresentativeTemperatureErrorC;
+        var roomTemperature = shadowRoom ?? site.BaseRoomTargetC + control.RepresentativeTemperatureErrorC;
+        if (shadowRoom is not null) assumedRoles.Add("room_initial_state");
         if (!double.IsFinite(roomTemperature))
             throw Evidence("Husets representativa rumstemperatur kan inte beräknas säkert.");
 
@@ -146,7 +165,7 @@ internal static class ThermalPlanningInputs
             sample.DhwActive == true,
             sample.DefrostActive.Value,
             sample.BackupHeaterActive.Value,
-            TelemetryFingerprint(userId, sample));
+            TelemetryFingerprint(userId, sample), assumedRoles.Order().ToArray());
     }
 
     internal static async Task<ThermalPlanningInputEvidence> EvidenceAsync(

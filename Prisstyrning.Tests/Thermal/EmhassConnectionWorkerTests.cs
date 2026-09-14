@@ -5,6 +5,10 @@ using Prisstyrning.Thermal.Optimization;
 
 namespace Prisstyrning.Tests.Thermal;
 
+[CollectionDefinition("EMHASS connection timing", DisableParallelization = true)]
+public sealed class EmhassConnectionTimingCollection { }
+
+[Collection("EMHASS connection timing")]
 public sealed class EmhassConnectionWorkerTests
 {
     [Theory]

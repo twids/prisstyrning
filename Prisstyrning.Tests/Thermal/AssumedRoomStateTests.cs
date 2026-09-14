@@ -28,7 +28,9 @@ public sealed class AssumedRoomStateTests
         Assert.Equal(Now, usage.ReceivedAtUtc);
         Assert.Null(assessment.LastValidUtc); // No manufactured active-control fallback.
         Assert.False(assessment.Excluded);
-        Assert.Equal("Unusable", ThermalSensorUsagePolicy.Describe(ThermalEntityRoles.TankTemperature, assessment, raw, Now, false).Usage);
+        var tank = ThermalSensorUsagePolicy.Describe(ThermalEntityRoles.TankTemperature, assessment, raw, Now, false);
+        Assert.Equal("AssumedUnchanged", tank.Usage);
+        Assert.Equal(DataQuality.Stale, tank.Quality);
     }
 
     [Theory]

@@ -4,7 +4,7 @@ using Prisstyrning.Thermal.Domain;
 namespace Prisstyrning.Thermal.HomeAssistant;
 
 // Usage never upgrades the physical assessment used by control/heat-response
-// training. Only the write-free Shadow baseline may consume AssumedUnchanged.
+// training. Only write-free Shadow may consume AssumedUnchanged.
 public sealed record ThermalSensorUsage(DataQuality Quality, string? Reason, bool Excluded,
     double? Value, DateTimeOffset? ValueUpdatedUtc, string Usage,
     DateTimeOffset? SourceTimestampUtc = null, DateTimeOffset? ValueChangedUtc = null, DateTimeOffset? ReceivedAtUtc = null);
@@ -49,16 +49,26 @@ public static class ThermalSensorUsagePolicy
             usage = "HeldWhileIdle";
             reason = "Värmepumpens aktuella eleffekt visar vila. Behållet värde visas, men är inte en ny mätning för styrning eller COP-träning.";
         }
-        else if (communicable && role == "room" && assessment.Quality == DataQuality.Stale &&
+        else if (communicable && AllowsShadowHeldValue(role) && assessment.Quality == DataQuality.Stale &&
                  assessment.ReportAgeOnly && historyImportedAtUtc is null && assessment.Value is { } value && double.IsFinite(value))
         {
             usage = "AssumedUnchanged";
-            reason = "Antaget oförändrad rumstemperatur från en aktuell HA-avläsning. Kan användas i skrivfri Shadow, men är inte en ny bekräftad mätning eller underlag för aktiv styrning.";
+            reason = role == "room"
+                ? "Antaget oförändrad rumstemperatur från en aktuell HA-avläsning. Kan användas i skrivfri Shadow, men är inte en ny bekräftad mätning eller underlag för aktiv styrning."
+                : "Antaget oförändrat givarvärde från en aktuell HA-avläsning. Endast för preliminär skrivfri Shadow; inte en ny mätning för styrning, COP-träning eller modellvalidering.";
         }
         return new(assessment.Quality, reason, assessment.Excluded,
             communicable ? assessment.Value : null, raw?.LastUpdatedUtc, usage,
-            role == "room" ? assessment.SourceTimestampUtc : null,
-            role == "room" ? raw?.LastChangedUtc : null,
-            role == "room" ? raw?.ReceivedAtUtc : null);
+            assessment.SourceTimestampUtc,
+            raw?.LastChangedUtc,
+            raw?.ReceivedAtUtc);
     }
+
+    // Explicit role list: prices require period coverage; COP and operating-state
+    // flags must not be extrapolated into a different compressor phase.
+    private static bool AllowsShadowHeldValue(string role) => role is "room" or
+        ThermalEntityRoles.OutsideTemperature or ThermalEntityRoles.LeavingWaterTemperature or
+        ThermalEntityRoles.ReturnWaterTemperature or ThermalEntityRoles.Flow or
+        ThermalEntityRoles.BrineIn or ThermalEntityRoles.BrineOut or ThermalEntityRoles.TankTemperature or
+        ThermalEntityRoles.HeatPumpPower or ThermalEntityRoles.PropertyPower;
 }
