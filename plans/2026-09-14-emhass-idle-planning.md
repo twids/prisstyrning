@@ -12,6 +12,8 @@
 - Invalid/missing power, active phases, stale required signals and implausible
   inverse temperature differences retain their existing rejection paths.
 - No mode/writer/settings migrations or ONECTA payload changes.
+- In Shadow only, the existing explicitly labelled assumed power input may initialize
+  idle planning too. It retains zero plan confidence and is rejected for active inputs.
 
-Verification: full backend suite 1480 passed, 7 existing skips. Production solver
+Verification: full backend suite 1482 passed, 7 existing skips. Production solver
 success and repeated automatic plans remain separate release acceptance checks.

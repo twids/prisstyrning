@@ -129,14 +129,14 @@ internal static class ThermalPlanningInputs
         var flow = Read(sample.FlowLitresPerMinute, ThermalEntityRoles.Flow, "Flöde");
         var brine = Read(sample.BrineInC, ThermalEntityRoles.BrineIn, "Köldbärartemperatur");
         var tank = Read(sample.TankTemperatureC, ThermalEntityRoles.TankTemperature, "Tanktemperatur");
-        // Idle circulation is not a COP measurement. Only verified zero electric power
-        // and explicit inactive phases allow a bounded missing hydraulic heat value.
-        var idle = sample.HeatPumpPowerKw == 0 && !assumedRoles.Contains(ThermalEntityRoles.HeatPumpPower) &&
+        var heatPumpPower = Read(sample.HeatPumpPowerKw, ThermalEntityRoles.HeatPumpPower, "Värmepumpens eleffekt");
+        // Idle circulation is not a COP measurement. Active planning needs verified
+        // zero power; Shadow can use its already-labelled assumed power input.
+        var idle = heatPumpPower == 0 &&
             sample.DhwActive == false && sample.DefrostActive == false && sample.BackupHeaterActive == false;
         var idleHydraulics = idle && (flow == 0 || Math.Abs(lwt - rwt) <= .5);
         var hydraulicAssumption = assumedRoles.Overlaps([ThermalEntityRoles.Flow, ThermalEntityRoles.LeavingWaterTemperature, ThermalEntityRoles.ReturnWaterTemperature]);
         var heatOutput = Required(sample.HeatOutputKw ?? (hydraulicAssumption || idleHydraulics ? Math.Max(0, flow / 60 * 4.186 * (lwt - rwt)) : null), "Avgiven värmeeffekt");
-        var heatPumpPower = Read(sample.HeatPumpPowerKw, ThermalEntityRoles.HeatPumpPower, "Värmepumpens eleffekt");
         var propertyPower = Read(sample.PropertyPowerKw, ThermalEntityRoles.PropertyPower, "Fastighetens importerade effekt");
         if (flow < 0 || heatOutput < 0 || heatPumpPower < 0)
             throw Evidence("Flöde och värmepumpens uppmätta effekter måste vara icke-negativa.");
