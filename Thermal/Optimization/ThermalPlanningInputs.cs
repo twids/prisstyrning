@@ -117,7 +117,7 @@ internal static class ThermalPlanningInputs
         if (!control.SafeToControl && shadowRoom is null)
             throw Evidence(control.InvalidReason ?? "Rumstemperaturen kan inte verifieras från senaste liveinsamlingen.");
         if (!ThermalReadinessEvidence.HasValidForecastQuality(sample) ||
-            ThermalReadinessEvidence.ForecastHours(sample.OutsideTemperatureForecastJson, now) < 24)
+            ThermalReadinessEvidence.ForecastHours(sample.OutsideTemperatureForecastJson, now, allowUpcomingHour: shadow) < 24)
             throw Evidence("Väderprognosen måste vara giltig och täcka minst 24 sammanhängande timmar från nu.");
 
         double Read(double? value, string role, string label) => Required(

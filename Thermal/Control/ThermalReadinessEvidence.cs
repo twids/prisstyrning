@@ -104,7 +104,7 @@ internal static class ThermalReadinessEvidence
             value >= site.BaseRoomTargetC + room.TargetOffsetC - site.LowerComfortBandC);
     }
 
-    internal static double ForecastHours(string? json, DateTimeOffset now)
+    internal static double ForecastHours(string? json, DateTimeOffset now, bool allowUpcomingHour = false)
     {
         if (string.IsNullOrWhiteSpace(json)) return 0;
         try
@@ -123,7 +123,11 @@ internal static class ThermalReadinessEvidence
             }
             var ordered = points.OrderBy(x => x).ToArray();
             var anchor = Array.FindLastIndex(ordered, x => x <= now);
+            // Shadow can estimate the short leading gap, but it is not verified coverage.
+            if (anchor < 0 && allowUpcomingHour && ordered.Length > 0 && ordered[0] - now <= TimeSpan.FromHours(1))
+                anchor = 0;
             if (anchor < 0 || now - ordered[anchor] > TimeSpan.FromHours(1)) return 0;
+            var coverageStart = ordered[anchor] > now ? ordered[anchor] : now;
             var covered = ordered[anchor];
             for (var index = anchor + 1; index < ordered.Length; index++)
             {
@@ -131,7 +135,7 @@ internal static class ThermalReadinessEvidence
                 if (gap <= TimeSpan.Zero || gap > TimeSpan.FromHours(1)) break;
                 covered = ordered[index];
             }
-            return Math.Max(0, (covered - now).TotalHours);
+            return Math.Max(0, (covered - coverageStart).TotalHours);
         }
         catch (JsonException) { return 0; }
     }

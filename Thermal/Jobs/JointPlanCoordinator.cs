@@ -290,7 +290,7 @@ public sealed class JointPlanCoordinator : BackgroundService
                         actualCoverage = weather.ActualCoverage,
                         actualSteps = weather.ActualSteps,
                         estimatedSteps = weather.EstimatedSteps,
-                        estimation = "Senaste giltiga prognospunkt hålls konstant efter prognosens slut."
+                        estimation = "I Shadow uppskattas en eventuell inledande lucka på högst en timme med första prognospunkten. Senaste giltiga prognospunkt hålls konstant efter prognosens slut."
                     },
                     confidenceBasis = provisional
                         ? "Ingen plankonfidens är verifierad. Startantaganden eller antaget oförändrade givare används endast i skrivfri Shadow."

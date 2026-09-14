@@ -20,3 +20,13 @@ even in Shadow. This prevented early simulated plans while learning data accumul
 Release acceptance: backend/frontend regression checks, CI, same-stack reversible
 deployment, and two successive automatically generated Shadow plans. A successful
 connection check or a simulated test dispatcher is not production solver evidence.
+
+## Hourly forecast boundary
+
+HA hourly forecasts may begin at the next full hour. Shadow accepts a leading gap
+of at most one hour and initializes those steps from the first forecast point,
+explicitly classified as estimated. At least 24 continuous actual forecast hours
+are still required after that point. Missing intermediate hours, invalid forecast
+quality and longer leading gaps remain rejected. Active readiness/controls retain
+the original requirement for a current forecast anchor. Regression coverage includes
+both active modes, the exact one-hour boundary and insufficient actual coverage.
