@@ -197,6 +197,8 @@ public sealed class EmhassClient : IEmhassClient
         {
             prediction_horizon = request.LoadCostForecast.Count,
             optimization_time_step = _options.OptimizationTimeStepMinutes,
+            // Match the orchestrator's floor-to-quarter horizon, not EMHASS's nearest default.
+            method_ts_round = "first",
             continual_publish = false,
             entity_save = false,
             load_cost_forecast = request.LoadCostForecast,

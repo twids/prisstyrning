@@ -21,6 +21,8 @@
   a first-order projection, not a full two-state EMHASS implementation.
 - Solver row zero is the observed initial temperature. It may lie outside the desired
   band only when matching that initial state; all future rows still enforce comfort.
+- Each solver request selects `method_ts_round=first`, matching the orchestrator's
+  floor-to-quarter horizon instead of the upstream nearest-quarter default.
 
 Verification: full backend suite 1488 passed, 7 existing skips, including zero delay and observed initial state. Production solver
 success and repeated automatic plans remain separate release acceptance checks.

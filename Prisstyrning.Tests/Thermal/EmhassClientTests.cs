@@ -33,6 +33,7 @@ public class EmhassClientTests
         Assert.NotNull(posted);
         Assert.Contains("\"continual_publish\":false", posted);
         Assert.Contains("\"entity_save\":false", posted);
+        Assert.Contains("\"method_ts_round\":\"first\"", posted);
         Assert.DoesNotContain("retrieve_hass_conf", posted);
     }
 
