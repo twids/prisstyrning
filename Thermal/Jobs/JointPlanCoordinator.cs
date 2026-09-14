@@ -126,7 +126,7 @@ public sealed class JointPlanCoordinator : BackgroundService
             db, userId, horizonStart, horizonSteps, site, planningStartedUtc, cancellationToken);
         var parameters = models.Thermal;
         var roomTemperature = planningTelemetry.RepresentativeRoomTemperatureC;
-        var phaseEstimatedCopInput = planningTelemetry.DhwActive;
+        var phaseEstimatedCopInput = planningTelemetry.DhwActive || planningTelemetry.IsIdle;
         var copLwtC = phaseEstimatedCopInput
             ? Math.Clamp(parameters.BaseCurveInterceptC + parameters.BaseCurveSlope * planningTelemetry.OutsideTemperatureC, 20, 60)
             : planningTelemetry.LeavingWaterTemperatureC;
@@ -194,7 +194,9 @@ public sealed class JointPlanCoordinator : BackgroundService
         var thermal = new EmhassThermalConfig(
             Math.Clamp(2.5 * estimatedCop * parameters.HeatingGain / parameters.AirCapacityKwhPerC, 0.1, 10),
             Math.Clamp(effectiveConductance / parameters.AirCapacityKwhPerC, 0.001, 1),
-            Math.Clamp(parameters.MassCapacityKwhPerC / parameters.MassCouplingKwPerC, 0, 24),
+            // EMHASS thermal_inertia is transport dead time, not building mass time constant.
+            // The fitted grey-box model has no pure input delay; do not invent one here.
+            0,
             roomTemperature,
             minimum,
             maximum);
@@ -275,7 +277,7 @@ public sealed class JointPlanCoordinator : BackgroundService
                     inputEvidence = persistedInputEvidence,
                     estimatedCop,
                     copInput = phaseEstimatedCopInput
-                        ? new { source = "weatherCurveEstimateDuringDhw", leavingWaterTemperatureC = copLwtC, heatOutputKw = copHeatOutputKw }
+                        ? new { source = planningTelemetry.IsIdle ? "weatherCurveEstimateWhileIdle" : "weatherCurveEstimateDuringDhw", leavingWaterTemperatureC = copLwtC, heatOutputKw = copHeatOutputKw }
                         : new { source = "verifiedLiveSpaceHeating", leavingWaterTemperatureC = copLwtC, heatOutputKw = copHeatOutputKw },
                     dhw = dhw?.Selected,
                     priceForecast = new

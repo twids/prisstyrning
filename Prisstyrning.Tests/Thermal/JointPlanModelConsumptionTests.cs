@@ -241,6 +241,7 @@ public sealed class JointPlanModelConsumptionTests
         var request = Assert.IsType<EmhassOptimizationRequest>(fixture.Dispatcher.Request);
         Assert.Equal(4.75, request.Thermal.HeatingRateCPerHour, 6);
         Assert.Equal(.175, request.Thermal.CoolingConstantPerHourPerC, 6);
+        Assert.Equal(0, request.Thermal.ThermalInertiaHours);
         Assert.NotNull(request.InputEvidence);
         Assert.Null(request.InputEvidence.DhwEvidence?.ReservedCycleId);
         Assert.Equal(0, request.InputEvidence.DhwEvidence?.OpenCycleCount);
@@ -304,6 +305,99 @@ public sealed class JointPlanModelConsumptionTests
         {
             Assert.True((await db.ThermalPlans.SingleAsync()).IsShadow);
             Assert.Equal("Legacy", (await db.ThermalSiteConfigs.SingleAsync()).DhwWriter);
+            Assert.Empty(await db.ThermalControlCommands.ToListAsync());
+        });
+    }
+
+    [Theory]
+    [InlineData("Shadow", 0, 23.1, true)]
+    [InlineData("LwtActive", 0, 23.1, true)]
+    [InlineData("FullActive", 0, 23.1, true)]
+    [InlineData("Shadow", 1, 23.1, false)]
+    [InlineData("Shadow", 0, 24, false)]
+    public async Task Replan_VerifiedIdleCirculationDoesNotRequireACopMeasurement(string mode, double electricPower, double returnC, bool allowed)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.ChangeAsync(async db =>
+        {
+            (await db.ThermalSiteConfigs.SingleAsync()).ControlMode = mode;
+            var sample = await ThermalCurrentModelTestData.LatestTelemetryAsync(db);
+            sample.HeatPumpPowerKw = electricPower;
+            sample.LeavingWaterTemperatureC = 23;
+            sample.ReturnWaterTemperatureC = returnC;
+            sample.HeatOutputKw = null;
+        });
+        if (mode == "FullActive")
+        {
+            // Exercise input policy without installing a real DHW writer in this fixture.
+            await fixture.ChangeAsync(async db =>
+            {
+                var input = await ThermalPlanningInputs.ReadTelemetryAsync(db, "account-a",
+                    await ThermalCurrentModelTestData.LatestTelemetryAsync(db),
+                    await db.ThermalSiteConfigs.SingleAsync(), DateTimeOffset.UtcNow, CancellationToken.None);
+                Assert.True(input.IsIdle);
+                Assert.Equal(0, input.HeatOutputKw);
+                Assert.Null((await ThermalCurrentModelTestData.LatestTelemetryAsync(db)).HeatOutputKw);
+                Assert.Empty(await db.ThermalControlCommands.ToListAsync());
+            });
+            return;
+        }
+        if (!allowed)
+        {
+            await Assert.ThrowsAsync<ThermalPlanningEvidenceException>(() => fixture.ReplanAsync());
+            Assert.Equal(0, fixture.Dispatcher.Calls);
+            return;
+        }
+        await fixture.ReplanAsync();
+        await fixture.ChangeAsync(async db =>
+        {
+            var plan = await db.ThermalPlans.SingleAsync();
+            Assert.Contains("weatherCurveEstimateWhileIdle", plan.InputSnapshotJson);
+            Assert.Null((await ThermalCurrentModelTestData.LatestTelemetryAsync(db)).HeatOutputKw);
+            Assert.Empty(await db.ThermalControlCommands.ToListAsync());
+            Assert.Equal("Legacy", (await db.ThermalSiteConfigs.SingleAsync()).DhwWriter);
+        });
+    }
+
+    [Theory]
+    [InlineData("Shadow", true)]
+    [InlineData("LwtActive", false)]
+    public async Task Replan_HeldZeroPowerRemainsAnExplicitShadowAssumption(string mode, bool allowed)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.ChangeAsync(async db =>
+        {
+            (await db.ThermalSiteConfigs.SingleAsync()).ControlMode = mode;
+            var sample = await ThermalCurrentModelTestData.LatestTelemetryAsync(db);
+            sample.HeatPumpPowerKw = null;
+            sample.HeatOutputKw = null;
+            sample.LeavingWaterTemperatureC = 23;
+            sample.ReturnWaterTemperatureC = 23.1;
+            var quality = JsonNode.Parse(sample.QualityJson)!.AsObject();
+            quality["collectedAtUtc"] = JsonValue.Create(sample.TimestampUtc);
+            quality["entities"]![ThermalEntityRoles.HeatPumpPower] = JsonSerializer.SerializeToNode(new
+            {
+                quality = 1, excluded = false, usage = "AssumedUnchanged", value = 0,
+                receivedAtUtc = sample.TimestampUtc, valueUpdatedUtc = sample.TimestampUtc.AddHours(-2),
+                sourceTimestampUtc = sample.TimestampUtc.AddHours(-2)
+            });
+            sample.QualityJson = quality.ToJsonString();
+        });
+        if (!allowed)
+        {
+            await Assert.ThrowsAsync<ThermalPlanningEvidenceException>(() => fixture.ReplanAsync());
+            Assert.Equal(0, fixture.Dispatcher.Calls);
+            return;
+        }
+        await fixture.ReplanAsync();
+        await fixture.ChangeAsync(async db =>
+        {
+            var plan = await db.ThermalPlans.SingleAsync();
+            Assert.True(plan.IsShadow);
+            Assert.Equal(0, plan.Confidence);
+            Assert.Contains("weatherCurveEstimateWhileIdle", plan.InputSnapshotJson);
+            Assert.Contains(ThermalEntityRoles.HeatPumpPower, plan.InputSnapshotJson);
+            Assert.Null((await ThermalCurrentModelTestData.LatestTelemetryAsync(db)).HeatPumpPowerKw);
             Assert.Empty(await db.ThermalControlCommands.ToListAsync());
         });
     }
