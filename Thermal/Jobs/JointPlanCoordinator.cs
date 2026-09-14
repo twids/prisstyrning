@@ -144,6 +144,24 @@ public sealed class JointPlanCoordinator : BackgroundService
             horizonSteps,
             _options.OptimizationTimeStepMinutes);
 
+        var minimum = Enumerable.Repeat(site.BaseRoomTargetC - site.LowerComfortBandC, horizonSteps).ToArray();
+        var maximum = Enumerable.Repeat(site.BaseRoomTargetC + site.UpperComfortBandC, horizonSteps).ToArray();
+        var averageWind = weather.WindSpeedMps.Count == 0 ? 0 : weather.WindSpeedMps.Average();
+        var effectiveConductance = parameters.EnvelopeConductanceKwPerC +
+                                   parameters.WindLossCoefficientKwPerCPerMps * Math.Max(0, averageWind);
+        var outsideForecast = weather.TemperatureC.Select((temperature, index) =>
+        {
+            var solarGainKw = parameters.SolarGainKwPerWm2 * Math.Max(0, weather.SolarIrradianceWm2[index]);
+            return effectiveConductance > 0.001 ? temperature + solarGainKw / effectiveConductance : temperature;
+        }).ToArray();
+        var thermal = new EmhassThermalConfig(
+            Math.Clamp(2.5 * estimatedCop * parameters.HeatingGain / parameters.AirCapacityKwhPerC, 0.1, 10),
+            Math.Clamp(effectiveConductance / parameters.AirCapacityKwhPerC, 0.001, 1),
+            // No pure transport delay in the grey-box model.
+            0,
+            roomTemperature,
+            minimum,
+            maximum);
         var dhw = await PlanDhwAsync(
             scope,
             db,
@@ -155,6 +173,8 @@ public sealed class JointPlanCoordinator : BackgroundService
             weather,
             parameters,
             roomTemperature,
+            thermal,
+            outsideForecast,
             cancellationToken);
         var dhwProfileEvidence = BuildDhwProfileEvidence(dhw);
         var inputEvidence = await ThermalPlanningInputs.EvidenceAsync(
@@ -174,32 +194,13 @@ public sealed class JointPlanCoordinator : BackgroundService
             reservationStart = null;
             reservationEnd = null;
         }
-        int? dhwStartStep = reservationStart is null
-            ? null
-            : Math.Max(0, (int)Math.Floor((reservationStart.Value - horizonStart).TotalMinutes / _options.OptimizationTimeStepMinutes));
-        var dhwDurationSteps = reservationStart is null || reservationEnd is null
-            ? 0
-            : Math.Max(1, (int)Math.Ceiling((reservationEnd.Value - reservationStart.Value).TotalMinutes / _options.OptimizationTimeStepMinutes));
-        var minimum = Enumerable.Repeat(site.BaseRoomTargetC - site.LowerComfortBandC, horizonSteps).ToArray();
-        var maximum = Enumerable.Repeat(site.BaseRoomTargetC + site.UpperComfortBandC, horizonSteps).ToArray();
-        var averageWind = weather.WindSpeedMps.Count == 0 ? 0 : weather.WindSpeedMps.Average();
-        var effectiveConductance = parameters.EnvelopeConductanceKwPerC +
-                                   parameters.WindLossCoefficientKwPerCPerMps * Math.Max(0, averageWind);
-        var outsideForecast = weather.TemperatureC.Select((temperature, index) =>
-        {
-            var solarGainKw = parameters.SolarGainKwPerWm2 * Math.Max(0, weather.SolarIrradianceWm2[index]);
-            return effectiveConductance > 0.001 ? temperature + solarGainKw / effectiveConductance : temperature;
-        }).ToArray();
+        var reservation = reservationStart is null || reservationEnd is null
+            ? (Start: 0, Duration: 0)
+            : DhwHeatReservation.Rasterize(reservationStart.Value, reservationEnd.Value, horizonStart,
+                _options.OptimizationTimeStepMinutes, horizonSteps);
+        int? dhwStartStep = reservation.Duration == 0 ? null : reservation.Start;
+        var dhwDurationSteps = reservation.Duration;
         var baseLoadW = Enumerable.Repeat(Math.Max(0, (planningTelemetry.PropertyPowerKw - planningTelemetry.HeatPumpPowerKw) * 1000), horizonSteps).ToArray();
-        var thermal = new EmhassThermalConfig(
-            Math.Clamp(2.5 * estimatedCop * parameters.HeatingGain / parameters.AirCapacityKwhPerC, 0.1, 10),
-            Math.Clamp(effectiveConductance / parameters.AirCapacityKwhPerC, 0.001, 1),
-            // EMHASS thermal_inertia is transport dead time, not building mass time constant.
-            // The fitted grey-box model has no pure input delay; do not invent one here.
-            0,
-            roomTemperature,
-            minimum,
-            maximum);
         var request = new EmhassOptimizationRequest(
             prices.Steps,
             outsideForecast,
@@ -356,6 +357,8 @@ public sealed class JointPlanCoordinator : BackgroundService
         WeatherSeries weather,
         GreyBoxParameters parameters,
         double roomTemperature,
+        EmhassThermalConfig thermal,
+        IReadOnlyList<double> outsideForecast,
         CancellationToken cancellationToken)
     {
         if (telemetry.TankTemperatureC is null) return null;
@@ -412,6 +415,26 @@ public sealed class JointPlanCoordinator : BackgroundService
             existing?.PlannedStartUtc,
             comfortPenalty));
         if (!result.Success || result.Selected is null) return null;
+
+        // Never shift locked or running jobs (handled above). For flexible candidates,
+        // reject intervals that cannot preserve comfort even with full preheating.
+        if (!(existing is not null && existing.PlannedStartUtc <= now.AddMinutes(20)))
+        {
+            var feasible = result.Alternatives.Where(candidate => DhwHeatReservation.CanCoast(
+                    candidate, horizonStart, _options.OptimizationTimeStepMinutes, thermal, outsideForecast))
+                .OrderBy(candidate => candidate.TotalCostSek).ThenBy(candidate => candidate.StartUtc).ToArray();
+            if (feasible.Length == 0)
+                throw new ThermalPlanningEvidenceException("Ingen flexibel DHW-period ryms inom husets komfortgränser med aktuell modell. Ingen DHW-frist eller komfortgräns har ändrats.");
+            var selected = feasible[0];
+            result = result with
+            {
+                Selected = selected,
+                Alternatives = feasible,
+                Reason = selected.StartUtc == result.Selected.StartUtc ? result.Reason : new DecisionReason(
+                    $"Start {selected.StartUtc:HH:mm} väljs eftersom hela DHW-reservationen ryms inom husets komfortgränser och kostar {selected.TotalCostSek:0.00} kr.",
+                    selected.EnergyCostSek, null, result.Reason.ModelConfidence, "Billigare starter kunde inte klara hela det reserverade kvartfönstret.")
+            };
+        }
 
         if (existing is { ScheduleAcceptedUtc: not null } &&
             existing.PlannedStartUtc - now > TimeSpan.FromMinutes(20) &&

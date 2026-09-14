@@ -16,6 +16,42 @@ namespace Prisstyrning.Tests.Thermal;
 
 public sealed class JointPlanModelConsumptionTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Replan_FiltersImpossibleFlexibleDhwWindowsWithoutDroppingTheReservation(bool warmerWindow)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.ChangeAsync(async db =>
+        {
+            var sample = await ThermalCurrentModelTestData.LatestTelemetryAsync(db);
+            var now = DateTimeOffset.UtcNow;
+            sample.OutsideTemperatureForecastJson = JsonSerializer.Serialize(Enumerable.Range(0, 51).Select(hour =>
+                new WeatherForecastPoint(now.AddHours(hour - 1), warmerWindow && hour >= 12 ? 19 : 2, 3, 0)));
+        });
+
+        if (warmerWindow)
+        {
+            await fixture.ReplanAsync();
+            var request = Assert.IsType<EmhassOptimizationRequest>(fixture.Dispatcher.Request);
+            Assert.NotNull(request.DhwStartStep);
+            Assert.True(request.DhwStartStep >= 40);
+            Assert.True(request.DhwDurationSteps > 0);
+        }
+        else
+        {
+            var failure = await Assert.ThrowsAsync<ThermalPlanningEvidenceException>(() => fixture.ReplanAsync());
+            Assert.Contains("Ingen flexibel DHW-period", failure.Message);
+            Assert.Equal(0, fixture.Dispatcher.Calls);
+            await fixture.ChangeAsync(async db =>
+            {
+                Assert.Empty(await db.ThermalPlans.ToListAsync());
+                Assert.Empty(await db.DhwCycles.ToListAsync());
+            });
+        }
+        await fixture.ChangeAsync(async db => Assert.Empty(await db.ThermalControlCommands.ToListAsync()));
+    }
+
     [Fact]
     public async Task Planning_ExternalCopAllowsExplicitShadowPriorWithoutUnrelatedMeterVerification()
     {
@@ -209,7 +245,7 @@ public sealed class JointPlanModelConsumptionTests
             var sample = await ThermalCurrentModelTestData.LatestTelemetryAsync(db);
             var firstForecast = DateTimeOffset.UtcNow.AddMinutes(30);
             sample.OutsideTemperatureForecastJson = JsonSerializer.Serialize(Enumerable.Range(0, 49).Select(hour =>
-                new WeatherForecastPoint(firstForecast.AddHours(hour), 2, 3, 0)));
+                new WeatherForecastPoint(firstForecast.AddHours(hour), 18.5, 3, 0)));
         });
         if (!allowed)
         {
@@ -683,8 +719,10 @@ public sealed class JointPlanModelConsumptionTests
             await fixture.ChangeAsync(async db =>
             {
                 var now = DateTimeOffset.UtcNow;
+                // Keep the normal fixture physically capable of coasting through DHW;
+                // cold/infeasible reservations have dedicated rejection coverage.
                 var forecast = Enumerable.Range(0, 51).Select(hour =>
-                    new WeatherForecastPoint(now.AddHours(hour - 1), 2 + hour * .02, 3, 0)).ToArray();
+                    new WeatherForecastPoint(now.AddHours(hour - 1), 18.5 + hour * .02, 3, 0)).ToArray();
                 var quality = JsonSerializer.Serialize(new
                 {
                     rooms = new Dictionary<string, object>
