@@ -308,6 +308,56 @@ public sealed class JointPlanModelConsumptionTests
         });
     }
 
+    [Theory]
+    [InlineData("Shadow", 0, 23.1, true)]
+    [InlineData("LwtActive", 0, 23.1, true)]
+    [InlineData("FullActive", 0, 23.1, true)]
+    [InlineData("Shadow", 1, 23.1, false)]
+    [InlineData("Shadow", 0, 24, false)]
+    public async Task Replan_VerifiedIdleCirculationDoesNotRequireACopMeasurement(string mode, double electricPower, double returnC, bool allowed)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.ChangeAsync(async db =>
+        {
+            (await db.ThermalSiteConfigs.SingleAsync()).ControlMode = mode;
+            var sample = await ThermalCurrentModelTestData.LatestTelemetryAsync(db);
+            sample.HeatPumpPowerKw = electricPower;
+            sample.LeavingWaterTemperatureC = 23;
+            sample.ReturnWaterTemperatureC = returnC;
+            sample.HeatOutputKw = null;
+        });
+        if (mode == "FullActive")
+        {
+            // Exercise input policy without installing a real DHW writer in this fixture.
+            await fixture.ChangeAsync(async db =>
+            {
+                var input = await ThermalPlanningInputs.ReadTelemetryAsync(db, "account-a",
+                    await ThermalCurrentModelTestData.LatestTelemetryAsync(db),
+                    await db.ThermalSiteConfigs.SingleAsync(), DateTimeOffset.UtcNow, CancellationToken.None);
+                Assert.True(input.IsIdle);
+                Assert.Equal(0, input.HeatOutputKw);
+                Assert.Null((await ThermalCurrentModelTestData.LatestTelemetryAsync(db)).HeatOutputKw);
+                Assert.Empty(await db.ThermalControlCommands.ToListAsync());
+            });
+            return;
+        }
+        if (!allowed)
+        {
+            await Assert.ThrowsAsync<ThermalPlanningEvidenceException>(() => fixture.ReplanAsync());
+            Assert.Equal(0, fixture.Dispatcher.Calls);
+            return;
+        }
+        await fixture.ReplanAsync();
+        await fixture.ChangeAsync(async db =>
+        {
+            var plan = await db.ThermalPlans.SingleAsync();
+            Assert.Contains("weatherCurveEstimateWhileIdle", plan.InputSnapshotJson);
+            Assert.Null((await ThermalCurrentModelTestData.LatestTelemetryAsync(db)).HeatOutputKw);
+            Assert.Empty(await db.ThermalControlCommands.ToListAsync());
+            Assert.Equal("Legacy", (await db.ThermalSiteConfigs.SingleAsync()).DhwWriter);
+        });
+    }
+
     [Fact]
     public async Task Replan_TrackedRunningDhwUsesWeatherCurveCopInputAndExtendsReservation()
     {

@@ -126,7 +126,7 @@ public sealed class JointPlanCoordinator : BackgroundService
             db, userId, horizonStart, horizonSteps, site, planningStartedUtc, cancellationToken);
         var parameters = models.Thermal;
         var roomTemperature = planningTelemetry.RepresentativeRoomTemperatureC;
-        var phaseEstimatedCopInput = planningTelemetry.DhwActive;
+        var phaseEstimatedCopInput = planningTelemetry.DhwActive || planningTelemetry.IsIdle;
         var copLwtC = phaseEstimatedCopInput
             ? Math.Clamp(parameters.BaseCurveInterceptC + parameters.BaseCurveSlope * planningTelemetry.OutsideTemperatureC, 20, 60)
             : planningTelemetry.LeavingWaterTemperatureC;
@@ -275,7 +275,7 @@ public sealed class JointPlanCoordinator : BackgroundService
                     inputEvidence = persistedInputEvidence,
                     estimatedCop,
                     copInput = phaseEstimatedCopInput
-                        ? new { source = "weatherCurveEstimateDuringDhw", leavingWaterTemperatureC = copLwtC, heatOutputKw = copHeatOutputKw }
+                        ? new { source = planningTelemetry.IsIdle ? "weatherCurveEstimateWhileIdle" : "weatherCurveEstimateDuringDhw", leavingWaterTemperatureC = copLwtC, heatOutputKw = copHeatOutputKw }
                         : new { source = "verifiedLiveSpaceHeating", leavingWaterTemperatureC = copLwtC, heatOutputKw = copHeatOutputKw },
                     dhw = dhw?.Selected,
                     priceForecast = new
