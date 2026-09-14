@@ -78,6 +78,17 @@ describe('ThermalPlanPage', () => {
     expect(screen.queryByText(/uppskattade prissteg/)).not.toBeInTheDocument();
   });
 
+  it('labels cold-start scenarios without suggesting verified confidence', () => {
+    hooks.plan.mockReturnValue(query(plan(JSON.stringify({ ...JSON.parse(inputSnapshot()),
+      provisionalModel: 'Generella startantaganden, inte en inlärd modell.',
+      assumedInputRoles: ['return_water_temperature'],
+    }))));
+    render(<main><ThermalPlanPage /></main>);
+    expect(screen.getByText('Preliminärt Shadow-scenario — styr inte värmepumpen.')).toBeInTheDocument();
+    expect(screen.getByText('Ej verifierad')).toBeInTheDocument();
+    expect(screen.getByText(/1 indatakällor bygger på antaganden/)).toBeInTheDocument();
+  });
+
   it('keeps the confidence and estimate explanation accessible', async () => {
     const rendered = render(<main><ThermalPlanPage /></main>);
     expect((await axe(rendered.container, { rules: { 'color-contrast': { enabled: false } } })).violations).toEqual([]);

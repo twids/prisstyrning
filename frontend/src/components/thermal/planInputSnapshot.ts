@@ -9,6 +9,8 @@ export interface PlanInputSnapshot {
   priceForecast: PlanInputCoverage;
   weatherForecast: PlanInputCoverage;
   confidenceBasis: string;
+  provisionalModel?: string;
+  assumedInputRoles?: string[];
 }
 
 export function parsePlanInputSnapshot(json: string): PlanInputSnapshot | null {
@@ -19,7 +21,11 @@ export function parsePlanInputSnapshot(json: string): PlanInputSnapshot | null {
     const weatherForecast = coverage(root.weatherForecast);
     const confidenceBasis = typeof root.confidenceBasis === 'string' ? root.confidenceBasis.trim() : '';
     if (!priceForecast || !weatherForecast || !confidenceBasis) return null;
-    return { priceForecast, weatherForecast, confidenceBasis };
+    return { priceForecast, weatherForecast, confidenceBasis,
+      ...(typeof root.provisionalModel === 'string' ? { provisionalModel: root.provisionalModel } : {}),
+      ...(Array.isArray(root.assumedInputRoles) && root.assumedInputRoles.every((role) => typeof role === 'string')
+        ? { assumedInputRoles: root.assumedInputRoles as string[] } : {}),
+    };
   } catch {
     return null;
   }

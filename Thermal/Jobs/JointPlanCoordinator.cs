@@ -234,7 +234,8 @@ public sealed class JointPlanCoordinator : BackgroundService
             EmhassOptimizationValidation.ValidateResult(request, optimized, _options.OptimizationTimeStepMinutes);
 
             var inputCoverage = Math.Min(prices.ActualCoverage, weather.ActualCoverage) * (phaseEstimatedCopInput ? .9 : 1);
-            var planConfidence = Math.Round(Math.Clamp(.85 * (.5 + .5 * inputCoverage), 0, .85), 3);
+            var provisional = models.Evidence.IsProvisional || planningTelemetry.AssumedRoles is { Length: > 0 };
+            var planConfidence = provisional ? 0 : Math.Round(Math.Clamp(.85 * (.5 + .5 * inputCoverage), 0, .85), 3);
 
             await UpsertDhwCycleAsync(db, userId, mode, dhw, cancellationToken);
             await db.SaveChangesAsync(cancellationToken);
@@ -259,13 +260,18 @@ public sealed class JointPlanCoordinator : BackgroundService
                 SolverDurationMs = optimized.SolverDurationMs,
                 ObjectiveCost = optimized.ObjectiveCost + (dhw?.Selected?.TotalCostSek ?? 0),
                 Confidence = planConfidence,
-                Summary = dhw?.Result.Reason.MainReason ?? "Husvärme optimerad utan DHW-reservation.",
+                Summary = models.Evidence.IsProvisional
+                    ? ShadowPlanningPrior.Description
+                    : provisional ? "Preliminärt Shadow-förslag med antaget oförändrade givare. Ingen styrning utförs."
+                    : dhw?.Result.Reason.MainReason ?? "Husvärme optimerad utan DHW-reservation.",
                 InputSnapshotJson = JsonSerializer.Serialize(new
                 {
                     telemetry.TimestampUtc,
                     modelVersionId = models.Evidence.ThermalModelVersionId,
                     copModelVersionId = models.Evidence.CopModelVersionId,
                     modelEvidence = models.Evidence,
+                    provisionalModel = models.Evidence.IsProvisional ? ShadowPlanningPrior.Description : null,
+                    assumedInputRoles = planningTelemetry.AssumedRoles,
                     inputEvidence = persistedInputEvidence,
                     estimatedCop,
                     copInput = phaseEstimatedCopInput
@@ -286,7 +292,9 @@ public sealed class JointPlanCoordinator : BackgroundService
                         estimatedSteps = weather.EstimatedSteps,
                         estimation = "Senaste giltiga prognospunkt hålls konstant efter prognosens slut."
                     },
-                    confidenceBasis = "0,85 modellbas multiplicerad med verifierad pris- och väderprognostäckning."
+                    confidenceBasis = provisional
+                        ? "Ingen plankonfidens är verifierad. Startantaganden eller antaget oförändrade givare används endast i skrivfri Shadow."
+                        : "0,85 modellbas multiplicerad med verifierad pris- och väderprognostäckning."
                 })
             };
             foreach (var step in optimized.Steps)
@@ -308,7 +316,7 @@ public sealed class JointPlanCoordinator : BackgroundService
                     Confidence = plan.Confidence,
                     ExpectedRoomsJson = JsonSerializer.Serialize(new { representative = step.PredictedTemperatureC }),
                     DecisionReasonJson = JsonSerializer.Serialize(new DecisionReason(
-                        reserved ? "Kompressorkapaciteten är reserverad för varmvatten." : "EMHASS minimerar kostnaden inom komfortbandet.",
+                        models.Evidence.IsProvisional ? ShadowPlanningPrior.Description : reserved ? "Kompressorkapaciteten är reserverad för varmvatten." : "EMHASS minimerar kostnaden inom komfortbandet.",
                         prices.Steps[step.Index],
                         step.PredictedTemperatureC - minimum[step.Index],
                         plan.Confidence,

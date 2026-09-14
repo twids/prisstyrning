@@ -12,7 +12,7 @@ namespace Prisstyrning.Thermal.Optimization;
 // Local orchestration metadata only. BuildRuntimePayload never sends it to EMHASS.
 public sealed record ThermalPlanningModelEvidence(
     long ThermalModelVersionId, long CopModelVersionId, string ControlMode,
-    DateTimeOffset TelemetryTimestampUtc, string Fingerprint);
+    DateTimeOffset TelemetryTimestampUtc, string Fingerprint, bool IsProvisional = false);
 
 internal sealed record ThermalPlanningModels(
     ThermalSiteConfig Site, GreyBoxParameters Thermal, CopParameters Cop, ThermalPlanningModelEvidence Evidence)
@@ -52,8 +52,12 @@ internal sealed record ThermalPlanningModels(
             now,
             cancellationToken,
             build);
-        var thermal = RequireModel(thermalCandidate, SourceFor(thermalCandidate, sourceValidations), "Husmodellen", now);
-        var cop = RequireModel(copCandidate, SourceFor(copCandidate, sourceValidations), "COP-modellen", now);
+        // Cold-start scenarios are deliberately not model approvals. Missing
+        // validated models may use explicit priors ONLY in write-free Shadow.
+        // An existing pair still has to pass all provenance/validation checks.
+        var provisional = site.ControlMode == "Shadow" && (thermalCandidate is null || copCandidate is null);
+        var thermal = provisional ? null : RequireModel(thermalCandidate, SourceFor(thermalCandidate, sourceValidations), "Husmodellen", now);
+        var cop = provisional ? null : RequireModel(copCandidate, SourceFor(copCandidate, sourceValidations), "COP-modellen", now);
         // Never serialize credentials, URLs or connection objects into the evidence.
         var connection = await db.HomeAssistantConnections.AsNoTracking().Where(x => x.UserId == userId)
             .Select(x => new { x.UpdatedAtUtc, x.TelemetryEnabled, x.ControlEnabled }).SingleOrDefaultAsync(cancellationToken);
@@ -65,15 +69,19 @@ internal sealed record ThermalPlanningModels(
             entities,
             connection,
             thermal,
-            cop
+            cop,
+            provisional,
+            prior = provisional ? ShadowPlanningPrior.Description : null,
+            priorRevision = provisional ? build.Revision : null
         }, JsonSerializerOptions.Web))));
-        var evidence = new ThermalPlanningModelEvidence(thermal.Id, cop.Id, site.ControlMode, telemetryTimestampUtc, fingerprint);
+        var evidence = new ThermalPlanningModelEvidence(thermal?.Id ?? 0, cop?.Id ?? 0, site.ControlMode, telemetryTimestampUtc, fingerprint, provisional);
+        if (provisional) return new(site, ShadowPlanningPrior.Thermal, CopModel.ConservativeDefault, evidence);
         try
         {
             // Matches training serialization; default case-sensitive reads silently
             // constructed zero-valued model parameters from valid camelCase JSON.
-            return new(site, JsonSerializer.Deserialize<GreyBoxParameters>(thermal.ParametersJson, JsonSerializerOptions.Web)!,
-                JsonSerializer.Deserialize<CopParameters>(cop.ParametersJson, JsonSerializerOptions.Web)!, evidence);
+            return new(site, JsonSerializer.Deserialize<GreyBoxParameters>(thermal!.ParametersJson, JsonSerializerOptions.Web)!,
+                JsonSerializer.Deserialize<CopParameters>(cop!.ParametersJson, JsonSerializerOptions.Web)!, evidence);
         }
         catch (JsonException)
         {
@@ -98,6 +106,8 @@ internal sealed record ThermalPlanningModels(
     {
         if (evidence is null)
             throw new ThermalPlanningEvidenceException("Planen saknar verifierbart modellunderlag och får inte styra LWT.");
+        if (evidence.IsProvisional || evidence.ThermalModelVersionId <= 0 || evidence.CopModelVersionId <= 0)
+            throw new ThermalPlanningEvidenceException("Preliminära Shadow-scenarier får aldrig användas för aktiv styrning.");
         var current = await ReadCoreAsync(db, userId, evidence.TelemetryTimestampUtc, now, requireFreshTelemetry: false, build, cancellationToken);
         if (current.Evidence != evidence)
             throw new ThermalPlanningEvidenceException("Planens modell, driftläge eller inställningar gäller inte längre.");
@@ -119,6 +129,14 @@ internal sealed record ThermalPlanningModels(
         ThermalModelVersion? model,
         IReadOnlyDictionary<long, ThermalModelSourceValidation> validations) =>
         model is not null && validations.TryGetValue(model.Id, out var source) ? source : null;
+}
+
+internal static class ShadowPlanningPrior
+{
+    // Same physical starting point as grey-box fitting, not learned house data.
+    // No parameter/metric from this prior is persisted as an approved model.
+    internal static readonly GreyBoxParameters Thermal = new(2, 35, .35, .8, .95, 35, -.45);
+    internal const string Description = "Preliminärt Shadow-scenario med generella hus- och COP-antaganden, inte en inlärd eller validerad värmemodell. Ingen styrning utförs.";
 }
 
 internal sealed class ThermalPlanningEvidenceException(string message) : InvalidOperationException(message);

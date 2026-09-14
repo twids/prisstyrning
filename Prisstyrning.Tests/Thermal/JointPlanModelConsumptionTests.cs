@@ -17,7 +17,7 @@ namespace Prisstyrning.Tests.Thermal;
 public sealed class JointPlanModelConsumptionTests
 {
     [Fact]
-    public async Task Planning_ExternalCopRequiresModelsInsteadOfUnrelatedMeterVerification()
+    public async Task Planning_ExternalCopAllowsExplicitShadowPriorWithoutUnrelatedMeterVerification()
     {
         await using var db = new PrisstyrningDbContext(new DbContextOptionsBuilder<PrisstyrningDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
@@ -28,10 +28,15 @@ public sealed class JointPlanModelConsumptionTests
             new ThermalEntityConfig { UserId = "account-a", Role = role, EntityId = "sensor." + role }));
         await db.SaveChangesAsync();
         var now = DateTimeOffset.UtcNow;
-        var error = await Assert.ThrowsAsync<ThermalPlanningEvidenceException>(() => ThermalPlanningModels.ReadAsync(
-            db, "account-a", now, now, ThermalCurrentModelTestData.Build, CancellationToken.None));
-        Assert.DoesNotContain("Kostnadsunderlag saknas", error.Message);
-        Assert.Contains("Husmodellen", error.Message);
+        var models = await ThermalPlanningModels.ReadAsync(
+            db, "account-a", now, now, ThermalCurrentModelTestData.Build, CancellationToken.None);
+        Assert.True(models.Evidence.IsProvisional);
+        Assert.Equal(0, models.Evidence.ThermalModelVersionId);
+        Assert.Equal(0, models.Evidence.CopModelVersionId);
+        await ThermalPlanningModels.EnsureCurrentAsync(db, "account-a", models.Evidence, now,
+            ThermalCurrentModelTestData.Build, CancellationToken.None);
+        await Assert.ThrowsAsync<ThermalPlanningEvidenceException>(() => ThermalPlanningModels.EnsureStoredPlanCurrentAsync(
+            db, "account-a", models.Evidence, now, ThermalCurrentModelTestData.Build, CancellationToken.None));
         Assert.False(site.HeatPumpPowerSignVerified);
         Assert.Equal("Legacy", site.DhwWriter);
         Assert.Empty(await db.ThermalControlCommands.ToArrayAsync());
@@ -69,6 +74,8 @@ public sealed class JointPlanModelConsumptionTests
         await using var fixture = await Fixture.CreateAsync();
         await fixture.ChangeAsync(async db =>
         {
+            // Active planning retains every strict model/input requirement.
+            (await db.ThermalSiteConfigs.SingleAsync()).ControlMode = "LwtActive";
             var models = await db.ThermalModelVersions.ToListAsync();
             var thermal = models.Single(x => x.ModelType == "2R2C");
             var cop = models.Single(x => x.ModelType == "COP");
@@ -124,6 +131,69 @@ public sealed class JointPlanModelConsumptionTests
 
         Assert.Equal(0, fixture.Dispatcher.Calls);
         await fixture.AssertNoPlansOrCommandsAsync();
+    }
+
+    [Fact]
+    public async Task Replan_ShadowWithoutModelsCreatesLabelledScenarioAndNeverApprovesModels()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.ChangeAsync(async db => db.ThermalModelVersions.RemoveRange(await db.ThermalModelVersions.ToListAsync()));
+
+        await fixture.ReplanAsync();
+
+        Assert.True(fixture.Dispatcher.Request!.ModelEvidence!.IsProvisional);
+        await fixture.ChangeAsync(async db =>
+        {
+            var plan = await db.ThermalPlans.SingleAsync();
+            Assert.True(plan.IsShadow);
+            Assert.Equal(0, plan.Confidence);
+            Assert.Contains("inte en inlärd", plan.Summary);
+            Assert.Empty(await db.ThermalModelVersions.ToListAsync());
+            Assert.Empty(await db.ThermalControlCommands.ToListAsync());
+            Assert.Equal("Legacy", (await db.ThermalSiteConfigs.SingleAsync()).DhwWriter);
+        });
+    }
+
+    [Theory]
+    [InlineData("Shadow", true)]
+    [InlineData("LwtActive", false)]
+    [InlineData("FullActive", false)]
+    public async Task Replan_ExplicitUnchangedReturnIsOnlyUsableInShadow(string mode, bool allowed)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.ChangeAsync(async db =>
+        {
+            (await db.ThermalSiteConfigs.SingleAsync()).ControlMode = mode;
+            var sample = await ThermalCurrentModelTestData.LatestTelemetryAsync(db);
+            var quality = JsonNode.Parse(sample.QualityJson)!.AsObject();
+            quality["collectedAtUtc"] = JsonValue.Create(sample.TimestampUtc);
+            quality["entities"]![ThermalEntityRoles.ReturnWaterTemperature] = JsonSerializer.SerializeToNode(new
+            {
+                quality = 1, excluded = false, usage = "AssumedUnchanged", value = sample.ReturnWaterTemperatureC,
+                receivedAtUtc = sample.TimestampUtc, valueUpdatedUtc = sample.TimestampUtc.AddHours(-4),
+                sourceTimestampUtc = sample.TimestampUtc.AddHours(-4)
+            });
+            sample.ReturnWaterTemperatureC = null;
+            sample.HeatOutputKw = null;
+            sample.QualityJson = quality.ToJsonString();
+        });
+        if (!allowed)
+        {
+            await Assert.ThrowsAsync<ThermalPlanningEvidenceException>(() => fixture.ReplanAsync());
+            Assert.Equal(0, fixture.Dispatcher.Calls);
+            return;
+        }
+        await fixture.ReplanAsync();
+        await fixture.ChangeAsync(async db =>
+        {
+            var plan = await db.ThermalPlans.SingleAsync();
+            Assert.True(plan.IsShadow);
+            Assert.Equal(0, plan.Confidence);
+            Assert.Contains("antaget oförändrade", plan.Summary);
+            Assert.Contains(ThermalEntityRoles.ReturnWaterTemperature, plan.InputSnapshotJson);
+            Assert.Null((await ThermalCurrentModelTestData.LatestTelemetryAsync(db)).HeatOutputKw);
+            Assert.Empty(await db.ThermalControlCommands.ToListAsync());
+        });
     }
 
     [Fact]
@@ -389,17 +459,19 @@ public sealed class JointPlanModelConsumptionTests
     {
         await using var fixture = await Fixture.CreateAsync();
         await fixture.ChangeAsync(async db => (await db.ThermalModelVersions.FirstAsync(x => x.ModelType == "2R2C")).IsActive = false);
-        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => fixture.ReplanAsync());
+        await fixture.ReplanAsync();
+        Assert.True(fixture.Dispatcher.Request!.ModelEvidence!.IsProvisional);
         await fixture.ChangeAsync(async db =>
             await ThermalCurrentModelTestData.AddVersionAsync(db, "account-a", "2R2C", DateTimeOffset.UtcNow));
 
         await fixture.ReplanAsync();
 
-        Assert.Equal(1, fixture.Dispatcher.Calls);
+        Assert.Equal(2, fixture.Dispatcher.Calls);
         Assert.NotNull(fixture.Dispatcher.Request?.ModelEvidence);
+        Assert.False(fixture.Dispatcher.Request!.ModelEvidence!.IsProvisional);
         await fixture.ChangeAsync(async db =>
         {
-            Assert.Single(await db.ThermalPlans.ToListAsync());
+            Assert.Equal(2, await db.ThermalPlans.CountAsync());
             Assert.Equal("Shadow", (await db.ThermalSiteConfigs.SingleAsync()).ControlMode);
             Assert.Equal("Legacy", (await db.ThermalSiteConfigs.SingleAsync()).DhwWriter);
             Assert.Empty(await db.ThermalControlCommands.ToListAsync());
