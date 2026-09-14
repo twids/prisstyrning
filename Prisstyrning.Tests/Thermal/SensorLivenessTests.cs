@@ -37,6 +37,25 @@ public sealed class SensorLivenessTests
         Assert.NotNull(evidence!.Warning);
     }
 
+    [Fact]
+    public void CompanionReportAfterMeasurementReceipt_UsesCompanionsOwnReceipt()
+    {
+        var measurement = Room() with { ReceivedAtUtc = Now.AddMinutes(-2) };
+        var source = Heartbeat("15.1") with { LastReportedUtc = Now.AddSeconds(-5) };
+        var evidence = SensorLiveness.Resolve(measurement, source.EntityId,
+            SensorLiveness.ReportTimeAttribute, _ => source, Now);
+        Assert.Equal(source.ReceivedAtUtc, evidence!.SourceReceivedAtUtc);
+        Assert.Equal(DataQuality.Valid, SensorTimestampValidator.Assess(measurement, Now, Limit, liveness: evidence).Quality);
+        Assert.Equal(Now.AddMinutes(-2), measurement.ReceivedAtUtc);
+        Assert.Equal(Now.AddHours(-3), measurement.LastUpdatedUtc);
+        Assert.Equal(DataQuality.Stale, SensorTimestampValidator.Assess(
+            measurement with { ReceivedAtUtc = Now.AddMinutes(-11) }, Now, Limit, liveness: evidence).Quality);
+        Assert.Equal(DataQuality.Stale, SensorTimestampValidator.Assess(measurement, Now, Limit,
+            liveness: evidence with { SourceReceivedAtUtc = Now.AddMinutes(-11) }).Quality);
+        Assert.Equal(DataQuality.Stale, SensorTimestampValidator.Assess(measurement, Now, Limit,
+            liveness: evidence with { TimestampUtc = Now.AddMinutes(1) }).Quality);
+    }
+
     [Theory]
     [InlineData("2026-09-06T12:00:00Z")]
     [InlineData("2026-09-06T14:00:00+02:00")]
