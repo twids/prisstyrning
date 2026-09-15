@@ -218,6 +218,19 @@ class ApiClient {
     return this.post('/api/home-assistant/import-history', { fromUtc, toUtc });
   }
 
+  async getThermalStartup(): Promise<T.ThermalStartupStatus> {
+    return this.get('/api/thermal/startup');
+  }
+
+  async getConservativePreview(): Promise<T.ConservativePreview> {
+    return this.get('/api/thermal/startup/preview');
+  }
+
+  async startConservativeHeating(): Promise<{ message: string }> {
+    return this.post('/api/thermal/mode', { mode: writeControlMode('LwtActive'), confirmed: true,
+      conservativeStart: true, weatherCurveModeConfirmed: true, independentFallbackConfirmed: true });
+  }
+
   async getShadowLearning(): Promise<T.ShadowLearningVersion[]> {
     return this.get('/api/thermal/learning');
   }

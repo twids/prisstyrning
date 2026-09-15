@@ -5,6 +5,17 @@ import TemperatureChart, { temperatureRows } from './TemperatureChart';
 
 vi.mock('@mui/x-charts/LineChart', () => ({ LineChart: () => <div>Diagram</div> }));
 describe('temperaturhistorik', () => {
+  it('labels the conservative snapshot separately from measurements and forecasts', () => {
+    render(<TemperatureChart history={[]} conservativePreview={{ calculatedAtUtc: new Date().toISOString(),
+      observedDeviationC: 0, suggestedDeviationC: .5, simulationOnly: true, reason: 'Skrivfri ögonblicksbild.' }} />);
+    expect(screen.getByText(/Försiktigt förslag nu: 0,5 °C/)).toBeInTheDocument();
+    expect(screen.getByText(/inte ett utfört kommando eller en framtidsprognos/)).toBeInTheDocument();
+  });
+  it('does not show an expired conservative snapshot as a current proposal', () => {
+    render(<TemperatureChart history={[]} conservativePreview={{ calculatedAtUtc: new Date(Date.now() - 700000).toISOString(),
+      observedDeviationC: 0, suggestedDeviationC: .5, simulationOnly: true, reason: 'Old.' }} />);
+    expect(screen.queryByText(/Försiktigt förslag nu/)).not.toBeInTheDocument();
+  });
   it('håller vilovärden åtskilda från giltiga uppmätta temperaturer', () => {
     const sample = { timestampUtc: new Date().toISOString(), leavingWaterTemperatureC: null, roomTemperaturesJson: '{}',
       qualityJson: JSON.stringify({ entities: { leaving_water_temperature: { Quality: 1, Excluded: false, Usage: 'HeldWhileIdle', Value: 23 } } }) } as ThermalTelemetrySample;
@@ -23,7 +34,7 @@ describe('temperaturhistorik', () => {
   it('visar tomt läge utan att kräva en optimeringsplan', () => {
     render(<TemperatureChart history={[]} />);
     expect(screen.getByText(/En optimeringsplan behövs inte/)).toBeInTheDocument();
-    expect(screen.getByText(/Ingen beräknad LWT-avvikelse/)).toBeInTheDocument();
+    expect(screen.getByText(/Ingen modellbaserad LWT-plan/)).toBeInTheDocument();
   });
   it('tar inte med ersatta eller ogiltiga rumsvärden i uppmätt medel', () => {
     const sample = { timestampUtc: '2026-09-05T10:00:00Z', leavingWaterTemperatureC: 31,

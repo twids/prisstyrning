@@ -15,6 +15,7 @@ internal sealed class ThermalModeService
     private readonly IConfiguration _configuration;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly DhwWriterLeaseService _dhwLease;
+    private readonly ThermalStartupService? _startup;
 
     public ThermalModeService(
         PrisstyrningDbContext db,
@@ -23,7 +24,8 @@ internal sealed class ThermalModeService
         BatchRunner batchRunner,
         IConfiguration configuration,
         IServiceScopeFactory scopeFactory,
-        DhwWriterLeaseService dhwLease)
+        DhwWriterLeaseService dhwLease,
+        ThermalStartupService? startup = null)
     {
         _db = db;
         _readiness = readiness;
@@ -32,6 +34,7 @@ internal sealed class ThermalModeService
         _configuration = configuration;
         _scopeFactory = scopeFactory;
         _dhwLease = dhwLease;
+        _startup = startup;
     }
 
     public async Task<(bool Success, string Message)> ChangeModeAsync(
@@ -40,6 +43,8 @@ internal sealed class ThermalModeService
         CancellationToken cancellationToken = default)
     {
         if (!request.Confirmed) return (false, "Lägesbytet måste bekräftas i den guidade checklistan.");
+        await using var activation = await ThermalAccountOperation.EnterAsync(_db, "global-activation", cancellationToken);
+        await using var operation = await ThermalAccountOperation.EnterAsync(_db, userId, cancellationToken);
         if (request.Mode is ControlMode.LwtActive or ControlMode.FullActive &&
             !_configuration.GetValue("Thermal:AllowLwtActive", false))
             return (false, "Aktiv LWT-styrning är spärrad i driftsättningskonfigurationen.");
@@ -61,6 +66,12 @@ internal sealed class ThermalModeService
             .SingleOrDefaultAsync(cancellationToken) ?? string.Empty;
         if (current == request.Mode) return (true, "Driftläget är redan aktivt.");
         if (!IsAllowedTransition(current, request.Mode)) return (false, $"Otillåtet lägesbyte från {current} till {request.Mode}.");
+        if (request.ConservativeStart)
+        {
+            if (current != ControlMode.Shadow || request.Mode != ControlMode.LwtActive || _startup is null)
+                return (false, "Försiktig start kan bara göras från Shadow till LwtActive.");
+            return await _startup.StartAsync(userId, request, cancellationToken);
+        }
 
         if (request.Mode is not ControlMode.Legacy)
         {
@@ -121,6 +132,8 @@ internal sealed class ThermalModeService
         }
 
         site.ControlMode = request.Mode.ToString();
+        var startupState = await _db.ThermalStartupStates.SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
+        if (startupState is not null) startupState.ConservativeEnabled = false;
         site.DhwWriter = targetWriter.ToString();
         site.UpdatedAtUtc = DateTimeOffset.UtcNow;
         if (request.Mode == ControlMode.FullActive)
@@ -167,6 +180,7 @@ internal sealed class ThermalModeService
 
     public async Task SetOverrideAsync(string userId, ThermalOverrideRequest request, CancellationToken cancellationToken = default)
     {
+        await using var operation = await ThermalAccountOperation.EnterAsync(_db, userId, cancellationToken);
         if (request.UntilUtc is null || request.UntilUtc <= DateTimeOffset.UtcNow || request.UntilUtc > DateTimeOffset.UtcNow.AddDays(7))
             throw new ArgumentException("Override måste ha en sluttid inom sju dagar.");
         if (request.LwtDeviationC is < -3 or > 3) throw new ArgumentException("Manuell LWT-avvikelse måste vara inom ±3 °C.");
@@ -184,6 +198,7 @@ internal sealed class ThermalModeService
 
     public async Task ClearOverrideAsync(string userId, CancellationToken cancellationToken = default)
     {
+        await using var operation = await ThermalAccountOperation.EnterAsync(_db, userId, cancellationToken);
         var state = await _db.ThermalControlStates.SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
         if (state is null) return;
         state.ManualOverrideUntilUtc = null;

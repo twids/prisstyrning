@@ -210,6 +210,7 @@ public class AdminAccountDeletionTests
                     DhwLeaseOwner = "synthetic-dhw-writer", DhwLeaseExpiresUtc = now.AddMinutes(5)
                 });
                 db.ThermalControlStates.Add(new ThermalControlState { UserId = userId, LeaseOwner = "synthetic-writer", LeaseExpiresUtc = now.AddMinutes(5), CurrentDeviationC = 0.5 });
+                db.ThermalStartupStates.Add(new ThermalStartupState { UserId = userId, Phase = "Verified", ConservativeEnabled = mode == "LwtActive", ConfigurationFingerprint = "synthetic-evidence", UpdatedAtUtc = now });
                 db.ThermalOptimizationJobs.Add(new ThermalOptimizationJob { Id = Guid.NewGuid(), UserId = userId, LeaseOwner = "synthetic-optimizer", Status = "Running" });
                 db.ThermalRoomConfigs.Add(new ThermalRoomConfig { UserId = userId, EntityId = "sensor.room", Name = "Test room", IsCritical = true });
                 db.ThermalEntityConfigs.Add(new ThermalEntityConfig { UserId = userId, Role = "lwt", EntityId = "sensor.test_lwt", ExpectedUnit = "°C" });

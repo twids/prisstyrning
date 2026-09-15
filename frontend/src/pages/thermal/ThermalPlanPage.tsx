@@ -3,6 +3,7 @@ import SavingsOutlinedIcon from '@mui/icons-material/SavingsOutlined';
 import TimerOutlinedIcon from '@mui/icons-material/TimerOutlined';
 import PsychologyAltOutlinedIcon from '@mui/icons-material/PsychologyAltOutlined';
 import { useThermalHistory, useThermalPlan } from '../../hooks/thermal/useThermal';
+import { useConservativePreview } from '../../hooks/thermal/useConservativeStartup';
 import { MetricCard, PageHeader, formatDateTime } from '../../components/thermal/thermalUi';
 import ThermalTimeline from '../../components/thermal/ThermalTimeline';
 import TemperatureChart from '../../components/thermal/TemperatureChart';
@@ -12,6 +13,7 @@ import type { DecisionReason } from '../../types/api';
 export default function ThermalPlanPage() {
   const plan = useThermalPlan();
   const history = useThermalHistory(48);
+  const conservative = useConservativePreview();
   const nextDhw = plan.data?.steps.find((step) => step.dhwReserved && new Date(step.startUtc).getTime() > Date.now());
   const current = plan.data?.steps.find((step) => new Date(step.startUtc).getTime() <= Date.now() && new Date(step.endUtc).getTime() > Date.now());
   const reason = current ? parseReason(current.decisionReasonJson) : null;
@@ -31,7 +33,7 @@ export default function ThermalPlanPage() {
       </Alert>}
       {plan.isError && <Alert severity="error">Planen kunde inte hämtas: {plan.error.message}</Alert>}
       {history.isError && <Alert severity="error">Temperaturhistoriken kunde inte hämtas.</Alert>}
-      <TemperatureChart history={history.data ?? []} plan={plan.data} />
+      <TemperatureChart history={history.data ?? []} plan={plan.data} conservativePreview={conservative.isError ? undefined : conservative.data} />
       {!plan.isLoading && !plan.data && <Alert severity="info">Ingen plan finns ännu. I Legacy körs ingen optimering. Om Shadow redan är igång, kontrollera modellunderlaget på Modell och orsakerna under Händelser. Shadow-start innebär inte att en validerad modell eller ett beräkningsförslag redan finns.</Alert>}
       {plan.data && (
         <>

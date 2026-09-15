@@ -42,6 +42,7 @@ export default function ThermalStatusStrip() {
             <Stack direction={{ xs: 'column', sm: 'row' }} gap={1}>
               <Stack direction="row" spacing={1} alignItems="center" tabIndex={0} aria-label="Horisontellt rullbar systemstatus" sx={{ flex: 1, minWidth: 0, overflowX: 'auto', scrollbarWidth: 'none', pb: .25, '&::-webkit-scrollbar': { display: 'none' } }}>
                 <Chip label={modeLabel[data.mode]} color={data.mode === 'Legacy' ? 'default' : data.mode === 'Shadow' ? 'info' : 'success'} size="small" />
+                {data.controlStrategy && <Chip size="small" label={data.controlStrategy === 'ConservativeAdaptive' ? 'Försiktig / adaptiv · ±1 °C' : 'Inkoppling / återställning'} />}
                 <Stack direction="row" gap={.5} alignItems="center" aria-describedby="system-quality-reason">
                   <Typography variant="caption">Datakvalitet</Typography><QualityChip quality={quality.quality} />
                 </Stack>

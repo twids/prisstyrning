@@ -41,6 +41,7 @@ public sealed class ThermalDataService
     {
         Validate(requested);
         userId = await _installations.ResolveUserAsync(userId, cancellationToken);
+        await using var operation = await Prisstyrning.Thermal.Control.ThermalAccountOperation.EnterAsync(_db, userId, cancellationToken);
         var site = await EnsureSiteAsync(userId, cancellationToken, tracked: true);
         if (ThermalEnumParser.ControlModeOrLegacy(site.ControlMode) is ControlMode.LwtActive or ControlMode.FullActive)
         {

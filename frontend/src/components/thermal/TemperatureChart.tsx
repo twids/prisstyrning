@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Alert, Box, Paper, Stack, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
 import { LineChart } from '@mui/x-charts/LineChart';
-import type { ThermalPlan, ThermalTelemetrySample } from '../../types/api';
+import type { ConservativePreview, ThermalPlan, ThermalTelemetrySample } from '../../types/api';
 
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 const timeLabel = (date: Date) => new Intl.DateTimeFormat('sv-SE', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Stockholm', timeZoneName: 'short' }).format(date);
@@ -33,7 +33,7 @@ export function temperatureRows(history: ThermalTelemetrySample[]) {
   });
 }
 
-export default function TemperatureChart({ history, plan }: { history: ThermalTelemetrySample[]; plan?: ThermalPlan | null }) {
+export default function TemperatureChart({ history, plan, conservativePreview }: { history: ThermalTelemetrySample[]; plan?: ThermalPlan | null; conservativePreview?: ConservativePreview }) {
   const [hours, setHours] = useState(24);
   const rows = temperatureRows(history).filter((row) => row.time.getTime() >= Date.now() - hours * 3_600_000);
   const latest = rows[rows.length - 1];
@@ -41,10 +41,17 @@ export default function TemperatureChart({ history, plan }: { history: ThermalTe
   const data = rows.flatMap((row, index) => index && row.time.getTime() - rows[index - 1].time.getTime() > 600_000
     ? [{ time: new Date(rows[index - 1].time.getTime() + 300_000), lwt: null, rwt: null, heldLwt: null, heldRwt: null, outside: null, room: null, deviation: null }, row] : [row]);
   const steps = plan?.steps.filter((step) => Number.isFinite(Date.parse(step.startUtc)) && finite(step.desiredLwtDeviationC)).sort((a, b) => Date.parse(a.startUtc) - Date.parse(b.startUtc)) ?? [];
-  const offsets = new Map<number, { time: Date; actual: number | null; proposed: number | null }>();
+  const offsets = new Map<number, { time: Date; actual: number | null; proposed: number | null; conservative?: number | null }>();
   data.forEach((row) => offsets.set(row.time.getTime(), { time: row.time, actual: row.deviation, proposed: null }));
   steps.forEach((step) => { const time = Date.parse(step.startUtc); offsets.set(time, { time: new Date(time), actual: offsets.get(time)?.actual ?? null, proposed: step.desiredLwtDeviationC }); });
+  const previewTime = Date.parse(conservativePreview?.calculatedAtUtc ?? '');
+  const currentPreview = conservativePreview?.simulationOnly === true && finite(previewTime) && Date.now() >= previewTime && Date.now() - previewTime <= 600_000;
+  if (currentPreview && finite(conservativePreview?.suggestedDeviationC)) {
+    offsets.set(previewTime, { time: new Date(previewTime), actual: offsets.get(previewTime)?.actual ?? null,
+      proposed: offsets.get(previewTime)?.proposed ?? null, conservative: conservativePreview.suggestedDeviationC });
+  }
   const offsetData = [...offsets.values()].sort((a, b) => a.time.getTime() - b.time.getTime());
+  const offsetValues = offsetData.flatMap(row => [row.actual, row.proposed, row.conservative]).filter(finite);
   return <Paper variant="outlined" sx={{ p: { xs: 1, sm: 2 }, minWidth: 0 }}>
     <Stack spacing={2}>
       <Typography component="h2" variant="h5">Temperaturer och LWT</Typography>
@@ -60,11 +67,13 @@ export default function TemperatureChart({ history, plan }: { history: ThermalTe
           sx={{ '& .MuiLineElement-series-heldLwt, & .MuiLineElement-series-heldRwt': { strokeDasharray: '3 4' } }} />
       </Box>}
       <Typography component="h3" variant="h6">LWT-avvikelse från Daikins grundkurva</Typography>
+      {currentPreview && <Alert severity="info">Försiktigt förslag nu: {conservativePreview?.suggestedDeviationC == null ? 'saknas' : `${conservativePreview.suggestedDeviationC.toLocaleString('sv-SE')} °C`}. {conservativePreview?.reason} Detta är inte ett utfört kommando eller en framtidsprognos.</Alert>}
       <Typography variant="body2">Heldragen: avläst avvikelse. Streckad: planens förslag, inte ett utfört kommando. Absolut framtida LWT visas inte utan känd grundkurva. Saknade värden lämnas tomma.</Typography>
-      {!steps.length && <Alert severity="info">Ingen beräknad LWT-avvikelse finns ännu.</Alert>}
+      {!steps.length && <Alert severity="info">Ingen modellbaserad LWT-plan finns ännu. Ett försiktigt nulägesförslag visas separat när underlaget räcker.</Alert>}
       {plan && Date.parse(plan.validUntilUtc) < Date.now() && <Alert severity="warning">Planen har gått ut. Förslaget visas endast som historik.</Alert>}
-      {offsetData.some((row) => row.actual != null || row.proposed != null) && <LineChart height={260} dataset={offsetData} xAxis={[{ dataKey: 'time', scaleType: 'time', valueFormatter: timeLabel }]} yAxis={[{ label: 'Avvikelse °C' }]}
-        series={[{ id: 'actual', dataKey: 'actual', label: 'Avläst avvikelse', showMark: true, connectNulls: false }, { id: 'proposed', dataKey: 'proposed', label: plan?.isShadow ? 'Shadow-förslag' : 'Planerat förslag', showMark: true, connectNulls: false, curve: 'stepAfter' }]}
+      {offsetData.some((row) => row.actual != null || row.proposed != null || row.conservative != null) && <LineChart height={260} dataset={offsetData} xAxis={[{ dataKey: 'time', scaleType: 'time', valueFormatter: timeLabel }]} yAxis={[{ label: 'Avvikelse °C', min: Math.min(-1, ...offsetValues), max: Math.max(1, ...offsetValues) }]}
+        series={[{ id: 'actual', dataKey: 'actual', label: 'Avläst avvikelse', showMark: true, connectNulls: false }, { id: 'proposed', dataKey: 'proposed', label: plan?.isShadow ? 'Shadow-förslag' : 'Planerat förslag', showMark: true, connectNulls: false, curve: 'stepAfter' },
+          { id: 'conservative', dataKey: 'conservative', label: 'Försiktigt nu · simulering', showMark: true, connectNulls: false } ]}
         sx={{ '& .MuiLineElement-series-proposed': { strokeDasharray: '6 4' } }} />}
     </Stack>
   </Paper>;

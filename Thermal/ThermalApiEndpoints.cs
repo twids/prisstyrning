@@ -16,6 +16,7 @@ public static class ThermalApiEndpoints
     public static IEndpointRouteBuilder MapThermalApi(this IEndpointRouteBuilder app)
     {
         var thermal = app.MapThermalStatusApi();
+        thermal.MapThermalStartupApi();
         thermal.MapPost("/learning", async (HttpContext context, Prisstyrning.Thermal.Jobs.ShadowLearningJob learning, CancellationToken ct) =>
         {
             await learning.TrainAsync(UserId(context), DateTimeOffset.UtcNow, ct);
@@ -367,6 +368,14 @@ public static class ThermalApiEndpoints
         return thermal;
     }
 
+    internal static void MapThermalStartupApi(this RouteGroupBuilder thermal)
+    {
+        thermal.MapGet("/startup", async (HttpContext context, ThermalStartupService startup, CancellationToken ct) =>
+            Results.Ok(await startup.GetAsync(UserId(context), ct)));
+        thermal.MapGet("/startup/preview", async (HttpContext context, ThermalStartupService startup, CancellationToken ct) =>
+            Results.Ok(await startup.PreviewAsync(UserId(context), ct)));
+    }
+
     private static async Task<IResult> GetModelsAsync(
         HttpContext context,
         PrisstyrningDbContext db,
@@ -458,6 +467,7 @@ public static class ThermalApiEndpoints
             .Where(x => x.ThermalPlanId == plan.Id && x.StartUtc > now && (x.DhwReserved || Math.Abs(x.DesiredLwtDeviationC - (state == null ? 0 : state.CurrentDeviationC)) >= 0.5))
             .OrderBy(x => x.StartUtc).Select(x => (DateTimeOffset?)x.StartUtc).FirstOrDefaultAsync(cancellationToken);
 
+        var startupState = await db.ThermalStartupStates.AsNoTracking().SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
         return Results.Ok(new ThermalStatusDto(
             mode,
             ThermalEnumParser.DhwWriterOrLegacy(site?.DhwWriter),
@@ -472,7 +482,8 @@ public static class ThermalApiEndpoints
             state?.ManualOverrideUntilUtc > now,
             quality.Reason,
             emhassOptions.Value.Enabled,
-            emhass.Connection(now)));
+            emhass.Connection(now),
+            startupState?.ConservativeEnabled == true ? startupState.Phase == "Verified" ? "ConservativeAdaptive" : "CommissioningRecovery" : null));
     }
 
     private static string UserId(HttpContext context)

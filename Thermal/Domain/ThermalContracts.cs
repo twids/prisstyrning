@@ -52,7 +52,8 @@ public sealed record ThermalStatusDto(
     bool ManualOverride,
     string? DataQualityReason = null,
     bool EmhassEnabled = false,
-    EmhassConnectionDto? EmhassConnection = null);
+    EmhassConnectionDto? EmhassConnection = null,
+    string? ControlStrategy = null);
 
 public sealed record EmhassConnectionDto(bool? Reachable, DateTimeOffset? CheckedUtc);
 
@@ -75,7 +76,8 @@ public sealed record DecisionReason(
     double ModelConfidence,
     string? Alternative);
 
-public sealed record ThermalModeRequest(ControlMode Mode, bool Confirmed = false);
+public sealed record ThermalModeRequest(ControlMode Mode, bool Confirmed = false,
+    bool ConservativeStart = false, bool WeatherCurveModeConfirmed = false, bool IndependentFallbackConfirmed = false);
 public sealed record WeatherTestRequest(string EntityId);
 public sealed record SensorFreshnessRequest(string EntityId, string Role, int? MaximumReportAgeMinutes,
     string? FreshnessEntityId, string? FreshnessAttribute);

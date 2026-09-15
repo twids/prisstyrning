@@ -28,7 +28,7 @@ test('temperaturgraf fungerar utan plan och ryms på mobil', async ({ page }, te
   await page.goto('/plan');
   await expect(page.getByRole('heading', { name: 'Temperaturer och LWT', exact: true })).toBeVisible();
   await expect(page.getByText(/Senast uppmätt LWT:/)).toBeVisible();
-  await expect(page.getByText(/Ingen beräknad LWT-avvikelse/)).toBeVisible();
+  await expect(page.getByText(/Ingen modellbaserad LWT-plan/)).toBeVisible();
   await page.getByRole('button', { name: '6 timmar', exact: true }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath('temperatures.png'), fullPage: true });

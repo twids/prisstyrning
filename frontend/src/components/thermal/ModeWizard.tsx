@@ -80,6 +80,7 @@ export default function ModeWizard({ open, currentMode, onClose }: { open: boole
         {step === 0 && (
           <Box>
             <Alert severity="info" sx={{ mb: 2 }}>Nuvarande läge är <strong>{modeLabel[currentMode]}</strong>. Aktiva lägen kan inte hoppas över.</Alert>
+            {currentMode === 'Shadow' && <Alert severity="info" sx={{ mb: 2 }}>För att börja utan en tränad modell använder du ”Försiktig start och inlärning” på Översikt. Den här guiden behåller den kompletta modellbaserade aktiveringens krav.</Alert>}
             <RadioGroup value={target} onChange={(event) => setTarget(event.target.value as ControlMode)}>
               {modes.map((mode, index) => {
                 const currentIndex = modes.indexOf(currentMode);

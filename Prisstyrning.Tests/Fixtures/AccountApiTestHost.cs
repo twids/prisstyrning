@@ -19,6 +19,7 @@ using Prisstyrning.Thermal;
 using Prisstyrning.Thermal.Data;
 using Prisstyrning.Thermal.HomeAssistant;
 using Prisstyrning.Thermal.Optimization;
+using Prisstyrning.Thermal.Control;
 
 namespace Prisstyrning.Tests.Fixtures;
 
@@ -49,7 +50,8 @@ internal sealed class AccountApiTestHost : IAsyncDisposable
         Dictionary<string, string?>? configuration = null,
         bool includeThermalStatus = false,
         bool includeHomeAssistantEntities = false,
-        IHomeAssistantTelemetryClient? historyClient = null)
+        IHomeAssistantTelemetryClient? historyClient = null,
+        bool includeThermalStartup = false)
     {
         var fixture = new AccountApiTestHost(configuration);
         try
@@ -78,19 +80,25 @@ internal sealed class AccountApiTestHost : IAsyncDisposable
                         services.AddAccountSessions();
                         services.AddAccountAntiforgery();
                         services.AddAdminLoginRateLimiting();
-                        if (includeThermalStatus)
+                        if (includeThermalStatus || includeThermalStartup)
                         {
                             services.AddScoped<ThermalInstallationRegistry>();
                             services.AddSingleton<EmhassHealthState>();
                             services.AddSingleton(RuntimeBuildProvenance.FromRevision(
                                 ThermalCurrentModelTestData.BuildRevision));
                         }
-                        if (includeHomeAssistantEntities)
+                        if (includeHomeAssistantEntities || includeThermalStartup)
                         {
                             services.AddSingleton<IHomeAssistantStateCache, HomeAssistantStateCache>();
                             services.AddSingleton<HomeAssistantConnectionChanges>();
                             services.AddScoped<HomeAssistantConnectionService>();
                             services.AddSingleton<IHomeAssistantEndpointValidator, NoNetworkEndpointValidator>();
+                        }
+                        if (includeThermalStartup)
+                        {
+                            services.AddScoped<ThermalReadinessService>();
+                            services.AddScoped<ThermalStartupService>();
+                            services.AddSingleton<IHomeAssistantControlClient, DeniedStartupControl>();
                         }
                         if (historyClient is not null)
                         {
@@ -111,7 +119,11 @@ internal sealed class AccountApiTestHost : IAsyncDisposable
                         {
                             endpoints.MapAccountSessionEndpoints();
                             endpoints.MapAdminEndpoints();
-                            if (includeThermalStatus) endpoints.MapThermalStatusApi();
+                            if (includeThermalStatus || includeThermalStartup)
+                            {
+                                var thermal = endpoints.MapThermalStatusApi();
+                                if (includeThermalStartup) thermal.MapThermalStartupApi();
+                            }
                             if (includeHomeAssistantEntities) endpoints.MapHomeAssistantEntityCatalogApi();
                             if (historyClient is not null) endpoints.MapHomeAssistantHistoryPreviewApi();
 
@@ -166,6 +178,12 @@ internal sealed class AccountApiTestHost : IAsyncDisposable
             _host.Dispose();
         }
         _files.Dispose();
+    }
+
+    private sealed class DeniedStartupControl : IHomeAssistantControlClient
+    {
+        public Task SetHeatingDeviationAsync(string userId, double deviationC, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("Read-only startup API tests must never write.");
     }
 
     private sealed class NoNetworkEndpointValidator : IHomeAssistantEndpointValidator

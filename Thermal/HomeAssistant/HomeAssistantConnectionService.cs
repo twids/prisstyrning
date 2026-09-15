@@ -103,6 +103,7 @@ public sealed class HomeAssistantConnectionService
         // Serialize account settings on this single application host so commit and
         // cache invalidation order cannot be reversed by two browser tabs.
         using var settingsLease = await _changes.LockSettingsAsync(userId, cancellationToken);
+        await using var operation = await Prisstyrning.Thermal.Control.ThermalAccountOperation.EnterAsync(_db, userId, cancellationToken);
         var baseUri = await _endpointValidator.ValidateAsync(request.BaseUrl, cancellationToken);
         if (request.StaleAfterMinutes is < 1 or > 60) throw new ArgumentException("Stale-gränsen måste vara 1–60 minuter.");
         if (!string.IsNullOrWhiteSpace(request.HeatingDeviationEntityId) &&
@@ -150,6 +151,7 @@ public sealed class HomeAssistantConnectionService
     {
         EnsureUser(userId);
         using var settingsLease = await _changes.LockSettingsAsync(userId, cancellationToken);
+        await using var operation = await Prisstyrning.Thermal.Control.ThermalAccountOperation.EnterAsync(_db, userId, cancellationToken);
         if (await IsActiveAsync(userId, cancellationToken))
             throw new InvalidOperationException("HA-anslutningen kan bara tas bort i Legacy eller Shadow.");
         var entity = await _db.HomeAssistantConnections.SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);

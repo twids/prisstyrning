@@ -32,7 +32,8 @@ public sealed class ThermalReadinessService
     public async Task<IReadOnlyList<ReadinessCheck>> EvaluateAsync(
         string userId,
         ControlMode targetMode,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool safetyOnly = false)
     {
         var now = DateTimeOffset.UtcNow;
         var connection = await _connections.GetAsync(userId, cancellationToken);
@@ -80,6 +81,21 @@ public sealed class ThermalReadinessService
                 .AnyAsync(x => x.UserId != userId &&
                                (x.ControlMode == nameof(ControlMode.LwtActive) || x.ControlMode == nameof(ControlMode.FullActive)),
                     cancellationToken);
+            if (safetyOnly)
+            {
+                checks.Add(Check("single-active-installation", "Ingen annan installation äger aktiv LWT-styrning", !anotherActiveInstallation,
+                    "Återställ den andra installationen till Legacy eller Shadow."));
+                checks.Add(Check("p1p2-control", "P1P2 har ett exakt tillåtet reglage och separat numerisk återkoppling",
+                    connection is { ControlEnabled: true, ControlTokenConfigured: true } &&
+                    LwtControlBinding.IsActuator(connection.HeatingDeviationEntityId) &&
+                    LwtControlBinding.FeedbackEntity(connection.HeatingDeviationEntityId, entities) is { } startupFeedbackId &&
+                    startupFeedbackId != connection.HeatingDeviationEntityId && LwtControlBinding.IsEntity(startupFeedbackId, "sensor") &&
+                    _cache.TryGet(userId, startupFeedbackId, out var feedback) && LwtControlBinding.NumericFeedback(feedback, now) &&
+                    _cache.TryGet(userId, connection.HeatingDeviationEntityId, out var actuator) &&
+                    LwtControlBinding.StartupStep(connection.HeatingDeviationEntityId, actuator, now, site?.ActiveDeviationLimitC ?? 1) is not null,
+                    "Mappa det skrivbara reglaget och en separat P1P2-sensor som återkopplar verklig avvikelse i °C."));
+                return checks;
+            }
             var modeEvents = await _db.ThermalEvents.AsNoTracking()
                 .Where(x => x.UserId == userId && x.Category == "ControlMode").ToListAsync(cancellationToken);
             var periods = ThermalReadinessEvidence.ModePeriods(modeEvents, site?.ControlMode, now);

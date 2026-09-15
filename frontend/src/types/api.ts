@@ -256,6 +256,7 @@ export interface ThermalConfig {
 }
 
 export interface ThermalStatus {
+  controlStrategy?: 'ConservativeAdaptive' | 'CommissioningRecovery' | null;
   mode: ControlMode;
   dhwWriter: DhwWriter;
   lastTelemetryUtc: string | null;
@@ -329,6 +330,22 @@ export interface WeatherForecastTest {
   quality: DataQuality;
   reason: string | null;
   points: { timestampUtc: string; temperatureC: number; windSpeedMps: number | null; solarIrradianceWm2: number | null }[];
+}
+
+export interface ThermalStartupStatus {
+  readyToCommission: boolean;
+  phase: string;
+  conservativeEnabled: boolean;
+  safetyChecks: ReadinessCheck[];
+  optimizationChecks: ReadinessCheck[];
+}
+
+export interface ConservativePreview {
+  calculatedAtUtc: string;
+  observedDeviationC: number | null;
+  suggestedDeviationC: number | null;
+  reason: string;
+  simulationOnly: boolean;
 }
 
 export interface ShadowLearningVersion {
