@@ -11,6 +11,7 @@ import { MetricCard, PageHeader, formatDateTime, formatRelative, modeLabel } fro
 import type { ControlMode } from '../../types/api';
 import { describeEmhass } from '../../components/thermal/emhassStatus';
 import { copTelemetry } from '../../components/thermal/copTelemetry';
+import ConservativeStartWizard from '../../components/thermal/ConservativeStartWizard';
 
 export default function ThermalOverviewPage() {
   const status = useThermalStatus();
@@ -18,7 +19,7 @@ export default function ThermalOverviewPage() {
   const history = useThermalHistory(6);
   const events = useThermalEvents(5);
   const target: ControlMode = status.data?.mode === 'Legacy' ? 'Shadow' : status.data?.mode === 'Shadow' ? 'LwtActive' : 'FullActive';
-  const readiness = useThermalReadiness(target);
+  const readiness = useThermalReadiness(target, Boolean(status.data) && status.data?.mode !== 'Shadow');
   const latest = history.data?.length ? history.data[history.data.length - 1] : undefined;
   const rooms = parseNumbers(latest?.roomTemperaturesJson);
   const roomAverage = rooms.length ? rooms.reduce((sum, value) => sum + value, 0) / rooms.length : null;
@@ -58,6 +59,7 @@ export default function ThermalOverviewPage() {
       </Paper>
 
       {status.data?.fallbackReason && <Alert severity="error" variant="outlined"><strong>Fallback är aktiv.</strong> {status.data.fallbackReason}</Alert>}
+      <ConservativeStartWizard />
 
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', xl: 'repeat(4, 1fr)' }, gap: 2 }}>
         <MetricCard label="Representativ rumstemperatur" value={roomAverage == null ? '–' : `${roomAverage.toFixed(1)} °C`} detail={`${rooms.length} aktiva rumsvärden`} icon={<DeviceThermostatIcon />} loading={history.isLoading} />
@@ -68,6 +70,12 @@ export default function ThermalOverviewPage() {
       </Box>
 
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 1.2fr) minmax(340px, .8fr)' }, gap: 2 }}>
+        {mode === 'Shadow' ? <Paper variant="outlined" sx={{ p: 3 }}>
+          <Typography variant="h5">Säker start och modellens mognad är olika saker</Typography>
+          <Typography sx={{ mt: 2 }}>Guiden ”Försiktig start och inlärning” kontrollerar inkoppling och aktuella givare. Den kräver inte 21 dagars historik eller en tränad modell.</Typography>
+          <Typography sx={{ mt: 2 }}>Efter verifierat skrivtest kan grundkurvan kompletteras med långsam rumskorrigering. Modellen lär sig under drift; endast en validerad plan får bidra till prisstyrningen. Legacy fortsätter sköta varmvattnet.</Typography>
+          <Button component={RouterLink} to="/model" sx={{ mt: 2 }}>Följ modellens kvalitet</Button>
+        </Paper> : (
         <Paper variant="outlined" sx={{ p: 3 }}>
           <Stack direction="row" justifyContent="space-between" alignItems="baseline" gap={2} mb={2}>
             <Box><Typography variant="h5">Vägen till {modeLabel[target]}</Typography><Typography color="text.secondary">Varje krav innehåller en konkret åtgärd.</Typography></Box>
@@ -84,6 +92,7 @@ export default function ThermalOverviewPage() {
             ))}
           </Stack>
         </Paper>
+        )}
 
         <Paper variant="outlined" sx={{ p: 3 }}>
           <Typography variant="h5">Senaste händelser</Typography>

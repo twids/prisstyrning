@@ -6,6 +6,7 @@ using Prisstyrning.Data;
 using Prisstyrning.Data.Entities;
 using Prisstyrning.Thermal.Jobs;
 using Prisstyrning.Thermal.Optimization;
+using Prisstyrning.Thermal.Control;
 using Xunit.Abstractions;
 
 namespace Prisstyrning.Tests.Thermal;
@@ -39,6 +40,7 @@ public sealed class PostgreSqlThermalAcceptanceTests
 
         await using var db = Database(connectionString);
         await db.Database.MigrateAsync();
+        await VerifyAccountOperationLockAsync(connectionString);
 
         var now = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
         var (rooms, entities) = await SeedConfigurationAsync(db);
@@ -59,6 +61,24 @@ public sealed class PostgreSqlThermalAcceptanceTests
         Assert.Equal("Legacy", site.DhwWriter);
         Assert.Empty(await db.ThermalPlans.AsNoTracking().ToListAsync());
         Assert.Empty(await db.ThermalControlCommands.AsNoTracking().ToListAsync());
+    }
+
+    private static async Task VerifyAccountOperationLockAsync(string connectionString)
+    {
+        await using var first = Database(connectionString);
+        await using var second = Database(connectionString);
+        await using (var held = await ThermalAccountOperation.EnterAsync(first, Account, default))
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            {
+                await using var contested = await ThermalAccountOperation.EnterAsync(second, Account, timeout.Token);
+            });
+            await using var independent = await ThermalAccountOperation.EnterAsync(second, ForeignAccount, default);
+        }
+        // Cancellation and disposal must not strand a pooled session lock.
+        using var retryTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var retry = await ThermalAccountOperation.EnterAsync(second, Account, retryTimeout.Token);
     }
 
     private async Task VerifySourceRevalidationPerformanceAsync(

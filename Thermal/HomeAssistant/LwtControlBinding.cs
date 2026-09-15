@@ -47,6 +47,21 @@ internal static class LwtControlBinding
         return step;
     }
 
+    internal static double? StartupStep(string actuator, HomeAssistantState? state, DateTimeOffset now, double limit)
+    {
+        var step = Step(actuator, state, now, limit);
+        if (step is null) return null;
+        if (IsEntity(actuator, "climate")) return step <= 1 ? step : null;
+        // The legacy number contract stays unchanged above. New commissioning
+        // must verify the actual number capabilities rather than assume 0.5 °C.
+        var actualStep = Number(state!, "step");
+        var minimum = Number(state!, "min");
+        var maximum = Number(state!, "max");
+        return state!.Unit == "°C" && NumericFeedback(state, now) && actualStep is >= .5 and <= 1 &&
+            actualStep <= limit && minimum is < 0 && maximum is > 0 && minimum <= -limit && maximum >= limit &&
+            Math.Abs(minimum.Value / actualStep.Value - Math.Round(minimum.Value / actualStep.Value)) < 1e-6 ? actualStep : null;
+    }
+
     private static double? Number(HomeAssistantState state, string key) =>
         state.Attributes[key] is JsonValue value &&
         double.TryParse(value.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var number) && double.IsFinite(number)

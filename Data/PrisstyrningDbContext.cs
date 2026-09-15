@@ -28,6 +28,7 @@ public class PrisstyrningDbContext : DbContext
     public DbSet<ThermalEvent> ThermalEvents => Set<ThermalEvent>();
     public DbSet<DhwCycle> DhwCycles => Set<DhwCycle>();
     public DbSet<ThermalControlState> ThermalControlStates => Set<ThermalControlState>();
+    public DbSet<ThermalStartupState> ThermalStartupStates => Set<ThermalStartupState>();
     public DbSet<ThermalControlCommand> ThermalControlCommands => Set<ThermalControlCommand>();
     public DbSet<ThermalHourlyAggregate> ThermalHourlyAggregates => Set<ThermalHourlyAggregate>();
 
@@ -157,6 +158,14 @@ public class PrisstyrningDbContext : DbContext
             e.Property(x => x.TimeZone).HasMaxLength(100).HasDefaultValue("Europe/Stockholm");
             e.Property(x => x.VariableCostComponentsJson).HasColumnType("jsonb");
             e.Property(x => x.TariffDefinitionJson).HasColumnType("jsonb");
+        });
+
+        modelBuilder.Entity<ThermalStartupState>(e =>
+        {
+            e.HasKey(x => x.UserId);
+            e.Property(x => x.UserId).HasMaxLength(100);
+            e.Property(x => x.Phase).HasMaxLength(30);
+            e.Property(x => x.ConfigurationFingerprint).HasMaxLength(64);
         });
 
         modelBuilder.Entity<ThermalRoomConfig>(e =>

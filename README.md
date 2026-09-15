@@ -48,7 +48,37 @@ The UI is Swedish and exposes Overview, Plan, Rooms, Hot water, Model, Events an
 
 Home Assistant configuration is account-owned data, not container-global configuration. The signed-in user enters the public HTTPS URL plus separate telemetry/control tokens under **Settings → Home Assistant**. Tokens are AES-256-GCM encrypted with account and credential purpose as authenticated context; the API returns only `...TokenConfigured` flags. It never returns token text, fragments or lengths.
 
+## Conservative heating startup
+
+The separate **Försiktig start och inlärning** guide on Overview permits a
+model-independent start after equipment safety checks. It does not use the old
+21-day optimization gate. Both `Thermal:AllowLwtActive` and
+`Thermal:AllowConservativeStart` must be explicitly enabled; both default to
+`false`. These deployment kill switches do not replace account-owned HA settings.
+
+The operator must confirm LWT/weather-curve mode, a working base curve and an
+independently verified recovery path. The explicitly approved test sends zero,
+one positive hardware step (at most 1 °C), then zero, with separate numerical
+feedback. A failed or interrupted test cannot approve normal control. Persisted
+recovery state, an account operation lock and the writer lease protect the test.
+Missing communication can still prevent zeroing: inspect the pump when recovery
+cannot be verified. Readiness and the preview endpoints never send commands.
+
+After successful commissioning, room feedback operates without EMHASS or trained
+models. Only a currently validated, non-Shadow plan may add a confidence-weighted
+price contribution, capped at ±0.5 °C before hardware-step rounding and the total ±1 °C limit. Lost model/plan
+evidence removes that contribution; invalid safety inputs request neutral
+deviation. DHW remains Legacy. No automatic transition to ±3 °C or FullActive occurs.
+Model training continues for all configured installations, including LwtActive.
+
+Migration `AddThermalStartupState` only adds a new table; it does not activate or
+rewrite existing installations. Before rolling back the application image while
+this new strategy is active, use the existing mode rollback and verify zero
+feedback first. Do not enable commissioning across mixed old/new app replicas.
+See `plans/2026-09-15-conservative-heating-start.md` for verification and release gates.
+
 ## Configuration
+
 Precedence (highest first):
 1. Environment variables (with or without `PRISSTYRNING_` prefix)
 2. `appsettings.development.json`

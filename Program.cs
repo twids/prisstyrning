@@ -163,6 +163,7 @@ builder.Services.AddScoped<DhwWriterGuard>();
 builder.Services.AddScoped<DhwWriterLeaseService>();
 builder.Services.AddScoped<ThermalReadinessService>();
 builder.Services.AddScoped<ThermalModeService>();
+builder.Services.AddScoped<ThermalStartupService>();
 builder.Services.AddScoped<WriterLeaseService>();
 builder.Services.AddSingleton<WriterLeaseIdentity>();
 builder.Services.AddScoped<JointDhwScheduleWriter>();

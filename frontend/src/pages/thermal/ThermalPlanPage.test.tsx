@@ -5,6 +5,7 @@ import type { ThermalPlan } from '../../types/api';
 import ThermalPlanPage from './ThermalPlanPage';
 
 const hooks = vi.hoisted(() => ({ plan: vi.fn(), history: vi.fn() }));
+vi.mock('../../hooks/thermal/useConservativeStartup', () => ({ useConservativePreview: () => ({ data: undefined }) }));
 vi.mock('../../hooks/thermal/useThermal', () => ({
   useThermalPlan: hooks.plan,
   useThermalHistory: hooks.history,

@@ -61,10 +61,18 @@ public sealed class LwtControlWorker : BackgroundService
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<PrisstyrningDbContext>();
+        await using var operation = await ThermalAccountOperation.EnterAsync(db, userId, cancellationToken);
         var build = scope.ServiceProvider.GetRequiredService<RuntimeBuildProvenance>();
         var site = await db.ThermalSiteConfigs.SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
         var mode = ThermalEnumParser.ControlModeOrLegacy(site?.ControlMode);
         if (mode is not (ControlMode.LwtActive or ControlMode.FullActive)) return;
+
+        if (await db.ThermalStartupStates.AsNoTracking().AnyAsync(x => x.UserId == userId && x.ConservativeEnabled, cancellationToken))
+        {
+            await scope.ServiceProvider.GetRequiredService<ThermalStartupService>()
+                .EvaluateAsync(userId, _leaseIdentity.Owner, cancellationToken);
+            return;
+        }
 
         var now = DateTimeOffset.UtcNow;
         ValidatedThermalPlan? validatedPlan = null;
