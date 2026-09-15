@@ -162,12 +162,15 @@ public sealed class JointPlanCoordinator : BackgroundService
             roomTemperature,
             minimum,
             maximum);
+        // Use the same assessed values as house heating. In Shadow the raw columns
+        // may be null while explicitly labelled unchanged inputs remain usable.
+        // ReadTelemetryAsync still rejects those assumptions for active control.
         var dhw = await PlanDhwAsync(
             scope,
             db,
             userId,
             site,
-            telemetry,
+            planningTelemetry,
             prices.Periods,
             horizonStart,
             weather,
@@ -351,7 +354,7 @@ public sealed class JointPlanCoordinator : BackgroundService
         PrisstyrningDbContext db,
         string userId,
         ThermalSiteConfig site,
-        ThermalTelemetrySample telemetry,
+        ThermalPlanningTelemetry telemetry,
         IReadOnlyList<DhwPricePeriod> prices,
         DateTimeOffset horizonStart,
         WeatherSeries weather,
@@ -361,7 +364,6 @@ public sealed class JointPlanCoordinator : BackgroundService
         IReadOnlyList<double> outsideForecast,
         CancellationToken cancellationToken)
     {
-        if (telemetry.TankTemperatureC is null) return null;
         var now = DateTimeOffset.UtcNow;
         var running = await db.DhwCycles
             .Where(x => x.UserId == userId && x.ActualStartUtc != null && x.ActualEndUtc == null)
@@ -393,7 +395,7 @@ public sealed class JointPlanCoordinator : BackgroundService
         var deadline = kind == "Comfort" ? comfortDeadline : now.AddHours(36);
         deadline = Min(deadline, horizonStart.AddHours(_options.HorizonHours));
         var estimator = scope.ServiceProvider.GetRequiredService<DhwProfileEstimator>();
-        var profile = await estimator.EstimateAsync(userId, kind, telemetry.TankTemperatureC.Value, target, telemetry.BrineInC, cancellationToken);
+        var profile = await estimator.EstimateAsync(userId, kind, telemetry.TankTemperatureC, target, telemetry.BrineInC, cancellationToken);
         var planner = scope.ServiceProvider.GetRequiredService<DhwCyclePlanner>();
         var comfortPenalty = BuildDhwComfortPenalty(
             horizonStart,
@@ -407,7 +409,7 @@ public sealed class JointPlanCoordinator : BackgroundService
             earliest,
             deadline,
             kind,
-            telemetry.TankTemperatureC.Value,
+            telemetry.TankTemperatureC,
             target,
             telemetry.BrineInC,
             prices,
@@ -467,7 +469,7 @@ public sealed class JointPlanCoordinator : BackgroundService
         IServiceScope scope,
         string userId,
         DhwCycle cycle,
-        ThermalTelemetrySample telemetry,
+        ThermalPlanningTelemetry telemetry,
         DateTimeOffset horizonStart,
         DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -479,7 +481,7 @@ public sealed class JointPlanCoordinator : BackgroundService
             profile = await estimator.EstimateAsync(
                 userId,
                 cycle.Kind,
-                cycle.StartTemperatureC ?? telemetry.TankTemperatureC ?? 40,
+                cycle.StartTemperatureC ?? telemetry.TankTemperatureC,
                 cycle.TargetTemperatureC,
                 telemetry.BrineInC,
                 cancellationToken);

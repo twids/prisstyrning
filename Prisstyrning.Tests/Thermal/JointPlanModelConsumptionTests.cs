@@ -17,6 +17,65 @@ namespace Prisstyrning.Tests.Thermal;
 public sealed class JointPlanModelConsumptionTests
 {
     [Theory]
+    [InlineData("Shadow", false)]
+    [InlineData("Shadow", true)]
+    [InlineData("LwtActive", false)]
+    [InlineData("LwtActive", true)]
+    [InlineData("FullActive", false)]
+    [InlineData("FullActive", true)]
+    public async Task Replan_DhwUsesAssessedTankAndBrineOnlyInShadow(string mode, bool existingCycle)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        if (existingCycle) await fixture.ReplanAsync();
+        var callsBefore = fixture.Dispatcher.Calls;
+        await fixture.ChangeAsync(async db =>
+        {
+            (await db.ThermalSiteConfigs.SingleAsync()).ControlMode = mode;
+            var sample = await ThermalCurrentModelTestData.LatestTelemetryAsync(db);
+            var quality = JsonNode.Parse(sample.QualityJson)!.AsObject();
+            quality["collectedAtUtc"] = JsonValue.Create(sample.TimestampUtc);
+            foreach (var (role, value) in new[]
+                     {
+                         (ThermalEntityRoles.TankTemperature, sample.TankTemperatureC),
+                         (ThermalEntityRoles.BrineIn, sample.BrineInC)
+                     })
+                quality["entities"]![role] = JsonSerializer.SerializeToNode(new
+                {
+                    quality = 1, excluded = false, usage = "AssumedUnchanged", value,
+                    receivedAtUtc = sample.TimestampUtc, valueUpdatedUtc = sample.TimestampUtc.AddHours(-4),
+                    sourceTimestampUtc = sample.TimestampUtc.AddHours(-4)
+                });
+            sample.TankTemperatureC = null;
+            sample.BrineInC = null;
+            sample.QualityJson = quality.ToJsonString();
+        });
+        if (mode != "Shadow")
+        {
+            await Assert.ThrowsAsync<ThermalPlanningEvidenceException>(() => fixture.ReplanAsync());
+            Assert.Equal(callsBefore, fixture.Dispatcher.Calls);
+            return;
+        }
+
+        await fixture.ReplanAsync();
+        Assert.Equal(callsBefore + 1, fixture.Dispatcher.Calls);
+        Assert.True(fixture.Dispatcher.Request!.DhwDurationSteps > 0);
+        await fixture.ChangeAsync(async db =>
+        {
+            var plan = await db.ThermalPlans.Include(x => x.Steps).OrderByDescending(x => x.CreatedAtUtc).FirstAsync();
+            Assert.True(plan.IsShadow);
+            Assert.Equal(0, plan.Confidence);
+            Assert.Contains(plan.Steps, x => x.DhwReserved);
+            using var input = JsonDocument.Parse(plan.InputSnapshotJson);
+            var roles = input.RootElement.GetProperty("assumedInputRoles").Deserialize<string[]>()!;
+            Assert.Contains(ThermalEntityRoles.TankTemperature, roles);
+            Assert.Contains(ThermalEntityRoles.BrineIn, roles);
+            Assert.Null((await ThermalCurrentModelTestData.LatestTelemetryAsync(db)).TankTemperatureC);
+            Assert.Equal("Legacy", (await db.ThermalSiteConfigs.SingleAsync()).DhwWriter);
+            Assert.Empty(await db.ThermalControlCommands.ToListAsync());
+        });
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task Replan_FiltersImpossibleFlexibleDhwWindowsWithoutDroppingTheReservation(bool warmerWindow)
